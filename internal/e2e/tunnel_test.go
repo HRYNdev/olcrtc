@@ -21,11 +21,11 @@ import (
 
 	"github.com/openlibrecommunity/olcrtc/internal/app/session"
 	"github.com/openlibrecommunity/olcrtc/internal/auth"
-	"github.com/openlibrecommunity/olcrtc/internal/engine"
-	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	authSaluteJazz "github.com/openlibrecommunity/olcrtc/internal/auth/salutejazz"
 	authWBStream "github.com/openlibrecommunity/olcrtc/internal/auth/wbstream"
 	"github.com/openlibrecommunity/olcrtc/internal/client"
+	"github.com/openlibrecommunity/olcrtc/internal/engine"
+	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/server"
 	"github.com/openlibrecommunity/olcrtc/internal/supervisor"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
@@ -45,7 +45,7 @@ const (
 	localDNSServer      = "127.0.0.1:53"
 	videoHWNone         = "none"
 	testClientDeviceID  = "client-1"
-	defaultJitsiRoomURL = "https://jitsi.etudevs.ru/deadbeef"
+	defaultJitsiRoomURL = "https://meet.cryptopro.ru/deadbeef"
 )
 
 var (
@@ -405,7 +405,7 @@ func realE2ECaseExpectation(carrierName, transportName string) realE2EExpectatio
 		//
 		// seichannel is marked Unstable: SEI NAL data piggybacks on
 		// the H.264 video stream, and Jicofo's bandwidth allocator
-		// for self-hosted Jitsi instances (e.g. jitsi.etudevs.ru)
+		// for self-hosted Jitsi instances (e.g. meet.cryptopro.ru)
 		// periodically suppresses the video upstream when there's
 		// no obvious viewer demand, which manifests as recurring
 		// "seichannel ack timeout" against an otherwise healthy
@@ -437,7 +437,7 @@ func realE2EExpectationLabel(expectation realE2EExpectation) string {
 // logUnstableOutcome records the result of an Unstable matrix entry
 // without failing the test. Unstable combos exist to keep the matrix
 // honest about transports that flap against a particular carrier
-// (e.g. seichannel against jitsi.etudevs.ru's bandwidth allocator)
+// (e.g. seichannel against meet.cryptopro.ru's bandwidth allocator)
 // while still surfacing whether the run happened to pass or fail.
 func logUnstableOutcome(t *testing.T, label, carrierName, transportName string, err error) {
 	t.Helper()
@@ -575,9 +575,9 @@ func realRoomURL(ctx context.Context, t *testing.T, carrierName string) string {
 		return room
 	case "jitsi":
 		// Jitsi has no notion of "creating" a room — names are conjured
-		// on first join. The default flag points at jitsi.etudevs.ru
-		// by default. When the flag is left at its default value, a
-		// per-process random suffix is appended
+		// on first join. The default flag points at meet.cryptopro.ru
+		// (a CryptoPro-operated public Jitsi instance). When the flag is
+		// left at its default value, a per-process random suffix is appended
 		// to the slug: two participants share a single room by design (one
 		// pair, one shared key), so any third participant — including another
 		// concurrent test process with the same shared key — would corrupt
@@ -598,8 +598,8 @@ func realRoomURL(ctx context.Context, t *testing.T, carrierName string) string {
 }
 
 var (
-	jitsiRoomOnce sync.Once                                          //nolint:gochecknoglobals // per-process suffix cache
-	jitsiRoomURL  string                                             //nolint:gochecknoglobals // per-process suffix cache
+	jitsiRoomOnce sync.Once //nolint:gochecknoglobals // per-process suffix cache
+	jitsiRoomURL  string    //nolint:gochecknoglobals // per-process suffix cache
 )
 
 // defaultJitsiRoomWithSuffix returns the default Jitsi room URL with a random
@@ -631,7 +631,7 @@ func requireRealRoom(ctx context.Context, t *testing.T, carrierName string) stri
 
 func validSessionConfig(mode, carrierName, transportName string) session.Config {
 	return session.Config{
-		Mode:            mode,
+		Mode:      mode,
 		Transport: transportName,
 		Auth:      carrierName,
 		RoomID:    testRoom,
