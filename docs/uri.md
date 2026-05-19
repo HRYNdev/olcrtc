@@ -92,7 +92,7 @@ Payload не используется.
 | `<EncryptionKey>` | `crypto.key` |
 | `<MIMO>` | В `olcrtc` не передаётся. Это только клиентский комментарий |
 
-`link: direct` и `data: data` в этом формате не кодируются, потому что для текущих сценариев они фиксированные.
+`data: data` в этом формате не кодируется, потому что это локальная runtime-настройка конкретного запуска.
 
 ---
 
@@ -125,7 +125,6 @@ Payload не нужен - datachannel параметров не имеет. Дл
 
 ```yaml
 mode: cnc
-link: direct
 auth:
   provider: wbstream
 room:
@@ -147,7 +146,6 @@ olcrtc://wbstream?vp8channel<vp8-fps=60&vp8-batch=64>@room-01#d823fa01cb3e0609b6
 
 ```yaml
 mode: cnc
-link: direct
 auth:
   provider: wbstream
 room:
@@ -172,7 +170,6 @@ olcrtc://wbstream?seichannel<fps=60&batch=64&frag=900&ack-ms=2000>@room-01#d823f
 
 ```yaml
 mode: cnc
-link: direct
 auth:
   provider: wbstream
 room:
@@ -199,7 +196,6 @@ olcrtc://telemost?videochannel<video-w=1080&video-h=1080&video-fps=60&video-bitr
 
 ```yaml
 mode: cnc
-link: direct
 auth:
   provider: telemost
 room:
@@ -232,7 +228,6 @@ olcrtc://jitsi?datachannel@https://meet.small-dm.ru/myroom#d823fa01cb3e0609b6732
 
 ```yaml
 mode: cnc
-link: direct
 auth:
   provider: jitsi
 room:

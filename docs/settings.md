@@ -43,11 +43,10 @@
 | YAML поле | Что вводить |
 |-----------|-------------|
 | `mode` | `srv` на сервере, `cnc` на клиенте, `gen` для генерации Room ID |
-| `auth.provider` | `telemost`, `wbstream` или `jitsi` |
+| `auth.provider` | `telemost`, `wbstream`, `jitsi` или `none` |
 | `net.transport` | `datachannel`, `vp8channel`, `seichannel` или `videochannel` |
 | `room.id` | Room ID |
 | `crypto.key` или `crypto.key_file` | Ключ шифрования hex 64 символа. Генерация: `openssl rand -hex 32` |
-| `link` | Всегда `direct` |
 | `data` | Всегда `data` |
 | `net.dns` | DNS-сервер, например `1.1.1.1:53` |
 
@@ -216,7 +215,6 @@ WB Stream DataChannel **не работает** в обычном guest flow —
 
 # server.yaml
 mode: srv
-link: direct
 auth:
   provider: wbstream
 room:
@@ -232,7 +230,6 @@ data: data
 ```yaml
 # client.yaml
 mode: cnc
-link: direct
 auth:
   provider: wbstream
 room:
@@ -253,7 +250,6 @@ data: data
 ```yaml
 # client.yaml с логином и паролем на прокси
 mode: cnc
-link: direct
 auth:
   provider: wbstream
 room:
@@ -285,7 +281,6 @@ export all_proxy=socks5h://myuser:mypass@127.0.0.1:8808
 ```yaml
 # server.yaml
 mode: srv
-link: direct
 auth:
   provider: telemost
 room:
@@ -304,7 +299,6 @@ data: data
 ```yaml
 # client.yaml
 mode: cnc
-link: direct
 auth:
   provider: telemost
 room:
@@ -330,7 +324,6 @@ data: data
 ```yaml
 # server.yaml
 mode: srv
-link: direct
 auth:
   provider: telemost
 room:
@@ -351,7 +344,6 @@ data: data
 ```yaml
 # client.yaml
 mode: cnc
-link: direct
 auth:
   provider: telemost
 room:
@@ -377,7 +369,6 @@ data: data
 ```yaml
 # server.yaml
 mode: srv
-link: direct
 auth:
   provider: telemost
 room:
@@ -400,7 +391,6 @@ data: data
 ```yaml
 # client.yaml
 mode: cnc
-link: direct
 auth:
   provider: telemost
 room:

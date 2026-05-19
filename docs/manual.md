@@ -143,7 +143,7 @@ openssl rand -hex 32
 
 ## Шаг 7: Запустить сервер
 
-На серверной машине (VPS и т.д.). Подбери нужную комбинацию carrier + transport из матрицы в [settings.md](settings.md).
+На серверной машине (VPS и т.д.). Подбери нужную комбинацию auth provider + transport из матрицы в [settings.md](settings.md).
 
 ### jitsi + datachannel (рекомендуется)
 
@@ -154,7 +154,6 @@ openssl rand -hex 32
 ```yaml
 # server.yaml
 mode: srv
-link: direct
 auth:
   provider: jitsi
 room:
@@ -186,7 +185,6 @@ data: data
 ```yaml
 # server.yaml
 mode: srv
-link: direct
 auth:
   provider: wbstream
 room:
@@ -223,14 +221,13 @@ Room ID нужно передать клиенту.
 
 ## Шаг 8: Запустить клиент
 
-На своей машине. Auth provider, transport, room ID и key должны совпадать с сервером.
+На своей машине. `auth.provider`, `net.transport`, `room.id` и `crypto.key` должны совпадать с сервером.
 
 ### jitsi + datachannel (рекомендуется)
 
 ```yaml
 # client.yaml
 mode: cnc
-link: direct
 auth:
   provider: jitsi
 room:
@@ -257,7 +254,6 @@ data: data
 ```yaml
 # client.yaml
 mode: cnc
-link: direct
 auth:
   provider: wbstream
 room:
@@ -288,7 +284,6 @@ SOCKS5 server listening on 127.0.0.1:8808
 ```yaml
 # client.yaml
 mode: cnc
-link: direct
 auth:
   provider: wbstream
 room:
