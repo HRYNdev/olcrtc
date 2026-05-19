@@ -643,7 +643,7 @@ func validSessionConfig(mode, carrierName, transportName string) session.Config 
 			Width: 1080, Height: 1080, FPS: 30, Bitrate: "1M",
 			HW: videoHWNone, Codec: "tile", TileModule: 4, TileRS: 20,
 		},
-		VP8: session.VP8Config{FPS: 60, BatchSize: 8},
+		VP8: session.VP8Config{FPS: 60, BatchSize: 64},
 		SEI: session.SEIConfig{FPS: 30, BatchSize: 4, FragmentSize: 512, AckTimeoutMS: 1500},
 	}
 }
@@ -668,7 +668,7 @@ func e2eTransportOptions(transportName string) transport.Options {
 			TileRS:     20,
 		}
 	case "vp8channel":
-		return vp8channel.Options{FPS: 60, BatchSize: 8}
+		return vp8channel.Options{FPS: 60, BatchSize: 64}
 	case "seichannel":
 		return seichannel.Options{FPS: 30, BatchSize: 4, FragmentSize: 512, AckTimeoutMS: 1500}
 	}

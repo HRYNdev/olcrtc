@@ -50,8 +50,8 @@ engine:
   token: ""
 
 vp8:
-  fps: 25
-  batch_size: 1
+  fps: 60
+  batch_size: 64
 
 sei:
   fps: 20

@@ -206,8 +206,8 @@ Hardware acceleration (none/nvenc) [default: none]:
 ### Параметры транспорта (только для vp8channel)
 
 ```
-VP8 FPS [default: 25]: 60
-VP8 batch size (frames per tick) [default: 1]: 64
+VP8 FPS [default: 60]: 60
+VP8 batch size (frames per tick) [default: 64]: 64
 ```
 
 Введи `60` и `64` - это оптимальные значения.

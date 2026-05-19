@@ -45,8 +45,8 @@ const (
 	defaultVideoBitrate    = "2M"
 	defaultVideoHW         = "none"
 	defaultVideoQRRecovery = "low"
-	defaultVP8FPS          = 25
-	defaultVP8BatchSize    = 1
+	defaultVP8FPS          = 60
+	defaultVP8BatchSize    = 64
 	defaultSEIFPS          = 60
 	defaultSEIBatchSize    = 64
 	defaultSEIFragmentSize = 900

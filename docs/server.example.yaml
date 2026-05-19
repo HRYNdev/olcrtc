@@ -51,8 +51,8 @@ engine:
 
 # vp8channel tuning (only when net.transport == vp8channel)
 vp8:
-  fps: 25
-  batch_size: 1
+  fps: 60
+  batch_size: 64
 
 # seichannel tuning (only when net.transport == seichannel)
 sei:

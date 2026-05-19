@@ -22,7 +22,7 @@ func TestApplyTransportDefaults(t *testing.T) {
 		{
 			name: "vp8",
 			in:   Config{Transport: transportVP8},
-			want: Config{Transport: transportVP8, VP8: VP8Config{FPS: 25, BatchSize: 1}},
+			want: Config{Transport: transportVP8, VP8: VP8Config{FPS: 60, BatchSize: 64}},
 		},
 		{
 			name: "sei",

@@ -156,10 +156,10 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 	fps := opts.FPS
 	batchSize := opts.BatchSize
 	if fps <= 0 {
-		fps = 25
+		fps = defaultFPS
 	}
 	if batchSize <= 0 {
-		batchSize = 1
+		batchSize = defaultBatchSize
 	}
 
 	tr := &streamTransport{
