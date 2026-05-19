@@ -33,7 +33,7 @@ olcrtc://<Auth>?<Transport><key=value&key=value>@<RoomID>#<EncryptionKey>$<MIMO>
 
 | Поле | Значение |
 |------|----------|
-| `<Auth>` | Имя auth-провайдера, например `telemost`, `jazz`, `wbstream`, `jitsi` |
+| `<Auth>` | Имя auth-провайдера, например `telemost`, `wbstream`, `jitsi` |
 | `<Transport>` | Имя транспорта, например `datachannel`, `vp8channel`, `seichannel`, `videochannel` |
 | payload | Параметры транспорта в `<key=value&...>`. Ключи совпадают с YAML полями. Блок опускается если используются defaults |
 | `<RoomID>` | Идентификатор комнаты или auth-specific room URL/ID |
@@ -162,10 +162,10 @@ vp8:
 data: data
 ```
 
-### jazz + seichannel
+### wbstream + seichannel
 
 ```text
-olcrtc://jazz?seichannel<fps=60&batch=64&frag=900&ack-ms=2000>@room-01#d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799$DE / olc free sub
+olcrtc://wbstream?seichannel<fps=60&batch=64&frag=900&ack-ms=2000>@room-01#d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799$DE / olc free sub
 ```
 
 ### Эквивалент YAML
@@ -174,7 +174,7 @@ olcrtc://jazz?seichannel<fps=60&batch=64&frag=900&ack-ms=2000>@room-01#d823fa01c
 mode: cnc
 link: direct
 auth:
-  provider: jazz
+  provider: wbstream
 room:
   id: "room-01"
 crypto:

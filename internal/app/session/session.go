@@ -29,7 +29,6 @@ const (
 	modeSRV          = "srv"
 	modeCNC          = "cnc"
 	modeGen          = "gen"
-	authJazz         = "jazz"
 	authNone         = "none"
 	transportVideo   = "videochannel"
 	transportVP8     = "vp8channel"
@@ -64,7 +63,7 @@ var (
 	ErrAmountRequired = errors.New("amount required for gen mode (set gen.amount)")
 	// ErrAuthRequired indicates that no auth provider was selected.
 	ErrAuthRequired = errors.New(
-		"auth provider required (set auth.provider to jitsi, telemost, jazz, wbstream or none)")
+		"auth provider required (set auth.provider to jitsi, telemost, wbstream or none)")
 	// ErrURLRequired indicates that auth.url must be provided when the auth provider has no default URL.
 	ErrURLRequired = errors.New("SFU URL required (set auth.url)")
 	// ErrUnsupportedCarrier indicates that carrier is not registered.
@@ -380,7 +379,7 @@ func validateTransportRegistration(cfg Config) error {
 }
 
 func validateCommon(cfg Config) error {
-	if cfg.RoomID == "" && cfg.Auth != authJazz && cfg.Auth != authNone {
+	if cfg.RoomID == "" && cfg.Auth != authNone {
 		return ErrRoomIDRequired
 	}
 	if cfg.KeyHex == "" {

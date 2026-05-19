@@ -55,8 +55,6 @@ const (
 	defaultDNSServer   = "1.1.1.1:53"
 	defaultHTTPPingURL = "https://www.google.com/generate_204"
 	carrierWBStream    = "wbstream"
-	carrierJazz        = "jazz"
-	roomURLAny         = "any"
 )
 
 const (
@@ -165,7 +163,7 @@ func SetDebug(enabled bool) {
 }
 
 // Start launches the olcRTC client in background.
-// carrierName: carrier name ("telemost", "jazz", "wbstream")
+// carrierName: carrier name ("telemost", "wbstream", "jitsi")
 // roomID: carrier-specific room ID
 // clientID: client identifier that must match the server's -client-id
 // keyHex: 64-char hex encryption key
@@ -746,7 +744,7 @@ func validateStartArgs(carrierName, roomID, clientID, keyHex string) error {
 	switch {
 	case carrierName == "":
 		return errCarrierRequired
-	case roomID == "" && carrierName != carrierJazz:
+	case roomID == "":
 		return errRoomIDRequired
 	case clientID == "":
 		return errClientIDRequired
@@ -761,11 +759,6 @@ func buildRoomURL(carrierName, roomID string) string {
 	switch carrierName {
 	case "telemost":
 		return "https://telemost.yandex.ru/j/" + roomID
-	case carrierJazz:
-		if roomID == "" {
-			return roomURLAny
-		}
-		return roomID
 	case carrierWBStream:
 		return roomID
 	default:

@@ -12,7 +12,7 @@
 //
 // The Jingle session-initiate is only delivered by Jicofo once at least one
 // other participant is present in the conference, mirroring the Telemost /
-// SaluteJazz two-peer requirement that olcrtc already accommodates.
+// two-peer tunnel model that olcrtc already accommodates.
 package jitsi
 
 import (

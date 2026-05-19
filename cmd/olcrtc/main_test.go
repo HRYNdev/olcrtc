@@ -87,7 +87,8 @@ func TestRunWithConfigValidationAndDataDirErrors(t *testing.T) {
 	scfg := session.Config{
 		Mode:      "srv",
 		Transport: "datachannel",
-		Auth:      "jazz",
+		Auth:      "jitsi",
+		RoomID:    "https://meet.small-dm.ru/test",
 		KeyHex:    "key",
 		DNSServer: "1.1.1.1:53",
 	}
@@ -117,7 +118,7 @@ func TestRunWithArgsSuccessfulSessionReturn(t *testing.T) {
 	called := false
 	runSession = func(ctx context.Context, cfg session.Config) error {
 		called = true
-		if cfg.Mode != "srv" || cfg.Auth != "jazz" {
+		if cfg.Mode != "srv" || cfg.Auth != "jitsi" {
 			t.Fatalf("session config = %+v", cfg)
 		}
 		select {
@@ -132,7 +133,9 @@ func TestRunWithArgsSuccessfulSessionReturn(t *testing.T) {
 mode: srv
 link: direct
 auth:
-  provider: jazz
+  provider: jitsi
+room:
+  id: https://meet.small-dm.ru/test
 crypto:
   key: key
 net:

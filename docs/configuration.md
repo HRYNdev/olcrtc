@@ -19,7 +19,7 @@ olcrtc /etc/olcrtc/server.yaml
 |------------------------------------------------------------------|-----------------------------------------------------------|
 | `mode`                                                           | `srv`, `cnc`, or `gen`                                    |
 | `link`                                                           | `direct`                                                  |
-| `auth.provider`                                                  | `jitsi`, `telemost`, `jazz`, `wbstream`, `none`           |
+| `auth.provider`                                                  | `jitsi`, `telemost`, `wbstream`, `none`                   |
 | `room.id`                                                        | conference room id                                        |
 | `crypto.key` / `crypto.key_file`                                 | 64-char hex (32 bytes), inline or read from file          |
 | `net.transport`                                                  | `datachannel`, `videochannel`, `seichannel`, `vp8channel` |

@@ -29,7 +29,7 @@
 //	}
 //
 // Call [RegisterDefaults] once at program start to register the built-in
-// carriers (jitsi, telemost, jazz, wbstream) and transports (datachannel,
+// carriers (jitsi, telemost, wbstream) and transports (datachannel,
 // videochannel, seichannel, vp8channel).
 package tunnel
 
@@ -72,11 +72,11 @@ type TrafficFunc = server.TrafficFunc
 type Config struct {
 	// --- carrier selection ---
 	Transport string // datachannel, videochannel, seichannel, vp8channel
-	Carrier   string // jitsi, telemost, jazz, wbstream, none
+	Carrier   string // jitsi, telemost, wbstream, none
 	RoomURL   string // conference room identifier for the carrier
 
 	// --- direct engine mode (Carrier == "none") ---
-	Engine string // livekit, goolom, salutejazz, jitsi
+	Engine string // livekit, goolom, jitsi
 	URL    string
 	Token  string
 

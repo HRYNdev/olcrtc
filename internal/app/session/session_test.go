@@ -140,15 +140,6 @@ func TestValidate(t *testing.T) {
 	}{
 		{name: "valid baseline", cfg: base},
 		{
-			name: "jazz allows empty room id",
-			cfg: func() Config {
-				cfg := base
-				cfg.Auth = "jazz"
-				cfg.RoomID = ""
-				return cfg
-			}(),
-		},
-		{
 			name: "cnc requires socks host and port",
 			cfg: func() Config {
 				cfg := base
@@ -186,7 +177,7 @@ func TestValidate(t *testing.T) {
 			want: ErrUnsupportedTransport,
 		},
 		{
-			name: "room id required for non jazz",
+			name: "room id required",
 			cfg: func() Config {
 				cfg := base
 				cfg.RoomID = ""
@@ -587,10 +578,6 @@ func TestValidateGen(t *testing.T) {
 		{
 			name: "valid wbstream",
 			cfg:  Config{Auth: testAuthWBStream, DNSServer: "1.1.1.1:53", Amount: 3},
-		},
-		{
-			name: "valid jazz",
-			cfg:  Config{Auth: "jazz", DNSServer: "1.1.1.1:53", Amount: 1},
 		},
 		{
 			name: "missing auth",

@@ -85,18 +85,14 @@ validate_key() {
 echo "Select auth provider:"
 echo "  1) jitsi"
 echo "  2) telemost"
-echo "  3) jazz"
-echo "  4) wbstream"
-read -p "Enter choice [1-4, default: 1]: " AUTH_CHOICE
+echo "  3) wbstream"
+read -p "Enter choice [1-3, default: 1]: " AUTH_CHOICE
 
 case "$AUTH_CHOICE" in
     2)
         AUTH="telemost"
         ;;
     3)
-        AUTH="jazz"
-        ;;
-    4)
         AUTH="wbstream"
         ;;
     *)

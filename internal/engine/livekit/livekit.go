@@ -3,7 +3,7 @@
 //
 // This engine is service-agnostic: it accepts a wss:// signaling URL and an
 // access token, and provides byte-stream + video-track primitives over a
-// LiveKit room. Service-specific token acquisition (e.g. WB Stream, Jazz,
+// LiveKit room. Service-specific token acquisition (e.g. WB Stream,
 // or a self-hosted LiveKit deployment) lives in the auth package.
 package livekit
 

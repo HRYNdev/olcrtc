@@ -12,19 +12,17 @@
 
 ## Матрица совместимости
 
-| Transport | telemost | jazz | wbstream | jitsi |
-|-----------|:--------:|:----:|:--------:|:-----:|
-| datachannel | - | ~ | ~ | + |
-| vp8channel | + | - | + | ~ |
-| seichannel | - | - | + | ~ |
-| videochannel | + | - | + | ~ |
+| Transport | telemost | wbstream | jitsi |
+|-----------|:--------:|:--------:|:-----:|
+| datachannel | - | ~ | + |
+| vp8channel | + | + | ~ |
+| seichannel | - | + | ~ |
+| videochannel | + | + | ~ |
 
 **Легенда:**
 - `+` - работает (pass в E2E тестах)
 - `-` - не работает / не поддерживается (fail в E2E тестах)
 - `~` - нестабильно (может работать, но нестабильно)
-
-**Jazz:** только datachannel проходит E2E тесты. Все non-data транспорты (vp8channel, seichannel, videochannel) не работают — Jazz не поддерживает VideoTrack для туннелирования. Кроме того, Jazz **банит IP** за паттерны datachannel трафика.
 
 **Telemost:** только vp8channel стабильно проходит. DataChannel удалён из Telemost. seichannel не поддерживается. videochannel — best effort.
 
@@ -45,7 +43,7 @@
 | YAML поле | Что вводить |
 |-----------|-------------|
 | `mode` | `srv` на сервере, `cnc` на клиенте, `gen` для генерации Room ID |
-| `auth.provider` | `telemost`, `jazz`, `wbstream` или `jitsi` |
+| `auth.provider` | `telemost`, `wbstream` или `jitsi` |
 | `net.transport` | `datachannel`, `vp8channel`, `seichannel` или `videochannel` |
 | `room.id` | Room ID |
 | `crypto.key` или `crypto.key_file` | Ключ шифрования hex 64 символа. Генерация: `openssl rand -hex 32` |
@@ -99,13 +97,13 @@ transport. Используй одинаковые traffic-настройки н
 
 ## mode: gen
 
-Генерирует Room ID заранее, не запуская сервер. Поддерживается для auth-провайдеров с автосозданием комнат: `jazz` и `wbstream`. Для `telemost` комнату нужно создавать вручную через сайт.
+Генерирует Room ID заранее, не запуская сервер. Поддерживается для auth-провайдеров с автосозданием комнат: `wbstream`. Для `telemost` комнату нужно создавать вручную через сайт.
 
 **Обязательные поля:**
 
 | YAML поле | Описание |
 |-----------|----------|
-| `auth.provider` | `jazz` или `wbstream` |
+| `auth.provider` | `wbstream` |
 | `net.dns` | DNS-сервер |
 | `gen.amount` | Количество комнат |
 

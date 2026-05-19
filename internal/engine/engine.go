@@ -4,7 +4,7 @@
 // byte/video primitives the rest of olcrtc consumes.
 //
 // Engines model the SFU protocol family (e.g. LiveKit, Goolom). Service-
-// specific bits (e.g. WB / Jazz / Telemost API flows) live in the auth
+// specific bits (e.g. WB / Telemost API flows) live in the auth
 // package, not here.
 package engine
 
@@ -41,7 +41,7 @@ type Credentials struct {
 // Config is the runtime input to an engine factory. URL/Token are produced by
 // an auth provider (or supplied directly by the caller for "none" auth).
 // Extra carries engine-specific fields that don't fit the common shape
-// (e.g. SaluteJazz needs a separate room password alongside the room ID).
+// (e.g. providers that need metadata beyond URL/token can pass it here).
 //
 // Refresh, when set, is called by an engine whose protocol requires fresh
 // credentials on each reconnect (e.g. Goolom: every reconnect needs a new

@@ -65,7 +65,7 @@ Important fields:
 | YAML | Runtime field | Notes |
 |---|---|---|
 | `mode` | `session.Config.Mode` | `srv`, `cnc`, or `gen`. |
-| `auth.provider` | `Auth` | `jitsi`, `telemost`, `jazz`, `wbstream`, or `none`. |
+| `auth.provider` | `Auth` | `jitsi`, `telemost`, `wbstream`, or `none`. |
 | `room.id` | `RoomID` | Carrier-specific room reference. |
 | `crypto.key` / `crypto.key_file` | `KeyHex` | Shared 32-byte key encoded as 64 hex chars. |
 | `net.transport` | `Transport` | `datachannel`, `vp8channel`, `seichannel`, or `videochannel`. |
@@ -187,7 +187,6 @@ The universal-carrier refactor centers on small registries:
 
 ```text
 carrier "wbstream" -> auth/wbstream -> engine/livekit
-carrier "jazz"    -> auth/salutejazz -> engine/salutejazz
 carrier "telemost"-> auth/telemost -> engine/goolom
 carrier "jitsi"   -> auth/jitsi -> engine/jitsi
 carrier "none"    -> direct user-supplied engine/url/token
@@ -200,7 +199,6 @@ carrier "none"    -> direct user-supplied engine/url/token
 | `jitsi` | `jitsi` | No | Parses host/room from a public or self-hosted Jitsi URL. No HTTP auth. |
 | `telemost` | `goolom` | No | Calls Telemost room-info flow and returns Goolom credentials. |
 | `wbstream` | `livekit` | Yes | Registers guest, optionally creates room, joins room, fetches LiveKit token. |
-| `jazz` / `salutejazz` | `salutejazz` | Yes | Creates or joins SaluteJazz room and returns room/password tuple. |
 | `none` | chosen by config | No | Direct engine mode for downstream tools or self-hosted SFUs. |
 
 ## Engines
@@ -212,7 +210,6 @@ Engines expose the low-level service/SFU protocol.
 | `livekit` | `internal/engine/livekit` | Yes | Yes | LiveKit SDK room, data packets, local/remote tracks, reconnect with credential refresh. |
 | `goolom` | `internal/engine/goolom` | Yes | Yes | Yandex Telemost/Goolom signaling, split publisher/subscriber peer connections, telemetry/keepalive. |
 | `jitsi` | `internal/engine/jitsi` | Yes | Best effort | Jitsi MUC/Jingle/colibri-ws plus optional video track negotiation. |
-| `salutejazz` | `internal/engine/salutejazz` | Yes | Yes | SaluteJazz WebSocket signaling and split media peer connections. |
 
 Engine work is where most provider breakage and reconnect complexity lives.
 
@@ -223,7 +220,7 @@ either a byte stream or a video track.
 
 | Transport | Primitive | Reliability model | Best fit | Notes |
 |---|---|---|---|---|
-| `datachannel` | Carrier byte stream | Native reliable ordered messages | Jitsi, direct engines, some Jazz cases | Simple pass-through with 12 KiB message cap. |
+| `datachannel` | Carrier byte stream | Native reliable ordered messages | Jitsi and direct engines | Simple pass-through with 12 KiB message cap. |
 | `vp8channel` | VP8 video track | KCP over VP8-looking frames | WB Stream and Telemost-style video paths | Highest-performance video-path transport. Uses epochs and binding tokens to survive restarts/loopback. |
 | `seichannel` | H264 SEI video track | Custom fragments + ACK/retry | WB Stream fallback | Carries data in SEI NAL units with fragmentation, CRC, ACK. |
 | `videochannel` | Visual frames via ffmpeg | QR/tile frames + ACK/retry | Experimental/inspection-friendly path | Encodes visual payload frames, requires ffmpeg, supports QR and tile codecs. |

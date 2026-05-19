@@ -7,10 +7,10 @@ mode: srv
 link: direct           # p2p link type
 
 auth:
-  provider: jitsi      # jitsi | telemost | jazz | wbstream | none
+  provider: jitsi      # jitsi | telemost | wbstream | none
 
 # For jitsi: full conference URL (https://host/room or host/room).
-# For telemost / wbstream / jazz: room ID returned by the service.
+# For telemost / wbstream: room ID returned by the service.
 room:
   id: "https://meet.small-dm.ru/REPLACE_WITH_ROOM_NAME"
 
@@ -45,7 +45,7 @@ socks:
 
 # Direct engine mode — only used when auth.provider is "none"
 engine:
-  name: ""    # livekit | goolom | salutejazz | jitsi
+  name: ""    # livekit | goolom | jitsi
   url: ""
   token: ""
 
