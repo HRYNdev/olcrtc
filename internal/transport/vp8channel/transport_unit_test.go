@@ -17,19 +17,18 @@ import (
 
 var errVP8UnitBoom = errors.New("boom")
 
-func TestSampleIntervalWithBatch(t *testing.T) {
+func TestWriterCadenceStaysAtFrameInterval(t *testing.T) {
 	tr := &streamTransport{
 		frameInterval: time.Second / 60,
 		batchSize:     64,
 	}
-	want := time.Second / 60 / 64
-	if got := tr.sampleInterval(); got != want {
-		t.Fatalf("sampleInterval() = %v, want %v", got, want)
+	if got := tr.frameInterval; got != time.Second/60 {
+		t.Fatalf("frameInterval = %v, want %v", got, time.Second/60)
 	}
 
 	tr.batchSize = 1
-	if got := tr.sampleInterval(); got != tr.frameInterval {
-		t.Fatalf("sampleInterval(batch=1) = %v, want %v", got, tr.frameInterval)
+	if got := tr.frameInterval; got != time.Second/60 {
+		t.Fatalf("frameInterval after batch change = %v, want %v", got, time.Second/60)
 	}
 }
 

@@ -79,6 +79,7 @@ func startKCP(out chan<- []byte, onData func([]byte), epochHdr [epochHdrLen]byte
 	sess.SetNoDelay(1, 5, 2, 1)
 	sess.SetWindowSize(kcpSndWnd, kcpRcvWnd)
 	sess.SetMtu(kcpMTU)
+	sess.SetStreamMode(true)
 	sess.SetACKNoDelay(true)
 	sess.SetWriteDelay(false)
 
