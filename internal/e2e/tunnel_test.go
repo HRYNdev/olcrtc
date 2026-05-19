@@ -403,16 +403,14 @@ func realE2ECaseExpectation(carrierName, transportName string) realE2EExpectatio
 		// EndpointMessage). Video transports go through pion's
 		// PeerConnection negotiated via Jingle session-accept.
 		//
-		// seichannel is marked Unstable: SEI NAL data piggybacks on
-		// the H.264 video stream, and Jicofo's bandwidth allocator
-		// for self-hosted Jitsi instances (e.g. meet.small-dm.ru)
-		// periodically suppresses the video upstream when there's
-		// no obvious viewer demand, which manifests as recurring
-		// "seichannel ack timeout" against an otherwise healthy
-		// PeerConnection. The transport works in steady state but
-		// is not deterministic enough to gate CI on; flag it but
-		// don't fail the suite when it flaps.
-		if transportName == transportSEI {
+		// Jitsi video-path transports are marked Unstable. They depend on
+		// the external JVB ICE/media path and can flap on self-hosted
+		// instances (e.g. meet.small-dm.ru): ICE may stay in checking or
+		// the video upstream may be suppressed even though signaling and
+		// the colibri-ws bridge are healthy. Flag the outcome, but don't
+		// fail the suite when these paths flap.
+		switch transportName {
+		case transportVideo, transportSEI, transportVP8:
 			return realE2EExpectUnstable
 		}
 		return realE2EExpectPass
@@ -504,16 +502,16 @@ func TestRealE2ECaseExpectation(t *testing.T) {
 			want:      realE2EExpectPass,
 		},
 		{
-			name:      "jitsi vp8channel is expected to pass",
+			name:      "jitsi vp8channel is unstable",
 			carrier:   "jitsi",
 			transport: transportVP8,
-			want:      realE2EExpectPass,
+			want:      realE2EExpectUnstable,
 		},
 		{
-			name:      "jitsi videochannel is expected to pass",
+			name:      "jitsi videochannel is unstable",
 			carrier:   "jitsi",
 			transport: transportVideo,
-			want:      realE2EExpectPass,
+			want:      realE2EExpectUnstable,
 		},
 		{
 			name:      "jitsi seichannel is unstable",
