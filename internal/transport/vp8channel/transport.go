@@ -96,10 +96,11 @@ type streamTransport struct {
 	frameInterval time.Duration
 	batchSize     int
 
-	// localEpoch is bumped on every KCP session restart and stamped into
-	// every outgoing VP8 frame. peerEpoch tracks the last epoch we observed
-	// from the remote so we can detect their restart and reset locally.
+	// localEpoch is stamped into every outgoing VP8 frame. Explicit
+	// upper-layer resets rotate it so the peer can reset its KCP state too.
+	// Peer-triggered resets keep it stable to avoid reset ping-pong.
 	bindingToken uint32
+	epochMu      sync.RWMutex
 	localEpoch   uint32
 	peerEpoch    atomic.Uint32
 	hadPeer      atomic.Bool
@@ -204,7 +205,7 @@ func (p *streamTransport) Connect(ctx context.Context) error {
 		p.kcpMu.Lock()
 		p.kcp = rt
 		p.kcpMu.Unlock()
-		logger.Infof("vp8channel: KCP started localEpoch=0x%08x", p.localEpoch)
+		logger.Infof("vp8channel: KCP started localEpoch=0x%08x", p.localEpochValue())
 	})
 
 	p.writerOnce.Do(func() {
@@ -218,12 +219,39 @@ func (p *streamTransport) Connect(ctx context.Context) error {
 // epochHeader returns the 5-byte VP8-frame header used to tag every KCP
 // packet sent in the current local session.
 func (p *streamTransport) epochHeader() [epochHdrLen]byte {
+	p.epochMu.RLock()
+	epoch := p.localEpoch
+	p.epochMu.RUnlock()
+	return buildEpochHeader(p.bindingToken, epoch)
+}
+
+func buildEpochHeader(token, epoch uint32) [epochHdrLen]byte {
 	var hdr [epochHdrLen]byte
 	copy(hdr[:], vp8Keepalive)
-	binary.BigEndian.PutUint32(hdr[tokenOff:epochOff], p.bindingToken)
-	binary.BigEndian.PutUint32(hdr[epochOff:crcOff], p.localEpoch)
-	binary.BigEndian.PutUint32(hdr[crcOff:epochHdrLen], epochCRC(p.bindingToken, p.localEpoch))
+	binary.BigEndian.PutUint32(hdr[tokenOff:epochOff], token)
+	binary.BigEndian.PutUint32(hdr[epochOff:crcOff], epoch)
+	binary.BigEndian.PutUint32(hdr[crcOff:epochHdrLen], epochCRC(token, epoch))
 	return hdr
+}
+
+func (p *streamTransport) rotateEpochHeader() [epochHdrLen]byte {
+	p.epochMu.Lock()
+	for {
+		next := randomEpoch()
+		if next != p.localEpoch {
+			p.localEpoch = next
+			break
+		}
+	}
+	epoch := p.localEpoch
+	p.epochMu.Unlock()
+	return buildEpochHeader(p.bindingToken, epoch)
+}
+
+func (p *streamTransport) localEpochValue() uint32 {
+	p.epochMu.RLock()
+	defer p.epochMu.RUnlock()
+	return p.localEpoch
 }
 
 func epochCRC(token, epoch uint32) uint32 {
@@ -311,6 +339,14 @@ func (p *streamTransport) drainOutbound() {
 			return
 		}
 	}
+}
+
+// ResetPeer drops queued KCP traffic and starts a fresh KCP state machine while
+// keeping the carrier connection alive. The client/server liveness layer calls
+// this before rebuilding smux so replacement handshakes are not parsed behind
+// stale bytes from streams that were active when the old session died.
+func (p *streamTransport) ResetPeer() {
+	p.restartKCP(p.rotateEpochHeader())
 }
 
 func (p *streamTransport) SetReconnectCallback(cb func()) {
@@ -407,6 +443,10 @@ func (p *streamTransport) sampleInterval() time.Duration {
 }
 
 func (p *streamTransport) resetKCP() {
+	p.restartKCP(p.epochHeader())
+}
+
+func (p *streamTransport) restartKCP(epochHdr [epochHdrLen]byte) {
 	p.drainOutbound()
 	p.kcpMu.Lock()
 	old := p.kcp
@@ -415,12 +455,7 @@ func (p *streamTransport) resetKCP() {
 	if old != nil {
 		old.close()
 	}
-	// Note: localEpoch is intentionally NOT bumped here. The epoch is a
-	// per-process identifier set once in New(). If we changed it on every
-	// peer-triggered reset, the peer would see a "new" epoch from us, reset
-	// itself, send back its (unchanged) epoch which we'd then see as "new"
-	// again - and the two sides would loop forever tearing down smux.
-	rt, err := startKCP(p.outbound, p.onData, p.epochHeader())
+	rt, err := startKCP(p.outbound, p.onData, epochHdr)
 	if err != nil {
 		return
 	}
@@ -552,7 +587,7 @@ func (p *streamTransport) handleIncomingFrame(frame []byte) {
 	// remote track. Those frames carry our local epoch, not the peer's. If we
 	// treat them as peer traffic, epoch tracking toggles between "self" and
 	// "peer" and both sides loop forever resetting smux/KCP.
-	if peerEpoch == p.localEpoch {
+	if peerEpoch == p.localEpochValue() {
 		logger.Debugf("vp8channel: self-echo detected epoch=0x%08x (SFU reflects our own track)", peerEpoch)
 		return
 	}

@@ -90,10 +90,10 @@ func (s *fakeEngineSession) SetEndedCallback(cb func(string))  { s.stream.SetEnd
 func (s *fakeEngineSession) WatchConnection(ctx context.Context) {
 	s.stream.WatchConnection(ctx)
 }
-func (s *fakeEngineSession) CanSend() bool                            { return s.stream.CanSend() }
-func (s *fakeEngineSession) GetSendQueue() chan []byte                { return nil }
-func (s *fakeEngineSession) GetBufferedAmount() uint64                { return 0 }
-func (s *fakeEngineSession) AddVideoTrack(t webrtc.TrackLocal) error  { return s.stream.AddTrack(t) }
+func (s *fakeEngineSession) CanSend() bool                           { return s.stream.CanSend() }
+func (s *fakeEngineSession) GetSendQueue() chan []byte               { return nil }
+func (s *fakeEngineSession) GetBufferedAmount() uint64               { return 0 }
+func (s *fakeEngineSession) AddVideoTrack(t webrtc.TrackLocal) error { return s.stream.AddTrack(t) }
 func (s *fakeEngineSession) SetVideoTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver)) {
 	s.stream.SetTrackHandler(cb)
 }
@@ -227,6 +227,50 @@ func TestEpochHeaderTokenAndOutboundCapacity(t *testing.T) {
 	tr.closed.Store(true)
 	if tr.CanSend() {
 		t.Fatal("CanSend() = true after closed")
+	}
+}
+
+func TestResetPeerRestartsKCPAndDrainsOutbound(t *testing.T) {
+	tr := &streamTransport{
+		stream:       &fakeVideoStream{canSend: true},
+		outbound:     make(chan []byte, 10),
+		closeCh:      make(chan struct{}),
+		writerDone:   make(chan struct{}),
+		bindingToken: bindingToken("client"),
+		localEpoch:   0x01020304,
+	}
+	defer func() {
+		_ = tr.Close()
+	}()
+
+	rt, err := startKCP(tr.outbound, nil, tr.epochHeader())
+	if err != nil {
+		t.Fatalf("startKCP: %v", err)
+	}
+	tr.kcpMu.Lock()
+	tr.kcp = rt
+	tr.kcpMu.Unlock()
+	tr.outbound <- []byte("stale")
+	oldEpoch := tr.localEpoch
+
+	tr.ResetPeer()
+
+	tr.kcpMu.RLock()
+	got := tr.kcp
+	tr.kcpMu.RUnlock()
+	if got == nil || got == rt {
+		t.Fatalf("ResetPeer kcp = %p, want fresh non-nil runtime distinct from %p", got, rt)
+	}
+	if len(tr.outbound) != 0 {
+		t.Fatalf("ResetPeer left %d outbound frame(s), want 0", len(tr.outbound))
+	}
+	if tr.localEpoch == oldEpoch {
+		t.Fatalf("ResetPeer localEpoch = %#x, want different epoch", tr.localEpoch)
+	}
+	select {
+	case <-rt.readDone:
+	case <-time.After(time.Second):
+		t.Fatal("old KCP runtime did not stop")
 	}
 }
 
