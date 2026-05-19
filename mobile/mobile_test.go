@@ -106,7 +106,6 @@ func TestDefaultsAndSetters(t *testing.T) {
 	}
 }
 
-//nolint:cyclop // table-driven test naturally has many branches
 func TestNormalizeBuildRoomAndClamp(t *testing.T) {
 	tests := map[string]string{
 		"datachannel": dataTransport,
