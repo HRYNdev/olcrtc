@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/control"
-	"github.com/openlibrecommunity/olcrtc/internal/crypto"
+	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 )
 
 const testBadDuration = "nope"
@@ -511,10 +511,10 @@ func TestValidate(t *testing.T) {
 			want: ErrTrafficMaxPayloadSizeInvalid,
 		},
 		{
-			name: "traffic rejects payload smaller than crypto overhead",
+			name: "traffic rejects payload too small for encrypted smux frame",
 			cfg: func() Config {
 				cfg := base
-				cfg.TrafficMaxPayloadSize = crypto.WireOverhead
+				cfg.TrafficMaxPayloadSize = runtime.MinSmuxWirePayload - 1
 				return cfg
 			}(),
 			want: ErrTrafficMaxPayloadSizeInvalid,

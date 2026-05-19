@@ -13,10 +13,10 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/auth"
 	"github.com/openlibrecommunity/olcrtc/internal/client"
 	"github.com/openlibrecommunity/olcrtc/internal/control"
-	"github.com/openlibrecommunity/olcrtc/internal/crypto"
 	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/names"
+	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 	"github.com/openlibrecommunity/olcrtc/internal/server"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
 	"github.com/openlibrecommunity/olcrtc/internal/transport/datachannel"
@@ -549,7 +549,7 @@ func validateTrafficConfig(cfg Config) error {
 
 func trafficConfig(cfg Config) (transport.TrafficConfig, error) {
 	if cfg.TrafficMaxPayloadSize < 0 || (cfg.TrafficMaxPayloadSize > 0 &&
-		cfg.TrafficMaxPayloadSize <= crypto.WireOverhead) {
+		cfg.TrafficMaxPayloadSize < runtime.MinSmuxWirePayload) {
 		return transport.TrafficConfig{}, ErrTrafficMaxPayloadSizeInvalid
 	}
 	minDelay, err := parseOptionalNonNegativeDuration(cfg.TrafficMinDelay)
