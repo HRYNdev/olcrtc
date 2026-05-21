@@ -102,7 +102,7 @@ cd olcrtc
 
 Выбери сервис. Полную матрицу совместимости смотри в [settings.md](settings.md).
 
-**По умолчанию `jitsi`** — стабильно работает на datachannel против self-hosted и публичных Jitsi инстансов (например `meet.small-dm.ru`).
+**По умолчанию `jitsi`** — стабильно работает на datachannel против self-hosted и публичных Jitsi инстансов (например `meet.cryptopro.ru`).
 
 ### Transport (как именно передавать данные)
 
@@ -129,7 +129,7 @@ cd olcrtc
 Введите Room ID:
 ```
 
-Для **jitsi** — полный URL комнаты в формате `https://host/room` (например `https://meet.small-dm.ru/myroom`). Имя комнаты придумывается на лету, без регистрации. Подойдёт любой публичный или self-hosted Jitsi Meet.
+Для **jitsi** — полный URL комнаты в формате `https://host/room` (например `https://meet.cryptopro.ru/myroom`). Имя комнаты придумывается на лету, без регистрации. Подойдёт любой публичный или self-hosted Jitsi Meet.
 
 Для **telemost** и **wbstream** - создай руму через сайт ([телемост](https://telemost.yandex.ru/), [wbstream](https://stream.wb.ru)) и вставь её ID.
 

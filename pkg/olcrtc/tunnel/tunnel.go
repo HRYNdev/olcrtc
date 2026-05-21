@@ -7,7 +7,7 @@
 //	srv := tunnel.New(tunnel.Config{
 //	    Transport: "datachannel",
 //	    Carrier:   "jitsi",
-//	    RoomURL:   "https://meet.small-dm.ru/myroom",
+//	    RoomURL:   "https://meet.cryptopro.ru/myroom",
 //	    KeyHex:    "<64-char hex>",
 //	    DNSServer: "8.8.8.8:53",
 //	    AuthHook: func(deviceID string, claims map[string]any) (string, error) {

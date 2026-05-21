@@ -80,7 +80,7 @@ mode: srv
 auth:
   provider: jitsi
 room:
-  id: "https://meet.small-dm.ru/myroom"
+  id: "https://meet.cryptopro.ru/myroom"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:
@@ -96,7 +96,7 @@ mode: cnc
 auth:
   provider: jitsi
 room:
-  id: "https://meet.small-dm.ru/myroom"
+  id: "https://meet.cryptopro.ru/myroom"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:
