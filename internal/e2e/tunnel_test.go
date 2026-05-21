@@ -278,6 +278,7 @@ func (s *memoryStream) CanSend() bool {
 }
 func (s *memoryStream) GetSendQueue() chan []byte { return nil }
 func (s *memoryStream) GetBufferedAmount() uint64 { return 0 }
+func (s *memoryStream) Reconnect(string)          {}
 func (s *memoryStream) Capabilities() engine.Capabilities {
 	return engine.Capabilities{ByteStream: true, VideoTrack: true}
 }

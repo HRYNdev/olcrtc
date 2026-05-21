@@ -226,6 +226,7 @@ func (s *serverLinkStub) SetEndedCallback(func(string))   {}
 func (s *serverLinkStub) WatchConnection(context.Context) {}
 func (s *serverLinkStub) CanSend() bool                   { return true }
 func (s *serverLinkStub) Features() transport.Features    { return transport.Features{} }
+func (s *serverLinkStub) Reconnect(string)                {}
 func (s *serverLinkStub) ResetPeer() {
 	s.resetCount++
 	if s.resetCh != nil {

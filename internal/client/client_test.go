@@ -544,6 +544,7 @@ func (s *closerLinkStub) SetEndedCallback(func(string))   {}
 func (s *closerLinkStub) WatchConnection(context.Context) {}
 func (s *closerLinkStub) CanSend() bool                   { return true }
 func (s *closerLinkStub) Features() transport.Features    { return transport.Features{} }
+func (s *closerLinkStub) Reconnect(string)                {}
 func (s *closerLinkStub) ResetPeer()                      { s.resetCount++ }
 
 func TestOnDataWithNilConn(_ *testing.T) {

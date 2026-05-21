@@ -1062,6 +1062,11 @@ func (s *Session) WatchConnection(ctx context.Context) {
 	}
 }
 
+// Reconnect asks the jitsi session to tear down its bridge connection and
+// re-establish it. Triggered by upper layers when liveness probes declare the
+// carrier dead before jitsi has noticed.
+func (s *Session) Reconnect(reason string) { s.requestReconnect(reason) }
+
 func (s *Session) requestReconnect(reason string) {
 	s.bridgeReady.Store(false)
 	if s.closed.Load() || s.reconnecting.Load() {

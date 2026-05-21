@@ -80,6 +80,7 @@ type videoSession interface {
 	SetEndedCallback(cb func(string))
 	WatchConnection(ctx context.Context)
 	CanSend() bool
+	Reconnect(reason string)
 	AddTrack(track webrtc.TrackLocal) error
 	SetTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver))
 }
@@ -349,6 +350,11 @@ func (p *streamTransport) drainOutbound() {
 // stale bytes from streams that were active when the old session died.
 func (p *streamTransport) ResetPeer() {
 	p.restartKCP(p.rotateEpochHeader())
+}
+
+// Reconnect forwards to the underlying engine session.
+func (p *streamTransport) Reconnect(reason string) {
+	p.stream.Reconnect(reason)
 }
 
 func (p *streamTransport) SetReconnectCallback(cb func()) {

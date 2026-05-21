@@ -432,6 +432,17 @@ func (s *Session) queueReconnect() bool {
 	return true
 }
 
+// Reconnect asks the LiveKit session to tear down its room handle and rejoin.
+// Triggered by upper layers when liveness probes declare the carrier dead
+// before LiveKit has noticed (silent data-path black-hole).
+func (s *Session) Reconnect(reason string) {
+	if s.closed.Load() {
+		return
+	}
+	logger.Infof("livekit reconnect requested: %s", reason)
+	s.queueReconnect()
+}
+
 func (s *Session) drainReconnectQueue() {
 	for {
 		select {

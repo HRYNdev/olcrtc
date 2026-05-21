@@ -77,6 +77,12 @@ type Session interface {
 	GetSendQueue() chan []byte
 	GetBufferedAmount() uint64
 	Capabilities() Capabilities
+	// Reconnect asks the engine to tear down and re-establish the underlying
+	// SFU connection. Used by upper layers when a liveness probe declares the
+	// carrier dead before the engine has noticed (e.g. silent packet loss on
+	// a video track). Implementations should be best-effort and idempotent;
+	// reason is logged for diagnostics.
+	Reconnect(reason string)
 }
 
 // PeerSession is implemented by engines that can address byte payloads to a
