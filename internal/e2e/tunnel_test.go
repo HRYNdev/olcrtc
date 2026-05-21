@@ -20,8 +20,6 @@ import (
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/app/session"
-	"github.com/openlibrecommunity/olcrtc/internal/auth"
-	authWBStream "github.com/openlibrecommunity/olcrtc/internal/auth/wbstream"
 	"github.com/openlibrecommunity/olcrtc/internal/client"
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
@@ -526,11 +524,9 @@ func realRoomURL(ctx context.Context, t *testing.T, carrierName string) string {
 		if *realE2EWBStreamRoom != "" {
 			return *realE2EWBStreamRoom
 		}
-		room, err := authWBStream.Provider{}.CreateRoom(ctx, auth.Config{Name: "olcrtc-e2e-room"})
-		if err != nil {
-			t.Skipf("skip wbstream real e2e: create room failed: %v", err)
-		}
-		return room
+		_ = ctx
+		t.Skip("skip wbstream real e2e: set -olcrtc.real-wbstream-room to an existing room ID")
+		return ""
 	case "jitsi":
 		// Jitsi has no notion of "creating" a room — names are conjured
 		// on first join. The default flag points at meet.small-dm.ru

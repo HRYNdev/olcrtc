@@ -240,9 +240,8 @@ func (s *Session) SetShouldReconnect(fn func() bool) {
 }
 
 // CreateRoom creates a new room via the auth provider and returns the room ID.
-// Only works when the session was created with Auth set to a provider that
-// supports room creation (wbstream). Returns [ErrRoomCreationUnsupported]
-// for providers that don't support it (e.g. telemost).
+// Only works when Auth names a provider that supports room creation. Built-in
+// providers currently return [ErrRoomCreationUnsupported].
 func CreateRoom(ctx context.Context, authName string) (string, error) {
 	p, err := auth.Get(authName)
 	if err != nil {

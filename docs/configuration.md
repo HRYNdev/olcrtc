@@ -183,22 +183,7 @@ failover:
 
 ## mode: gen
 
-`gen` создаёт Room ID заранее и печатает их в stdout. Сейчас это полезно прежде всего для `wbstream`, потому что его auth-провайдер реализует создание комнат.
-
-```yaml
-mode: gen
-auth:
-  provider: wbstream
-crypto:
-  key: "REPLACE_ME_WITH_64_HEX_CHARS"
-net:
-  transport: vp8channel
-  dns: "1.1.1.1:53"
-gen:
-  amount: 3
-data: data
-```
-
-```bash
-olcrtc gen.yaml
-```
+`gen` оставлен для auth-провайдеров, которые реализуют создание комнат через API.
+Текущие встроенные провайдеры (`jitsi`, `telemost`, `wbstream`) не создают комнаты
+через `olcrtc`: для `telemost` и `wbstream` создай комнату на сайте сервиса и
+вставь её в `room.id`; для `jitsi` укажи URL комнаты.

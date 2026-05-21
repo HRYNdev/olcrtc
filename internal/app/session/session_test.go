@@ -576,8 +576,9 @@ func TestValidateGen(t *testing.T) {
 		want error
 	}{
 		{
-			name: "valid wbstream",
+			name: "wbstream room generation unsupported",
 			cfg:  Config{Auth: testAuthWBStream, DNSServer: "1.1.1.1:53", Amount: 3},
+			want: ErrUnsupportedCarrier,
 		},
 		{
 			name: "missing auth",

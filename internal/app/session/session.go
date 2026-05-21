@@ -757,6 +757,13 @@ func ValidateGen(cfg Config) error {
 	if cfg.Amount < 1 {
 		return ErrAmountRequired
 	}
+	p, err := auth.Get(cfg.Auth)
+	if err != nil {
+		return fmt.Errorf("%w: %s", ErrUnsupportedCarrier, cfg.Auth)
+	}
+	if _, ok := p.(auth.RoomCreator); !ok {
+		return fmt.Errorf("%w: %s does not support room generation", ErrUnsupportedCarrier, cfg.Auth)
+	}
 	return nil
 }
 

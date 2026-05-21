@@ -176,7 +176,7 @@ data: data
 
 ### wbstream + vp8channel (альтернатива)
 
-Создай руму через сайт [wbstream](https://stream.wb.ru) или заранее сгенерируй ID через `mode: gen` с `auth.provider: wbstream`.
+Создай руму через сайт [wbstream](https://stream.wb.ru) и вставь её ID в `room.id`.
 
 `wbstream + datachannel` **не работает** в обычном guest flow — WB Stream выдаёт токены с `canPublishData=false`, и DC не маршрутизирует данные. Для обычного использования выбирай `vp8channel`.
 
