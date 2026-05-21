@@ -4,7 +4,7 @@
 mode: srv
 
 auth:
-  provider: jitsi      # jitsi | telemost | wbstream | none
+  provider: jitsi # jitsi | telemost | wbstream
 
 # Для jitsi: полный URL комнаты (https://host/room или host/room).
 # Для telemost / wbstream: Room ID, который вернул сервис.
@@ -17,7 +17,7 @@ crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 
 net:
-  transport: datachannel   # datachannel | videochannel | seichannel | vp8channel
+  transport: datachannel # datachannel | videochannel | seichannel | vp8channel
   dns: "8.8.8.8:53"
 
 liveness:
@@ -37,12 +37,12 @@ liveness:
 
 # Исходящий SOCKS5-прокси на серверной стороне (необязательно).
 socks:
-  proxy_addr: ""           # например "127.0.0.1"
-  proxy_port: 0            # например 1080
+  proxy_addr: "" # например "127.0.0.1"
+  proxy_port: 0 # например 1080
 
 # Прямой engine-режим: используется только при auth.provider: none.
 engine:
-  name: ""    # livekit | goolom | jitsi
+  name: "" # livekit | goolom | jitsi
   url: ""
   token: ""
 
@@ -64,13 +64,13 @@ video:
   height: 1080
   fps: 30
   bitrate: "2M"
-  hw: none           # none | nvenc
-  codec: qrcode      # qrcode | tile (для tile нужно 1080x1080)
-  qr_size: 0         # 0 = авто
-  qr_recovery: low   # low (7%) | medium (15%) | high (25%) | highest (30%)
-  tile_module: 4     # 1..270, только для codec: tile
-  tile_rs: 20        # 0..200, только для codec: tile
+  hw: none # none | nvenc
+  codec: qrcode # qrcode | tile (для tile нужно 1080x1080)
+  qr_size: 0 # 0 = авто
+  qr_recovery: low # low (7%) | medium (15%) | high (25%) | highest (30%)
+  tile_module: 4 # 1..270, только для codec: tile
+  tile_rs: 20 # 0..200, только для codec: tile
 
-data: data           # директория с runtime-данными (names, surnames)
+data: data # директория с runtime-данными (names, surnames)
 debug: false
-ffmpeg: ffmpeg       # путь к ffmpeg, нужен только videochannel
+ffmpeg: ffmpeg # путь к ffmpeg, нужен только videochannel
