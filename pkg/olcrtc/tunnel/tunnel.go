@@ -9,7 +9,7 @@
 //	    Carrier:   "jitsi",
 //	    RoomURL:   "https://meet.small-dm.ru/myroom",
 //	    KeyHex:    "<64-char hex>",
-//	    DNSServer: "1.1.1.1:53",
+//	    DNSServer: "8.8.8.8:53",
 //	    AuthHook: func(deviceID string, claims map[string]any) (string, error) {
 //	        // reject unknown devices, enrich session with a DB-issued ID
 //	        return db.IssueSession(deviceID, claims)
@@ -82,7 +82,7 @@ type Config struct {
 
 	// --- crypto & networking ---
 	KeyHex         string // 64-char hex (32 bytes) shared with the client
-	DNSServer      string // resolver used for target dials, e.g. "1.1.1.1:53"
+	DNSServer      string // resolver used for target dials, e.g. "8.8.8.8:53"
 	SOCKSProxyAddr string // optional outbound SOCKS5 proxy host
 	SOCKSProxyPort int    // optional outbound SOCKS5 proxy port
 

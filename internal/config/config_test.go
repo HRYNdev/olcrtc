@@ -14,6 +14,7 @@ const (
 	testAuthProvider = "wbstream"
 	testRoomID       = "r1"
 	testCryptoKey    = "deadbeef"
+	testDNSServer    = "8.8.8.8:53"
 )
 
 func TestLoadAndApply(t *testing.T) {
@@ -30,7 +31,7 @@ crypto:
   key: deadbeef
 net:
   transport: datachannel
-  dns: 1.1.1.1:53
+  dns: 8.8.8.8:53
 socks:
   host: 127.0.0.1
   port: 1080
@@ -91,7 +92,7 @@ func requireAppliedConfig(t *testing.T, got session.Config) {
 		RoomID:                testRoomID,
 		KeyHex:                testCryptoKey,
 		Transport:             "datachannel",
-		DNSServer:             "1.1.1.1:53",
+		DNSServer:             testDNSServer,
 		SOCKSHost:             "127.0.0.1",
 		SOCKSPort:             1080,
 		SOCKSUser:             "u",
@@ -147,7 +148,7 @@ link: direct
 crypto:
   key: shared-key
 net:
-  dns: 1.1.1.1:53
+  dns: 8.8.8.8:53
 liveness:
   interval: 5s
   timeout: 2s
@@ -207,7 +208,7 @@ failover:
 	if first.Auth != "wbstream" || first.Transport != "vp8channel" || first.RoomID != "wb-room" {
 		t.Fatalf("first profile = %+v", first)
 	}
-	if first.KeyHex != "shared-key" || first.DNSServer != "1.1.1.1:53" || first.VP8.FPS != 30 ||
+	if first.KeyHex != "shared-key" || first.DNSServer != testDNSServer || first.VP8.FPS != 30 ||
 		first.LivenessInterval != "1s" || first.LivenessTimeout != "2s" || first.LivenessFailures != 5 ||
 		first.MaxSessionDuration != "30m" || first.TrafficMaxPayloadSize != 4096 ||
 		first.TrafficMinDelay != "10ms" || first.TrafficMaxDelay != "20ms" {
@@ -215,7 +216,7 @@ failover:
 	}
 	second := ApplyProfile(base, f.Profiles[1])
 	if second.Auth != "jitsi" || second.Transport != "datachannel" ||
-		second.RoomID != "https://meet.example/room" || second.DNSServer != "8.8.8.8:53" {
+		second.RoomID != "https://meet.example/room" || second.DNSServer != testDNSServer {
 		t.Fatalf("second profile = %+v", second)
 	}
 	if second.LivenessInterval != "5s" || second.LivenessTimeout != "2s" || second.LivenessFailures != 5 ||

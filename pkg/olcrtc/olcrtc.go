@@ -67,7 +67,7 @@ type Config struct {
 	// --- common ---
 	// Name is the display name used when joining the room.
 	Name string
-	// DNSServer is an optional custom DNS resolver (e.g. "1.1.1.1:53").
+	// DNSServer is an optional custom DNS resolver (e.g. "8.8.8.8:53").
 	DNSServer string
 	// ProxyAddr / ProxyPort configure an outbound SOCKS5 proxy.
 	ProxyAddr string

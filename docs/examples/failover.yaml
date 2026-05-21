@@ -7,7 +7,7 @@ crypto:
   key_file: "./olcrtc.key"
 
 net:
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 
 liveness:
   interval: 10s

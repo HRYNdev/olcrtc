@@ -130,7 +130,7 @@ func TestValidate(t *testing.T) {
 		Auth:      "telemost",
 		RoomID:    "room-1",
 		KeyHex:    "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
-		DNSServer: "1.1.1.1:53", //nolint:goconst // test literal, repetition is intentional
+		DNSServer: "8.8.8.8:53", //nolint:goconst // test literal, repetition is intentional
 	}
 
 	tests := []struct {
@@ -577,17 +577,17 @@ func TestValidateGen(t *testing.T) {
 	}{
 		{
 			name: "wbstream room generation unsupported",
-			cfg:  Config{Auth: testAuthWBStream, DNSServer: "1.1.1.1:53", Amount: 3},
+			cfg:  Config{Auth: testAuthWBStream, DNSServer: "8.8.8.8:53", Amount: 3},
 			want: ErrUnsupportedCarrier,
 		},
 		{
 			name: "missing auth",
-			cfg:  Config{DNSServer: "1.1.1.1:53", Amount: 1},
+			cfg:  Config{DNSServer: "8.8.8.8:53", Amount: 1},
 			want: ErrAuthRequired,
 		},
 		{
 			name: "unsupported auth",
-			cfg:  Config{Auth: "unknown", DNSServer: "1.1.1.1:53", Amount: 1},
+			cfg:  Config{Auth: "unknown", DNSServer: "8.8.8.8:53", Amount: 1},
 			want: ErrUnsupportedCarrier,
 		},
 		{
@@ -597,12 +597,12 @@ func TestValidateGen(t *testing.T) {
 		},
 		{
 			name: "amount zero",
-			cfg:  Config{Auth: testAuthWBStream, DNSServer: "1.1.1.1:53", Amount: 0},
+			cfg:  Config{Auth: testAuthWBStream, DNSServer: "8.8.8.8:53", Amount: 0},
 			want: ErrAmountRequired,
 		},
 		{
 			name: "amount negative",
-			cfg:  Config{Auth: testAuthWBStream, DNSServer: "1.1.1.1:53", Amount: -1},
+			cfg:  Config{Auth: testAuthWBStream, DNSServer: "8.8.8.8:53", Amount: -1},
 			want: ErrAmountRequired,
 		},
 	}
@@ -625,7 +625,7 @@ func TestValidateGen(t *testing.T) {
 
 func TestGenUnsupportedAuth(t *testing.T) {
 	RegisterDefaults()
-	cfg := Config{Auth: "telemost", DNSServer: "1.1.1.1:53", Amount: 1}
+	cfg := Config{Auth: "telemost", DNSServer: "8.8.8.8:53", Amount: 1}
 	err := Gen(context.Background(), cfg, func(string) {})
 	if !errors.Is(err, ErrUnsupportedCarrier) {
 		t.Fatalf("Gen(telemost) error = %v, want ErrUnsupportedCarrier", err)

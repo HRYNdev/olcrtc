@@ -52,7 +52,7 @@ var (
 const (
 	defaultTransport   = "vp8channel"
 	dataTransport      = "datachannel"
-	defaultDNSServer   = "1.1.1.1:53"
+	defaultDNSServer   = "8.8.8.8:53"
 	defaultHTTPPingURL = "https://www.google.com/generate_204"
 	carrierWBStream    = "wbstream"
 )

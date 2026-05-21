@@ -16,7 +16,7 @@ func TestRun_FailsWithoutKey(t *testing.T) {
 		Transport: "datachannel",
 		Carrier:   "telemost",
 		RoomURL:   "room-1",
-		DNSServer: "1.1.1.1:53",
+		DNSServer: "8.8.8.8:53",
 	}).Run(context.Background())
 	if err == nil {
 		t.Fatal("Run(no key) error = nil")

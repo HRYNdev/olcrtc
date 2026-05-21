@@ -16,7 +16,7 @@ var errBoom = errors.New("boom")
 
 const (
 	testAuthWBStream = "wbstream"
-	testDNSServer    = "1.1.1.1:53"
+	testDNSServer    = "8.8.8.8:53"
 )
 
 func writeYAML(t *testing.T, body string) string {
@@ -90,7 +90,7 @@ func TestRunWithConfigValidationAndDataDirErrors(t *testing.T) {
 		Auth:      "jitsi",
 		RoomID:    "https://meet.small-dm.ru/test",
 		KeyHex:    "key",
-		DNSServer: "1.1.1.1:53",
+		DNSServer: "8.8.8.8:53",
 	}
 	if err := runWithConfig(loadedConfig{scfg: scfg}); !errors.Is(err, ErrDataDirRequired) {
 		t.Fatalf("runWithConfig(no data dir) = %v, want %v", err, ErrDataDirRequired)
@@ -140,7 +140,7 @@ crypto:
   key: key
 net:
   transport: datachannel
-  dns: 1.1.1.1:53
+  dns: 8.8.8.8:53
 data: `+dir+`
 `)
 
@@ -181,7 +181,7 @@ crypto:
   key: key
 net:
   transport: vp8channel
-  dns: 1.1.1.1:53
+  dns: 8.8.8.8:53
 data: `+dir+`
 `)
 
@@ -216,7 +216,7 @@ link: direct
 crypto:
   key: key
 net:
-  dns: 1.1.1.1:53
+  dns: 8.8.8.8:53
 profiles:
   - name: wb-primary
     auth:

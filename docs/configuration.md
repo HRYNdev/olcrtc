@@ -85,7 +85,7 @@ crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:
   transport: datachannel
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 data: data
 ```
 
@@ -101,7 +101,7 @@ crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:
   transport: datachannel
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 socks:
   host: "127.0.0.1"
   port: 8808
@@ -154,7 +154,7 @@ mode: srv
 crypto:
   key_file: ./olcrtc.key
 net:
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 data: data
 
 profiles:

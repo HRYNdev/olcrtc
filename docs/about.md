@@ -117,12 +117,12 @@ mode: srv
 auth:
   provider: jitsi
 room:
-  id: "https://meet.small-dm.ru/myroom"
+  id: "https://meet.small-dm.ru/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:
   transport: datachannel
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 data: data
 ```
 
@@ -133,12 +133,12 @@ mode: cnc
 auth:
   provider: jitsi
 room:
-  id: "https://meet.small-dm.ru/myroom"
+  id: "https://meet.small-dm.ru/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:
   transport: datachannel
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 socks:
   host: "127.0.0.1"
   port: 8808
@@ -215,7 +215,7 @@ srv := tunnel.New(tunnel.Config{
     Carrier:   "jitsi",
     RoomURL:   "https://meet.small-dm.ru/myroom",
     KeyHex:    "<64-char hex>",
-    DNSServer: "1.1.1.1:53",
+    DNSServer: "8.8.8.8:53",
 })
 err := srv.Run(ctx)
 ```

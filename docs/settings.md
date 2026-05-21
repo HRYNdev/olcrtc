@@ -48,7 +48,7 @@
 | `room.id` | Room ID |
 | `crypto.key` или `crypto.key_file` | Ключ шифрования hex 64 символа. Генерация: `openssl rand -hex 32` |
 | `data` | Всегда `data` |
-| `net.dns` | DNS-сервер, например `1.1.1.1:53` |
+| `net.dns` | DNS-сервер, например `8.8.8.8:53` |
 
 ---
 
@@ -201,7 +201,7 @@ crypto:
   key: "<hex-key>"
 net:
   transport: datachannel
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 data: data
 ```
 
@@ -216,7 +216,7 @@ crypto:
   key: "<hex-key>"
 net:
   transport: datachannel
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 socks:
   host: "127.0.0.1"
   port: 8808
@@ -236,7 +236,7 @@ crypto:
   key: "<hex-key>"
 net:
   transport: datachannel
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 socks:
   host: "127.0.0.1"
   port: 8808
@@ -267,7 +267,7 @@ crypto:
   key: "<hex-key>"
 net:
   transport: vp8channel
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 vp8:
   fps: 60
   batch_size: 64
@@ -285,7 +285,7 @@ crypto:
   key: "<hex-key>"
 net:
   transport: vp8channel
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 socks:
   host: "127.0.0.1"
   port: 8808
@@ -310,7 +310,7 @@ crypto:
   key: "<hex-key>"
 net:
   transport: seichannel
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 sei:
   fps: 60
   batch_size: 64
@@ -330,7 +330,7 @@ crypto:
   key: "<hex-key>"
 net:
   transport: seichannel
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 socks:
   host: "127.0.0.1"
   port: 8808
@@ -355,7 +355,7 @@ crypto:
   key: "<hex-key>"
 net:
   transport: videochannel
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 video:
   codec: qrcode
   width: 1080
@@ -377,7 +377,7 @@ crypto:
   key: "<hex-key>"
 net:
   transport: videochannel
-  dns: "1.1.1.1:53"
+  dns: "8.8.8.8:53"
 socks:
   host: "127.0.0.1"
   port: 8808
