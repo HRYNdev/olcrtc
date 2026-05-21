@@ -755,15 +755,11 @@ func validateStartArgs(carrierName, roomID, clientID, keyHex string) error {
 	}
 }
 
-func buildRoomURL(carrierName, roomID string) string {
-	switch carrierName {
-	case "telemost":
-		return "https://telemost.yandex.ru/j/" + roomID
-	case carrierWBStream:
-		return roomID
-	default:
-		return roomID
-	}
+func buildRoomURL(_ string, roomID string) string {
+	// Keep the same RoomURL value the CLI/YAML path passes into transports.
+	// Auth providers may expand it for service HTTP calls, but transports
+	// such as vp8channel derive peer binding from the raw room value.
+	return roomID
 }
 
 func clampAtLeastOne(value, maxValue int) int {

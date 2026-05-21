@@ -125,7 +125,7 @@ func TestNormalizeBuildRoomAndClamp(t *testing.T) {
 		t.Fatal("normalizeCarrier() returned unexpected value")
 	}
 
-	if got := buildRoomURL("telemost", "abc"); got != "https://telemost.yandex.ru/j/abc" {
+	if got := buildRoomURL("telemost", "abc"); got != "abc" {
 		t.Fatalf("telemost room URL = %q", got)
 	}
 	if got := buildRoomURL(carrierWBStream, "room"); got != "room" {
@@ -213,7 +213,7 @@ func TestStartUsesDefaultsAndCheckWithInjectedRunner(t *testing.T) {
 	})
 
 	runClientWithReady = func(ctx context.Context, cfg client.Config, onReady func()) error {
-		if cfg.Transport != defaultTransport || cfg.RoomURL != "https://telemost.yandex.ru/j/room" ||
+		if cfg.Transport != defaultTransport || cfg.RoomURL != "room" ||
 			cfg.LocalAddr != "127.0.0.1:1081" || cfg.SOCKSUser != "u" || cfg.SOCKSPass != "p" ||
 			cfg.Liveness.Interval != control.DefaultInterval ||
 			cfg.Liveness.Timeout != control.DefaultTimeout ||
