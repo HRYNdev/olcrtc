@@ -55,6 +55,10 @@ var (
 	errSocksUnexpectedHello  = errors.New("unexpected SOCKS5 greeting")
 	errPayloadMismatchOffset = errors.New("payload mismatch at offset")
 	errFailoverCarrier       = errors.New("intentional failover carrier failure")
+
+	errServerExitedBeforeClientStart = errors.New("server exited cleanly before client start")
+	errClientExitedBeforeReady       = errors.New("client exited cleanly before ready")
+	errServerExitedBeforeClientReady = errors.New("server exited cleanly before client ready")
 )
 
 var (
@@ -744,6 +748,7 @@ func startTunnel(t *testing.T) *tunnelRuntime {
 	}
 }
 
+//nolint:cyclop // setup naturally branches on server/client/ready/timeout/context outcomes
 func startRealTunnel(
 	ctx context.Context,
 	t *testing.T,
@@ -774,6 +779,9 @@ func startRealTunnel(
 	select {
 	case err := <-serverErr:
 		cancel()
+		if err == nil {
+			return nil, errServerExitedBeforeClientStart
+		}
 		return nil, fmt.Errorf("server exited before client start: %w", err)
 	case <-time.After(2 * time.Second):
 	case <-runCtx.Done():
@@ -801,9 +809,15 @@ func startRealTunnel(
 	case <-ready:
 	case err := <-clientErr:
 		cancel()
+		if err == nil {
+			return nil, errClientExitedBeforeReady
+		}
 		return nil, fmt.Errorf("client exited before ready: %w", err)
 	case err := <-serverErr:
 		cancel()
+		if err == nil {
+			return nil, errServerExitedBeforeClientReady
+		}
 		return nil, fmt.Errorf("server exited before client ready: %w", err)
 	case <-time.After(*realE2ETimeout):
 		cancel()
