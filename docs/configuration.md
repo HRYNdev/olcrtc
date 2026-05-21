@@ -9,9 +9,31 @@ olcrtc /etc/olcrtc/client.yaml
 
 Готовые примеры:
 
-- [`server.example.yaml`](./server.example.yaml)
-- [`client.example.yaml`](./client.example.yaml)
-- [`failover.example.yaml`](./failover.example.yaml)
+- [`server.jitsi.datachannel.yaml`](./examples/server.jitsi.datachannel.yaml)
+- [`client.jitsi.datachannel.yaml`](./examples/client.jitsi.datachannel.yaml)
+- [`server.jitsi.videochannel.yaml`](./examples/server.jitsi.videochannel.yaml)
+- [`client.jitsi.videochannel.yaml`](./examples/client.jitsi.videochannel.yaml)
+- [`server.jitsi.seichannel.yaml`](./examples/server.jitsi.seichannel.yaml)
+- [`client.jitsi.seichannel.yaml`](./examples/client.jitsi.seichannel.yaml)
+- [`server.jitsi.vp8channel.yaml`](./examples/server.jitsi.vp8channel.yaml)
+- [`client.jitsi.vp8channel.yaml`](./examples/client.jitsi.vp8channel.yaml)
+- [`server.telemost.datachannel.yaml`](./examples/server.telemost.datachannel.yaml)
+- [`client.telemost.datachannel.yaml`](./examples/client.telemost.datachannel.yaml)
+- [`server.telemost.videochannel.yaml`](./examples/server.telemost.videochannel.yaml)
+- [`client.telemost.videochannel.yaml`](./examples/client.telemost.videochannel.yaml)
+- [`server.telemost.seichannel.yaml`](./examples/server.telemost.seichannel.yaml)
+- [`client.telemost.seichannel.yaml`](./examples/client.telemost.seichannel.yaml)
+- [`server.telemost.vp8channel.yaml`](./examples/server.telemost.vp8channel.yaml)
+- [`client.telemost.vp8channel.yaml`](./examples/client.telemost.vp8channel.yaml)
+- [`server.wbstream.datachannel.yaml`](./examples/server.wbstream.datachannel.yaml)
+- [`client.wbstream.datachannel.yaml`](./examples/client.wbstream.datachannel.yaml)
+- [`server.wbstream.videochannel.yaml`](./examples/server.wbstream.videochannel.yaml)
+- [`client.wbstream.videochannel.yaml`](./examples/client.wbstream.videochannel.yaml)
+- [`server.wbstream.seichannel.yaml`](./examples/server.wbstream.seichannel.yaml)
+- [`client.wbstream.seichannel.yaml`](./examples/client.wbstream.seichannel.yaml)
+- [`server.wbstream.vp8channel.yaml`](./examples/server.wbstream.vp8channel.yaml)
+- [`client.wbstream.vp8channel.yaml`](./examples/client.wbstream.vp8channel.yaml)
+- [`failover.yaml`](./examples/failover.yaml)
 
 ## Схема
 
