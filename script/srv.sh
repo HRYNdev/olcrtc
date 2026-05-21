@@ -128,7 +128,7 @@ GEN_ROOM=0
 
 if [ "$CARRIER" = "jitsi" ]; then
     read -p "Jitsi base URL [default: https://meet.cryptopro.ru/]: " JITSI_BASE_INPUT
-    JITSI_BASE_URL=${JITSI_BASE_INPUT:-https:///}
+    JITSI_BASE_URL=${JITSI_BASE_INPUT:-https://meet.cryptopro.ru/}
     JITSI_BASE_URL="${JITSI_BASE_URL%/}"
 
     echo "Room options:"
