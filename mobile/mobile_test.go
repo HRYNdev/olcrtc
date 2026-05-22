@@ -9,8 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openlibrecommunity/olcrtc/internal/client"
+	"github.com/openlibrecommunity/olcrtc/internal/control"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/protect"
+	"github.com/openlibrecommunity/olcrtc/internal/transport/vp8channel"
 )
 
 type testProtector struct {
@@ -50,6 +53,8 @@ func resetMobileGlobals(t *testing.T) {
 
 var clientRunWithReady = runClientWithReady //nolint:gochecknoglobals // package-level state intentional
 
+const testRoomID = "room"
+
 var (
 	errMobileCheckFailed = errors.New("check failed")
 	errMobileRunFailed   = errors.New("run failed")
@@ -79,15 +84,17 @@ func TestDefaultsAndSetters(t *testing.T) {
 	resetMobileGlobals(t)
 
 	SetTransport("dc")
-	SetLink("direct")
 	SetDNS("9.9.9.9:53")
 	SetVP8Options(-1, 999)
+	SetLivenessOptions(2500, 750, -1)
 
 	mu.Lock()
 	got := defaults
 	mu.Unlock()
-	if got.transport != dataTransport || got.link != defaultLink || got.dnsServer != "9.9.9.9:53" ||
-		got.vp8FPS != 1 || got.vp8BatchSize != 64 {
+	if got.transport != dataTransport || got.dnsServer != "9.9.9.9:53" ||
+		got.vp8FPS != 1 || got.vp8BatchSize != 64 ||
+		got.livenessInterval != 2500*time.Millisecond || got.livenessTimeout != 750*time.Millisecond ||
+		got.livenessFailures != control.DefaultFailures {
 		t.Fatalf("defaults = %+v", got)
 	}
 
@@ -101,7 +108,6 @@ func TestDefaultsAndSetters(t *testing.T) {
 	}
 }
 
-//nolint:cyclop // table-driven test naturally has many branches
 func TestNormalizeBuildRoomAndClamp(t *testing.T) {
 	tests := map[string]string{
 		"datachannel": dataTransport,
@@ -117,17 +123,14 @@ func TestNormalizeBuildRoomAndClamp(t *testing.T) {
 		}
 	}
 
-	if normalizeCarrier(carrierWBStream) != carrierWBStream || normalizeCarrier("jazz") != "jazz" {
+	if normalizeCarrier(carrierWBStream) != carrierWBStream || normalizeCarrier("jitsi") != "jitsi" {
 		t.Fatal("normalizeCarrier() returned unexpected value")
 	}
 
-	if got := buildRoomURL("telemost", "abc"); got != "https://telemost.yandex.ru/j/abc" {
+	if got := buildRoomURL("telemost", "abc"); got != "abc" {
 		t.Fatalf("telemost room URL = %q", got)
 	}
-	if got := buildRoomURL("jazz", ""); got != "any" {
-		t.Fatalf("jazz empty room URL = %q", got)
-	}
-	if got := buildRoomURL(carrierWBStream, "room"); got != "room" {
+	if got := buildRoomURL(carrierWBStream, testRoomID); got != testRoomID {
 		t.Fatalf("wbstream room URL = %q", got)
 	}
 
@@ -139,23 +142,23 @@ func TestNormalizeBuildRoomAndClamp(t *testing.T) {
 func TestStartValidation(t *testing.T) {
 	resetMobileGlobals(t)
 
-	if err := startWithConfig("", dataTransport, "room", "client", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errCarrierRequired) { //nolint:lll // long test description
+	if err := startWithConfig("", dataTransport, testRoomID, "client", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errCarrierRequired) { //nolint:lll // long test description
 		t.Fatalf("startWithConfig(missing carrier) = %v", err)
 	}
 	if err := startWithConfig("telemost", dataTransport, "", "client", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errRoomIDRequired) { //nolint:lll // long test description
 		t.Fatalf("startWithConfig(missing room) = %v", err)
 	}
-	if err := startWithConfig("jazz", dataTransport, "", "", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errClientIDRequired) { //nolint:lll // long test description
+	if err := startWithConfig("jitsi", dataTransport, testRoomID, "", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errClientIDRequired) { //nolint:lll // long test description
 		t.Fatalf("startWithConfig(missing client) = %v", err)
 	}
-	if err := startWithConfig("jazz", dataTransport, "", "client", "", 1080, "", "", mobileConfig{}); !errors.Is(err, errKeyHexRequired) { //nolint:lll // long test description
+	if err := startWithConfig("jitsi", dataTransport, testRoomID, "client", "", 1080, "", "", mobileConfig{}); !errors.Is(err, errKeyHexRequired) { //nolint:lll // long test description
 		t.Fatalf("startWithConfig(missing key) = %v", err)
 	}
 
 	mu.Lock()
 	cancel = func() {}
 	mu.Unlock()
-	if err := startWithConfig("jazz", dataTransport, "", "client", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errAlreadyRunning) { //nolint:lll // long test description
+	if err := startWithConfig("jitsi", dataTransport, testRoomID, "client", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errAlreadyRunning) { //nolint:lll // long test description
 		t.Fatalf("startWithConfig(running) = %v", err)
 	}
 	resetMobileGlobals(t)
@@ -167,42 +170,29 @@ func TestStartWithInjectedRunnerLifecycle(t *testing.T) {
 	t.Cleanup(func() {
 		resetMobileGlobals(t)
 	})
+	SetLivenessOptions(2500, 750, 4)
 
-	runClientWithReady = func(
-		ctx context.Context,
-		linkName, transportName, carrierName, roomURL, _, clientID string,
-		localAddr string,
-		dnsServer, _, _ string,
-		onReady func(),
-		_ int,
-		_ int,
-		_ int,
-		_ string,
-		_ string,
-		_ int,
-		_ string,
-		_ string,
-		_ int,
-		_ int,
-		vp8FPS int,
-		vp8BatchSize int,
-		_ int,
-		_ int,
-		_ int,
-		_ int,
-	) error {
-		if linkName != defaultLink || transportName != dataTransport || carrierName != carrierJazz ||
-			roomURL != "any" || clientID != "client" || localAddr != "127.0.0.1:1080" ||
-			dnsServer != defaultDNSServer || vp8FPS != 60 || vp8BatchSize != 8 {
-			t.Fatalf("RunWithReady args mismatch: link=%q transport=%q carrier=%q room=%q client=%q local=%q dns=%q vp8=%d/%d",
-				linkName, transportName, carrierName, roomURL, clientID, localAddr, dnsServer, vp8FPS, vp8BatchSize)
+	runClientWithReady = func(ctx context.Context, cfg client.Config, onReady func()) error {
+		opts, _ := cfg.TransportOptions.(vp8channel.Options)
+		if cfg.Transport != dataTransport || cfg.Carrier != "jitsi" ||
+			cfg.RoomURL != testRoomID || cfg.DeviceID != "client" || cfg.LocalAddr != "127.0.0.1:1080" ||
+			cfg.DNSServer != defaultDNSServer || opts.FPS != 60 || opts.BatchSize != 8 ||
+			cfg.Liveness.Interval != 2500*time.Millisecond ||
+			cfg.Liveness.Timeout != 750*time.Millisecond ||
+			cfg.Liveness.Failures != 4 {
+			t.Fatalf(
+				"RunWithReady args mismatch: transport=%q carrier=%q room=%q client=%q "+
+					"local=%q dns=%q vp8=%d/%d liveness=%+v",
+				cfg.Transport, cfg.Carrier, cfg.RoomURL, cfg.DeviceID,
+				cfg.LocalAddr, cfg.DNSServer, opts.FPS, opts.BatchSize, cfg.Liveness,
+			)
 		}
 		onReady()
 		<-ctx.Done()
 		return ctx.Err()
 	}
 
-	if err := StartWithTransport(carrierJazz, "dc", "", "client", "key", 1080, "", ""); err != nil {
+	if err := StartWithTransport("jitsi", "dc", testRoomID, "client", "key", 1080, "", ""); err != nil {
 		t.Fatalf("StartWithTransport() error = %v", err)
 	}
 	if !IsRunning() {
@@ -224,40 +214,21 @@ func TestStartUsesDefaultsAndCheckWithInjectedRunner(t *testing.T) {
 		resetMobileGlobals(t)
 	})
 
-	runClientWithReady = func(
-		ctx context.Context,
-		_, transportName, _, roomURL, _, _ string,
-		localAddr string,
-		_, socksUser, socksPass string,
-		onReady func(),
-		_ int,
-		_ int,
-		_ int,
-		_ string,
-		_ string,
-		_ int,
-		_ string,
-		_ string,
-		_ int,
-		_ int,
-		_ int,
-		_ int,
-		_ int,
-		_ int,
-		_ int,
-		_ int,
-	) error {
-		if transportName != defaultTransport || roomURL != "https://telemost.yandex.ru/j/room" ||
-			localAddr != "127.0.0.1:1081" || socksUser != "u" || socksPass != "p" {
-			t.Fatalf("Start args mismatch: transport=%q room=%q local=%q user/pass=%q/%q",
-				transportName, roomURL, localAddr, socksUser, socksPass)
+	runClientWithReady = func(ctx context.Context, cfg client.Config, onReady func()) error {
+		if cfg.Transport != defaultTransport || cfg.RoomURL != testRoomID ||
+			cfg.LocalAddr != "127.0.0.1:1081" || cfg.SOCKSUser != "u" || cfg.SOCKSPass != "p" ||
+			cfg.Liveness.Interval != control.DefaultInterval ||
+			cfg.Liveness.Timeout != control.DefaultTimeout ||
+			cfg.Liveness.Failures != control.DefaultFailures {
+			t.Fatalf("Start args mismatch: transport=%q room=%q local=%q user/pass=%q/%q liveness=%+v",
+				cfg.Transport, cfg.RoomURL, cfg.LocalAddr, cfg.SOCKSUser, cfg.SOCKSPass, cfg.Liveness)
 		}
 		onReady()
 		<-ctx.Done()
 		return ctx.Err()
 	}
 
-	if err := Start("telemost", "room", "client", "key", 1081, "u", "p"); err != nil {
+	if err := Start("telemost", testRoomID, "client", "key", 1081, "u", "p"); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
 	if err := WaitReady(100); err != nil {
@@ -265,42 +236,52 @@ func TestStartUsesDefaultsAndCheckWithInjectedRunner(t *testing.T) {
 	}
 	Stop()
 
-	runClientWithReady = func(
-		ctx context.Context,
-		_, transportName, _, _, _, _ string,
-		_ string,
-		_, _, _ string,
-		onReady func(),
-		_ int,
-		_ int,
-		_ int,
-		_ string,
-		_ string,
-		_ int,
-		_ string,
-		_ string,
-		_ int,
-		_ int,
-		vp8FPS int,
-		vp8BatchSize int,
-		_ int,
-		_ int,
-		_ int,
-		_ int,
-	) error {
-		if transportName != dataTransport || vp8FPS != 1 || vp8BatchSize != 64 {
-			t.Fatalf("Check args mismatch: transport=%q vp8=%d/%d", transportName, vp8FPS, vp8BatchSize)
+	SetLivenessOptions(3000, 1000, 5)
+	runClientWithReady = func(ctx context.Context, cfg client.Config, onReady func()) error {
+		opts, _ := cfg.TransportOptions.(vp8channel.Options)
+		if cfg.Transport != dataTransport || opts.FPS != 1 || opts.BatchSize != 64 ||
+			cfg.Liveness.Interval != 3000*time.Millisecond ||
+			cfg.Liveness.Timeout != time.Second ||
+			cfg.Liveness.Failures != 5 {
+			t.Fatalf("Check args mismatch: transport=%q vp8=%d/%d liveness=%+v",
+				cfg.Transport, opts.FPS, opts.BatchSize, cfg.Liveness)
 		}
 		onReady()
 		<-ctx.Done()
 		return nil
 	}
-	elapsed, err := Check("jazz", "dc", "", "client", "key", 1082, 100, -1, 999)
+	elapsed, err := Check("jitsi", "dc", testRoomID, "client", "key", 1082, 100, -1, 999)
 	if err != nil {
 		t.Fatalf("Check() error = %v", err)
 	}
 	if elapsed < 0 {
 		t.Fatalf("Check() elapsed = %d", elapsed)
+	}
+}
+
+func TestPingPassesLiveness(t *testing.T) {
+	resetMobileGlobals(t)
+	t.Cleanup(func() {
+		resetMobileGlobals(t)
+	})
+	SetLivenessOptions(4000, 1500, 6)
+
+	seen := make(chan control.Config, 1)
+	runClientWithReady = func(ctx context.Context, cfg client.Config, onReady func()) error {
+		seen <- cfg.Liveness
+		onReady()
+		<-ctx.Done()
+		return nil
+	}
+
+	_, _ = Ping("jitsi", "dc", testRoomID, "client", "key", 1085, 100, "http://127.0.0.1/", 30, 1)
+	select {
+	case got := <-seen:
+		if got.Interval != 4000*time.Millisecond || got.Timeout != 1500*time.Millisecond || got.Failures != 6 {
+			t.Fatalf("Ping liveness = %+v", got)
+		}
+	default:
+		t.Fatal("Ping did not start client")
 	}
 }
 
@@ -310,61 +291,21 @@ func TestCheckTimeoutAndRunError(t *testing.T) {
 		resetMobileGlobals(t)
 	})
 
-	runClientWithReady = func(
-		ctx context.Context,
-		_, _, _, _, _, _ string,
-		_ string,
-		_, _, _ string,
-		_ func(),
-		_ int,
-		_ int,
-		_ int,
-		_ string,
-		_ string,
-		_ int,
-		_ string,
-		_ string,
-		_ int,
-		_ int,
-		_ int,
-		_ int,
-		_ int,
-		_ int,
-		_ int,
-		_ int,
-	) error {
+	runClientWithReady = func(ctx context.Context, _ client.Config, _ func()) error {
 		<-ctx.Done()
 		return nil
 	}
-	if _, err := Check("telemost", defaultTransport, "room", "client", "key", 1083, 1, 30, 1); !errors.Is(err, errStartTimedOut) { //nolint:lll // long test description
+	if _, err := Check("telemost", defaultTransport, testRoomID, "client", "key", 1083, 1, 30, 1); !errors.Is(err, errStartTimedOut) { //nolint:lll // long test description
 		t.Fatalf("Check(timeout) error = %v, want %v", err, errStartTimedOut)
 	}
 
 	want := errMobileCheckFailed
-	runClientWithReady = func(
-		context.Context,
-		string, string, string, string, string, string,
-		string,
-		string, string, string,
-		func(),
-		int, int, int,
-		string,
-		string,
-		int,
-		string,
-		string,
-		int,
-		int,
-		int,
-		int,
-		int,
-		int,
-		int,
-		int,
-	) error {
+	runClientWithReady = func(context.Context, client.Config, func()) error {
 		return want
 	}
-	if _, err := Check("telemost", defaultTransport, "room", "client", "key", 1084, 100, 30, 1); !errors.Is(err, want) {
+	if _, err := Check(
+		"telemost", defaultTransport, testRoomID, "client", "key", 1084, 100, 30, 1,
+	); !errors.Is(err, want) {
 		t.Fatalf("Check(run error) = %v, want %v", err, want)
 	}
 }

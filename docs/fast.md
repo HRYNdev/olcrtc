@@ -22,25 +22,33 @@
 ### git
 
 ```sh
-apt install git    # Debian / Ubuntu / Mint
-pacman -S git      # Arch / CacheOS / Manjaro
+apt install git    # Debian   / Ubuntu   / Mint
+pacman -S git      # Arch    / CacheOS / Manjaro
 dnf install git    # Fedora / RHEL / CentOS
 ```
 
 ### podman
 
 ```sh
-apt install podman   # Debian / Ubuntu / Mint
-pacman -S podman     # Arch / CacheOS / Manjaro
-dnf install podman   # Fedora / RHEL / CentOS
+apt install podman   # Debian   / Ubuntu   / Mint
+pacman -S podman     # Arch    / CacheOS / Manjaro
+dnf install podman   # Fedora / RHEL    / CentOS
 ```
 
 ### curl
 
 ```sh
-apt install curl      # Debian / Ubuntu/ Mint
-pacman -S curl        # Arch / CacheOS / Manjaro
-dnf install curl      # Fedora
+apt install curl      # Debian   / Ubuntu  / Mint
+pacman -S curl        # Arch    / CacheOS / Manjaro
+dnf install curl      # Fedora / RHEL    / CentOS
+```
+
+### swap (ОЗУ)
+
+Если у вас меньше 4ГБ оперативной памяти, сборка может вылетать. **Обязательно включите SWAP**:
+
+```bash
+sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 ```
 
 ---
@@ -66,8 +74,6 @@ cd olcrtc
 ./script/srv.sh
 ```
 
-Скрипт задаст несколько вопросов.
-
 #### Флаги `srv.sh`
 
 | Флаг | Что делает |
@@ -82,63 +88,53 @@ cd olcrtc
 ./script/srv.sh --branch=dev --no-cache # ветка dev, без кеша
 ```
 
-### Carrier (на каком сервисе передавать трафик)
+### Auth (на каком сервисе передавать трафик)
 
 ```
-Select carrier:
-  1) telemost
-  2) jazz
+Выберите auth-провайдера:
+  1) jitsi
+  2) telemost
   3) wbstream
-Enter choice [1-3, default: 3]:
+Введите номер [1-3, по умолчанию: 1]:
 ```
 
 Выбери сервис. Полную матрицу совместимости смотри в [settings.md](settings.md).
 
-**По умолчанию `wbstream`** - работает со всеми транспортами, рекомендуется.
+**По умолчанию `jitsi`** - стабильно работает на datachannel против self-hosted и публичных Jitsi инстансов (например `meet.cryptopro.ru`).
 
 ### Transport (как именно передавать данные)
 
 ```
-Select transport:
+Выберите транспорт:
   1) datachannel
   2) videochannel
   3) seichannel
   4) vp8channel
-Enter choice [1-4, default: 1]:
+Введите номер [1-4, по умолчанию: 1]:
 ```
 
 Рекомендации:
-- **datachannel** - самый быстрый, минимальный пинг. Работает с `jazz` и `wbstream`. **Jazz банит IP за datachannel** - лучше используй только с `wbstream`.
-- **vp8channel** - работает везде, быстрый, но большой пинг.
-- **seichannel** - работает везде кроме telemost, медленный, но мелкий пинг.
-- **videochannel** - работает везде, самый медленный и большой пинг.
+- **datachannel** - самый быстрый, минимальный пинг. Стабильно работает с `jitsi` через colibri-ws bridge channel. **WBStream DC не работает** в обычном guest flow (токены без `canPublishData`). **Telemost удалил DC**.
+- **vp8channel** - работает с telemost и wbstream, быстрый, но большой пинг.
+- **seichannel** - работает только с wbstream, медленный, но мелкий пинг.
+- **videochannel** - работает с wbstream стабильно, с telemost по возможности; самый медленный и с большим пингом.
 
-**Лучшая комбинация: `wbstream + datachannel`** - максимальная скорость, минимальный пинг, без риска бана.
+**Рекомендуемая комбинация: `jitsi + datachannel`** - работает стабильно, не требует регистрации, легко поднимать на своём сервере. Альтернатива: `wbstream + vp8channel`.
 
 ### Room ID
 
 ```
-Enter Room ID:
+Введите Room ID:
 ```
 
-Для **telemost** и **wbstream** - создай руму через сайт ([телемост](https://telemost.yandex.ru/), [wbstream](https://stream.wb.ru)) и вставь её ID.
+Для **jitsi** — полный URL комнаты в формате `https://host/room` (например `https://meet.cryptopro.ru/myroom`). Имя комнаты придумывается на лету, без регистрации. Подойдёт любой публичный или self-hosted Jitsi Meet.
 
-Для **jazz** скрипт предложит выбор: сгенерировать автоматически (рекомендуется) или ввести существующий ID. При автогенерации скрипт запустит `gen` и получит ID до старта сервера. Также можно создать руму через сайт [jazz](https://salutejazz.ru/calls/create).
-
-### Client ID
-
-```
-Enter Client ID [default: default]:
-```
-
-Это обязательный идентификатор клиента. Он должен быть одинаковым на сервере и клиенте - используется чтобы клиент подключался именно к вашему серверу, а не к случайному серверу в руме.
-
-Один `-client-id` технически может держать бесконечное количество одновременных соединений. Однако SFU ограничивает полосу пропускания на одного участника звонка, поэтому оптимально использовать схему **1 client-id = 1 пользователь** - но это не обязательное требование.
+Для **telemost** и **wbstream** - создай руму через сайт ([telemost](https://telemost.yandex.ru/), [wbstream](https://stream.wb.ru)) и вставь её ID.
 
 ### DNS
 
 ```
-DNS server [default: 8.8.8.8:53]:
+DNS-сервер [по умолчанию: 8.8.8.8:53]:
 ```
 
 Нажми Enter. Менять не нужно если нет причин, на всякий можно поставить 77.88.8.8 или DNS твоего провайдера.
@@ -146,7 +142,7 @@ DNS server [default: 8.8.8.8:53]:
 ### SOCKS5 прокси для исходящего трафика
 
 ```
-Use SOCKS5 proxy for egress? (y/N):
+Использовать SOCKS5-прокси для исходящего трафика? (y/N):
 ```
 
 Если нет - просто Enter, если надо то введи `y`. Нужно чтобы сервер сам ходил через прокси.
@@ -154,10 +150,10 @@ Use SOCKS5 proxy for egress? (y/N):
 ### Параметры транспорта (только для videochannel)
 
 ```
-Video codec:
+Видео-кодек:
   1) qrcode
-  2) tile (requires 1080x1080)
-Enter choice [1-2, default: 1]:
+  2) tile (требует 1080x1080)
+Введите номер [1-2, по умолчанию: 1]:
 ```
 
 Выбери кодек:
@@ -167,57 +163,57 @@ Enter choice [1-2, default: 1]:
 #### qrcode
 
 ```
-Video width [default: 1920]:
-Video height [default: 1080]:
-QR error correction (low/medium/high/highest) [default: low]:
-QR fragment size bytes [default: 0 (auto)]:
+Ширина видео [по умолчанию: 1920]:
+Высота видео [по умолчанию: 1080]:
+Коррекция ошибок QR (low/medium/high/highest) [по умолчанию: low]:
+Размер QR-фрагмента в байтах [по умолчанию: 0 (авто)]:
 ```
 
-- **Video width / height** - разрешение видео. Больше = больше данных за кадр, но тяжелее поток.
-- **QR error correction** - коррекция ошибок: `low` быстрее, `highest` надёжнее при плохом канале.
-- **QR fragment size** - размер фрагмента в байтах. `0` = автоматически.
+- **Ширина / высота видео** - разрешение видео. Больше = больше данных за кадр, но тяжелее поток.
+- **Коррекция ошибок QR** - `low` быстрее, `highest` надёжнее при плохом канале.
+- **Размер QR-фрагмента** - размер фрагмента в байтах. `0` = автоматически.
 
 #### tile
 
 ```
-[*] Tile codec selected - forcing 1080x1080
-Tile module size in pixels 1..270 [default: 4]:
-Tile Reed-Solomon parity percent 0..200 [default: 20]:
+[*] Выбран tile-кодек, принудительно выставляю 1080x1080
+Размер tile-модуля в пикселях 1..270 [по умолчанию: 4]:
+Процент Reed-Solomon parity для tile 0..200 [по умолчанию: 20]:
 ```
 
-- **Tile module size** - размер одного тайла в пикселях. Меньше = больше данных за кадр.
+- **Размер tile-модуля** - размер одного тайла в пикселях. Меньше = больше данных за кадр.
 - **Tile Reed-Solomon parity** - процент избыточности. `0` = без коррекции, `20` оптимально.
 
 #### Общие параметры (для обоих кодеков)
 
 ```
-Video FPS [default: 30]:
-Video bitrate [default: 2M]:
-Hardware acceleration (none/nvenc) [default: none]:
+FPS видео [по умолчанию: 30]:
+Битрейт видео [по умолчанию: 2M]:
+Аппаратное ускорение (none/nvenc) [по умолчанию: none]:
 ```
 
-- **Video FPS** - кадров в секунду. Больше FPS = выше пропускная способность, больше нагрузка на CPU.
-- **Video bitrate** - битрейт ffmpeg. Примеры: `2M`, `5M`, `500K`.
-- **Hardware acceleration** - `none` если нет GPU, `nvenc` для NVIDIA GPU.
+- **FPS видео** - кадров в секунду. Больше FPS = выше пропускная способность, больше нагрузка на CPU.
+- **Битрейт видео** - битрейт ffmpeg. Примеры: `2M`, `5M`, `500K`.
+- **Аппаратное ускорение** - `none` если нет GPU, `nvenc` для NVIDIA GPU.
 
 ---
 
 ### Параметры транспорта (только для vp8channel)
 
 ```
-VP8 FPS [default: 25]: 60
-VP8 batch size (frames per tick) [default: 1]: 64
+VP8 FPS [по умолчанию: 60]:
+VP8 batch size (кадров за тик) [по умолчанию: 64]:
 ```
 
-Введи `60` и `64` - это оптимальные значения.
+Нажми Enter, если устраивают значения по умолчанию `60` и `64`.
 
 ### Параметры транспорта (только для seichannel)
 
 ```
-SEI FPS [default: 20]: 60
-SEI batch size (frames per tick) [default: 1]: 64
-SEI fragment size in bytes [default: 900]: 900
-SEI ACK timeout in milliseconds [default: 3000]: 2000
+SEI FPS [по умолчанию: 60]:
+SEI batch size (кадров за тик) [по умолчанию: 64]:
+Размер SEI-фрагмента в байтах [по умолчанию: 900]:
+SEI ACK timeout в миллисекундах [по умолчанию: 2000]:
 ```
 
 Нажми Enter для всех - значения по умолчанию оптимальны.
@@ -229,17 +225,16 @@ SEI ACK timeout in milliseconds [default: 3000]: 2000
 После запуска скрипт выведет:
 
 ```
-[+] Server started successfully!
+[+] Сервер успешно запущен!
 
-Container name: olcrtc-server
-Carrier:        Carrier
-Transport:      Transport
-Room ID:        Room ID
-Client ID:      default
-Encryption key: Encryption key
+Имя контейнера:  olcrtc-server
+Auth:            wbstream
+Transport:       datachannel
+Room ID:         abc123xyz
+Ключ шифрования: d823fa01cb3e0609b67322f7cf984c4ee2e294936fc24ef38c9e59f4799
 ```
 
-**Сохрани Room ID, Client ID и Encryption key** - они нужны для клиента.
+**Сохрани Room ID и ключ шифрования** - они нужны для клиента.
 
 ---
 
@@ -253,20 +248,12 @@ cd olcrtc
 ./script/cnc.sh
 ```
 
-Отвечай на те же вопросы что на сервере - **carrier, transport, room ID и client ID должны совпадать**.
-
-Когда спросит client ID:
-
-```
-Enter Client ID [default: default]: default
-```
-
-Введи тот же `client ID`, который использовал на сервере.
+Отвечай на те же вопросы что на сервере - **auth, transport и room ID должны совпадать**.
 
 Когда спросит ключ:
 
 ```
-Enter Encryption Key (hex): Encryption key
+Введите ключ шифрования (hex):
 ```
 
 Вставь ключ с сервера.
@@ -274,8 +261,8 @@ Enter Encryption Key (hex): Encryption key
 ### SOCKS5 адрес и порт
 
 ```
-SOCKS5 ip [default: 127.0.0.1]:
-SOCKS5 port [default: 8808]:
+SOCKS5 IP [по умолчанию: 127.0.0.1]:
+SOCKS5 порт [по умолчанию: 8808]:
 ```
 
 Нажми Enter оба раза. Прокси поднимется на `127.0.0.1:8808`.
@@ -283,7 +270,7 @@ SOCKS5 port [default: 8808]:
 ### SOCKS5 аутентификация (необязательно)
 
 ```
-SOCKS5 username (leave empty to disable auth):
+SOCKS5 логин (оставь пустым, чтобы отключить auth):
 ```
 
 Если нужна защита логином и паролем - введи логин, затем пароль. Если нет - просто Enter, аутентификация будет отключена.
@@ -291,10 +278,9 @@ SOCKS5 username (leave empty to disable auth):
 ### Результат
 
 ```
-[+] Client started successfully!
+[+] Клиент успешно запущен!
 
-Container name: olcrtc-client
-Client ID:      default
+Имя контейнера: olcrtc-client
 SOCKS5 proxy:   127.0.0.1:8808
 ```
 
@@ -341,4 +327,4 @@ podman stop olcrtc-client
 
 Хочешь собрать руками без Podman? -> [Мануальная сборка](manual.md)
 
-Все флаги и матрица совместимости -> [settings.md](settings.md)
+Все настройки и матрица совместимости -> [settings.md](settings.md)
