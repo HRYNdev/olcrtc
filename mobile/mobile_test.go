@@ -171,11 +171,12 @@ func TestStartWithInjectedRunnerLifecycle(t *testing.T) {
 		resetMobileGlobals(t)
 	})
 	SetLivenessOptions(2500, 750, 4)
+	SetSocksListenHost("0.0.0.0")
 
 	runClientWithReady = func(ctx context.Context, cfg client.Config, onReady func()) error {
 		opts, _ := cfg.TransportOptions.(vp8channel.Options)
 		if cfg.Transport != dataTransport || cfg.Carrier != "jitsi" ||
-			cfg.RoomURL != testRoomID || cfg.DeviceID != "client" || cfg.LocalAddr != "127.0.0.1:1080" ||
+			cfg.RoomURL != testRoomID || cfg.DeviceID != "client" || cfg.LocalAddr != "0.0.0.0:1080" ||
 			cfg.DNSServer != defaultDNSServer || opts.FPS != 60 || opts.BatchSize != 8 ||
 			cfg.Liveness.Interval != 2500*time.Millisecond ||
 			cfg.Liveness.Timeout != 750*time.Millisecond ||
