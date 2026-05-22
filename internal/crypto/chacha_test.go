@@ -64,7 +64,7 @@ func TestEncryptUniqueNonces(t *testing.T) {
 	const iterations = 1024
 	nonceSize := chacha20poly1305.NonceSizeX
 	seen := make(map[string]struct{}, iterations)
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		ct, err := c.Encrypt([]byte("payload"))
 		if err != nil {
 			t.Fatalf("Encrypt() error = %v", err)
@@ -140,7 +140,7 @@ func BenchmarkEncrypt(b *testing.B) {
 	payload := bytes.Repeat([]byte{0xab}, 12*1024)
 	b.ResetTimer()
 	b.SetBytes(int64(len(payload)))
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		if _, err := c.Encrypt(payload); err != nil {
 			b.Fatalf("Encrypt() error = %v", err)
 		}
@@ -159,7 +159,7 @@ func BenchmarkDecrypt(b *testing.B) {
 	}
 	b.ResetTimer()
 	b.SetBytes(int64(len(payload)))
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		if _, err := c.Decrypt(ct); err != nil {
 			b.Fatalf("Decrypt() error = %v", err)
 		}
