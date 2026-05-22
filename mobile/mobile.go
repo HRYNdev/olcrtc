@@ -8,8 +8,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,6 +57,7 @@ const (
 	dataTransport      = "datachannel"
 	defaultDNSServer   = "8.8.8.8:53"
 	defaultHTTPPingURL = "https://www.google.com/generate_204"
+	defaultSocksHost   = "127.0.0.1"
 	carrierWBStream    = "wbstream"
 )
 
@@ -79,6 +83,7 @@ var (
 type mobileConfig struct {
 	transport        string
 	dnsServer        string
+	socksListenHost  string
 	vp8FPS           int
 	vp8BatchSize     int
 	livenessInterval time.Duration
@@ -125,6 +130,15 @@ func SetDNS(dnsServer string) {
 	defer mu.Unlock()
 	ensureDefaultConfigLocked()
 	defaults.dnsServer = dnsServer
+}
+
+// SetSocksListenHost selects the local bind host for the SOCKS5 listener.
+// Use 0.0.0.0 to accept connections from other Android network interfaces.
+func SetSocksListenHost(host string) {
+	mu.Lock()
+	defer mu.Unlock()
+	ensureDefaultConfigLocked()
+	defaults.socksListenHost = normalizeSocksListenHost(host)
 }
 
 // SetVP8Options configures vp8channel.
@@ -235,7 +249,7 @@ func Check(
 				RoomURL:   buildRoomURL(carrierName, roomID),
 				KeyHex:    keyHex,
 				DeviceID:  clientID,
-				LocalAddr: fmt.Sprintf("127.0.0.1:%d", socksPort),
+				LocalAddr: socksListenAddr(cfg.socksListenHost, socksPort),
 				DNSServer: defaultDNSServer,
 				TransportOptions: vp8channel.Options{
 					FPS:       clampAtLeastOne(vp8FPS, 120),
@@ -325,7 +339,7 @@ func Ping(
 				RoomURL:   buildRoomURL(carrierName, roomID),
 				KeyHex:    keyHex,
 				DeviceID:  clientID,
-				LocalAddr: fmt.Sprintf("127.0.0.1:%d", socksPort),
+				LocalAddr: socksListenAddr(cfg.socksListenHost, socksPort),
 				DNSServer: defaultDNSServer,
 				TransportOptions: vp8channel.Options{
 					FPS:       clampAtLeastOne(vp8FPS, 120),
@@ -345,7 +359,7 @@ func Ping(
 	case <-readyCh:
 		elapsed, err := httpPingThroughSocks(
 			ctx,
-			fmt.Sprintf("127.0.0.1:%d", socksPort),
+			socksDialAddr(cfg.socksListenHost, socksPort),
 			pingURL,
 		)
 
@@ -572,7 +586,7 @@ func startWithConfig(
 				RoomURL:   roomURL,
 				KeyHex:    keyHex,
 				DeviceID:  clientID,
-				LocalAddr: fmt.Sprintf("127.0.0.1:%d", socksPort),
+				LocalAddr: socksListenAddr(cfg.socksListenHost, socksPort),
 				DNSServer: cfg.dnsServer,
 				SOCKSUser: socksUser,
 				SOCKSPass: socksPass,
@@ -693,6 +707,7 @@ func ensureDefaultConfigLocked() {
 		defaults = mobileConfig{
 			transport:        defaultTransport,
 			dnsServer:        defaultDNSServer,
+			socksListenHost:  defaultSocksHost,
 			vp8FPS:           60,
 			vp8BatchSize:     8,
 			livenessInterval: control.DefaultInterval,
@@ -700,6 +715,30 @@ func ensureDefaultConfigLocked() {
 			livenessFailures: control.DefaultFailures,
 		}
 	})
+}
+
+func normalizeSocksListenHost(host string) string {
+	host = strings.TrimSpace(host)
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	}
+	if host == "" {
+		return defaultSocksHost
+	}
+	return host
+}
+
+func socksListenAddr(host string, port int) string {
+	return net.JoinHostPort(normalizeSocksListenHost(host), strconv.Itoa(port))
+}
+
+func socksDialAddr(host string, port int) string {
+	switch normalizeSocksListenHost(host) {
+	case "0.0.0.0", "::":
+		return socksListenAddr(defaultSocksHost, port)
+	default:
+		return socksListenAddr(host, port)
+	}
 }
 
 func livenessConfig(cfg mobileConfig) control.Config {
