@@ -77,6 +77,8 @@ type Server struct {
 	resolver       *net.Resolver
 	socksProxyAddr string
 	socksProxyPort int
+	socksProxyUser string
+	socksProxyPass string
 	liveness       control.Config
 	health         *runtime.HealthTracker
 	done           chan struct{}
@@ -110,6 +112,8 @@ type Config struct {
 	DNSServer        string
 	SOCKSProxyAddr   string
 	SOCKSProxyPort   int
+	SOCKSProxyUser   string
+	SOCKSProxyPass   string
 	TransportOptions transport.Options
 	Engine           string
 	URL              string
@@ -166,6 +170,8 @@ func Run(ctx context.Context, cfg Config) error {
 		dnsServer:      cfg.DNSServer,
 		socksProxyAddr: cfg.SOCKSProxyAddr,
 		socksProxyPort: cfg.SOCKSProxyPort,
+		socksProxyUser: cfg.SOCKSProxyUser,
+		socksProxyPass: cfg.SOCKSProxyPass,
 		liveness:       cfg.Liveness,
 		health:         runtime.NewHealthTracker(cfg.OnHealth),
 		peerSessions:   make(map[string]*peerSession),
@@ -914,16 +920,8 @@ func (s *Server) dial(req ConnectRequest) (net.Conn, error) {
 }
 
 func (s *Server) socks5Connect(conn net.Conn, targetAddr string, targetPort int) error {
-	if _, err := conn.Write([]byte{5, 1, 0}); err != nil {
-		return fmt.Errorf("failed to write socks5 auth: %w", err)
-	}
-
-	resp := make([]byte, 2)
-	if _, err := io.ReadFull(conn, resp); err != nil {
-		return fmt.Errorf("failed to read socks5 auth resp: %w", err)
-	}
-	if resp[0] != 5 || resp[1] != 0 {
-		return ErrSocks5AuthFailed
+	if err := s.socks5Authenticate(conn); err != nil {
+		return err
 	}
 
 	addrLen := len(targetAddr)
@@ -941,7 +939,7 @@ func (s *Server) socks5Connect(conn net.Conn, targetAddr string, targetPort int)
 		return fmt.Errorf("failed to write socks5 connect req: %w", err)
 	}
 
-	resp = make([]byte, 10)
+	resp := make([]byte, 10)
 	if _, err := io.ReadFull(conn, resp); err != nil {
 		return fmt.Errorf("failed to read socks5 connect resp: %w", err)
 	}
@@ -949,5 +947,65 @@ func (s *Server) socks5Connect(conn net.Conn, targetAddr string, targetPort int)
 		return fmt.Errorf("%w: %d", ErrSocks5ConnectFailed, resp[1])
 	}
 
+	return nil
+}
+
+func (s *Server) socks5Authenticate(conn net.Conn) error {
+	if s.socksProxyUser != "" {
+		// Offer username/password auth (RFC 1929) only.
+		if _, err := conn.Write([]byte{5, 1, 2}); err != nil {
+			return fmt.Errorf("failed to write socks5 auth: %w", err)
+		}
+	} else {
+		// No authentication.
+		if _, err := conn.Write([]byte{5, 1, 0}); err != nil {
+			return fmt.Errorf("failed to write socks5 auth: %w", err)
+		}
+	}
+
+	resp := make([]byte, 2)
+	if _, err := io.ReadFull(conn, resp); err != nil {
+		return fmt.Errorf("failed to read socks5 auth resp: %w", err)
+	}
+	if resp[0] != 5 {
+		return ErrSocks5AuthFailed
+	}
+	switch resp[1] {
+	case 0: // no auth accepted
+		if s.socksProxyUser != "" {
+			return ErrSocks5AuthFailed
+		}
+	case 2: // username/password
+		return s.socks5SendCredentials(conn)
+	default:
+		return ErrSocks5AuthFailed
+	}
+	return nil
+}
+
+func (s *Server) socks5SendCredentials(conn net.Conn) error {
+	user := s.socksProxyUser
+	pass := s.socksProxyPass
+	if len(user) > 255 {
+		user = user[:255]
+	}
+	if len(pass) > 255 {
+		pass = pass[:255]
+	}
+	authMsg := make([]byte, 0, 3+len(user)+len(pass))
+	authMsg = append(authMsg, 1, byte(len(user))) //nolint:gosec // G115: len clamped to ≤255 above
+	authMsg = append(authMsg, []byte(user)...)
+	authMsg = append(authMsg, byte(len(pass))) //nolint:gosec // G115: len clamped to ≤255 above
+	authMsg = append(authMsg, []byte(pass)...)
+	if _, err := conn.Write(authMsg); err != nil {
+		return fmt.Errorf("failed to write socks5 credentials: %w", err)
+	}
+	authResp := make([]byte, 2)
+	if _, err := io.ReadFull(conn, authResp); err != nil {
+		return fmt.Errorf("failed to read socks5 credentials resp: %w", err)
+	}
+	if authResp[1] != 0 {
+		return ErrSocks5AuthFailed
+	}
 	return nil
 }

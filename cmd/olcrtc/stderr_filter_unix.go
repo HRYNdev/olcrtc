@@ -11,7 +11,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var stderrFilterOnce sync.Once //nolint:gochecknoglobals // process-wide stderr fd filter
+var (
+	stderrFilterOnce   sync.Once    //nolint:gochecknoglobals // process-wide stderr fd filter
+	stderrPipeWriter   *os.File     //nolint:gochecknoglobals // process-wide stderr fd filter
+	stderrFilterDone   chan struct{} //nolint:gochecknoglobals // process-wide stderr fd filter
+	stderrFilterActive bool         //nolint:gochecknoglobals // process-wide stderr fd filter
+)
 
 func installStderrFilter() {
 	stderrFilterOnce.Do(func() {
@@ -30,11 +35,27 @@ func installStderrFilter() {
 			_ = unix.Close(origFD)
 			return
 		}
-		_ = writer.Close()
+		stderrPipeWriter = writer
+		stderrFilterDone = make(chan struct{})
+		stderrFilterActive = true
 		os.Stderr = os.NewFile(uintptr(unix.Stderr), "/dev/stderr")
 		orig := os.NewFile(uintptr(origFD), "/dev/stderr-original")
-		go copyFilteredStderr(reader, orig)
+		go func() {
+			defer close(stderrFilterDone)
+			copyFilteredStderr(reader, orig)
+		}()
 	})
+}
+
+// flushStderrFilter closes the pipe write ends so the filter goroutine
+// sees EOF and drains any buffered output before the process exits.
+func flushStderrFilter() {
+	if !stderrFilterActive {
+		return
+	}
+	_ = stderrPipeWriter.Close()
+	_ = unix.Close(unix.Stderr)
+	<-stderrFilterDone
 }
 
 func copyFilteredStderr(reader *os.File, out io.Writer) {
