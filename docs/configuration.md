@@ -59,6 +59,7 @@ olcrtc /etc/olcrtc/client.yaml
 | `socks.host` / `socks.port` | локальный SOCKS5 listener в `mode: cnc` |
 | `socks.user` / `socks.pass` | необязательная auth для входящих SOCKS5-подключений |
 | `socks.proxy_addr` / `socks.proxy_port` | исходящий SOCKS5-прокси на серверной стороне |
+| `socks.proxy_user` / `socks.proxy_pass` | необязательная auth для upstream-прокси (RFC 1929) |
 | `engine.name` / `engine.url` / `engine.token` | прямой engine-режим, только при `auth.provider: none` |
 | `video.*` | настройки `videochannel` |
 | `vp8.*` | настройки `vp8channel` |
