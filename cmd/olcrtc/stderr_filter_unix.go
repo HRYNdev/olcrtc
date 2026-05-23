@@ -11,11 +11,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var ( //nolint:gochecknoglobals // process-wide stderr fd filter
-	stderrFilterOnce   sync.Once
-	stderrPipeWriter   *os.File
-	stderrFilterDone   chan struct{}
-	stderrFilterActive bool
+var (
+	stderrFilterOnce   sync.Once    //nolint:gochecknoglobals // process-wide stderr fd filter
+	stderrPipeWriter   *os.File     //nolint:gochecknoglobals // process-wide stderr fd filter
+	stderrFilterDone   chan struct{} //nolint:gochecknoglobals // process-wide stderr fd filter
+	stderrFilterActive bool         //nolint:gochecknoglobals // process-wide stderr fd filter
 )
 
 func installStderrFilter() {

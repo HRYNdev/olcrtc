@@ -920,6 +920,37 @@ func (s *Server) dial(req ConnectRequest) (net.Conn, error) {
 }
 
 func (s *Server) socks5Connect(conn net.Conn, targetAddr string, targetPort int) error {
+	if err := s.socks5Authenticate(conn); err != nil {
+		return err
+	}
+
+	addrLen := len(targetAddr)
+	if addrLen > 255 {
+		addrLen = 255
+		targetAddr = targetAddr[:255]
+	}
+
+	req := make([]byte, 0, 7+addrLen)
+	req = append(req, 5, 1, 0, 3, byte(addrLen))
+	req = append(req, []byte(targetAddr)...)
+	req = append(req, byte(targetPort>>8), byte(targetPort)) //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
+
+	if _, err := conn.Write(req); err != nil {
+		return fmt.Errorf("failed to write socks5 connect req: %w", err)
+	}
+
+	resp := make([]byte, 10)
+	if _, err := io.ReadFull(conn, resp); err != nil {
+		return fmt.Errorf("failed to read socks5 connect resp: %w", err)
+	}
+	if resp[0] != 5 || resp[1] != 0 {
+		return fmt.Errorf("%w: %d", ErrSocks5ConnectFailed, resp[1])
+	}
+
+	return nil
+}
+
+func (s *Server) socks5Authenticate(conn net.Conn) error {
 	if s.socksProxyUser != "" {
 		// Offer username/password auth (RFC 1929) only.
 		if _, err := conn.Write([]byte{5, 1, 2}); err != nil {
@@ -945,55 +976,36 @@ func (s *Server) socks5Connect(conn net.Conn, targetAddr string, targetPort int)
 			return ErrSocks5AuthFailed
 		}
 	case 2: // username/password
-		user := s.socksProxyUser
-		pass := s.socksProxyPass
-		if len(user) > 255 {
-			user = user[:255]
-		}
-		if len(pass) > 255 {
-			pass = pass[:255]
-		}
-		authMsg := make([]byte, 0, 3+len(user)+len(pass))
-		authMsg = append(authMsg, 1, byte(len(user)))
-		authMsg = append(authMsg, []byte(user)...)
-		authMsg = append(authMsg, byte(len(pass)))
-		authMsg = append(authMsg, []byte(pass)...)
-		if _, err := conn.Write(authMsg); err != nil {
-			return fmt.Errorf("failed to write socks5 credentials: %w", err)
-		}
-		authResp := make([]byte, 2)
-		if _, err := io.ReadFull(conn, authResp); err != nil {
-			return fmt.Errorf("failed to read socks5 credentials resp: %w", err)
-		}
-		if authResp[1] != 0 {
-			return ErrSocks5AuthFailed
-		}
+		return s.socks5SendCredentials(conn)
 	default:
 		return ErrSocks5AuthFailed
 	}
+	return nil
+}
 
-	addrLen := len(targetAddr)
-	if addrLen > 255 {
-		addrLen = 255
-		targetAddr = targetAddr[:255]
+func (s *Server) socks5SendCredentials(conn net.Conn) error {
+	user := s.socksProxyUser
+	pass := s.socksProxyPass
+	if len(user) > 255 {
+		user = user[:255]
 	}
-
-	req := make([]byte, 0, 7+addrLen)
-	req = append(req, 5, 1, 0, 3, byte(addrLen))
-	req = append(req, []byte(targetAddr)...)
-	req = append(req, byte(targetPort>>8), byte(targetPort)) //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
-
-	if _, err := conn.Write(req); err != nil {
-		return fmt.Errorf("failed to write socks5 connect req: %w", err)
+	if len(pass) > 255 {
+		pass = pass[:255]
 	}
-
-	resp = make([]byte, 10)
-	if _, err := io.ReadFull(conn, resp); err != nil {
-		return fmt.Errorf("failed to read socks5 connect resp: %w", err)
+	authMsg := make([]byte, 0, 3+len(user)+len(pass))
+	authMsg = append(authMsg, 1, byte(len(user))) //nolint:gosec // G115: len clamped to ≤255 above
+	authMsg = append(authMsg, []byte(user)...)
+	authMsg = append(authMsg, byte(len(pass))) //nolint:gosec // G115: len clamped to ≤255 above
+	authMsg = append(authMsg, []byte(pass)...)
+	if _, err := conn.Write(authMsg); err != nil {
+		return fmt.Errorf("failed to write socks5 credentials: %w", err)
 	}
-	if resp[0] != 5 || resp[1] != 0 {
-		return fmt.Errorf("%w: %d", ErrSocks5ConnectFailed, resp[1])
+	authResp := make([]byte, 2)
+	if _, err := io.ReadFull(conn, authResp); err != nil {
+		return fmt.Errorf("failed to read socks5 credentials resp: %w", err)
 	}
-
+	if authResp[1] != 0 {
+		return ErrSocks5AuthFailed
+	}
 	return nil
 }
