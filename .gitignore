@@ -251,3 +251,7 @@ code/package-lock.json
 !cmd/olcrtc/main_test.go
 !pkg/
 cpu.prof
+.kiro
+.kirograph
+package.json
+package-lock.json
