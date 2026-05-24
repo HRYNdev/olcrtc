@@ -5,7 +5,7 @@ on:
   pull_request:
     branches: ["main", "master"]
   schedule:
-    # Nightly stress soak — 03:17 UTC keeps it off the hour to avoid
+    # Nightly stress soak - 03:17 UTC keeps it off the hour to avoid
     # contention with the GitHub Actions hourly stampede.
     - cron: "17 3 * * *"
   workflow_dispatch:
