@@ -37,6 +37,8 @@ Community ui client: [alananisimov/olcbox](https://github.com/alananisimov/olcbo
 
 [More info](docs/about.md)
 
+[Docker setup](docs/docker.md)
+
 [Client URI format](docs/uri.md)
 
 [Client subscription format](docs/sub.md)
