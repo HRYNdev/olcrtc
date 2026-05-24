@@ -684,7 +684,6 @@ func (p *streamTransport) handleIncomingFrame(frame []byte) {
 		// tracks. Their epochs differ from our latched peer (the server).
 		// Simply ignore frames that don't match our peer — they belong to
 		// other participants we don't communicate with.
-		logger.Debugf("vp8channel: ignoring frame from unknown epoch=0x%08x (latched=0x%08x)", peerEpoch, prev)
 		return
 	}
 
