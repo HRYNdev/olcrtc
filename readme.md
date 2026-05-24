@@ -54,8 +54,6 @@ Telegram: [zarazaex](https://t.me/zarazaexe)
 Email: [zarazaex@tuta.io](mailto:zarazaex@tuta.io)
 <br>
 Site: [zarazaex.xyz](https://zarazaex.xyz)
-<br>
-Made for: [olcNG](https://github.com/zarazaex69/olcng)
 
 
 </div>
