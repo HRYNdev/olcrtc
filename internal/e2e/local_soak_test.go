@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -37,6 +38,11 @@ import (
 //	    -olcrtc.local-soak-duration=12h \
 //	    -timeout=13h
 //
+// To pump every built-in transport sequentially in a single run pass
+// `-olcrtc.local-soak-transport=all` (or a comma-separated subset like
+// `datachannel,vp8channel`). Each transport gets its own subtest and its
+// own full -olcrtc.local-soak-duration window.
+//
 // The test is gated by -olcrtc.local-soak so it never runs in regular CI.
 
 var (
@@ -53,7 +59,8 @@ var (
 	localSoakTransport = flag.String( //nolint:gochecknoglobals // package-level state intentional
 		"olcrtc.local-soak-transport",
 		transportData,
-		"transport to pump through: datachannel|videochannel|seichannel|vp8channel",
+		"transport(s) to pump through: datachannel|videochannel|seichannel|vp8channel, "+
+			"or 'all', or a comma-separated subset (e.g. datachannel,vp8channel)",
 	)
 	localSoakChunk = flag.Int( //nolint:gochecknoglobals // package-level state intentional
 		"olcrtc.local-soak-chunk",
@@ -72,7 +79,12 @@ var (
 	)
 )
 
-var errLocalSoakPayloadMismatch = errors.New("local soak payload mismatch")
+var (
+	errLocalSoakPayloadMismatch  = errors.New("local soak payload mismatch")
+	errLocalSoakTransportEmpty   = errors.New("empty transport value")
+	errLocalSoakTransportNone    = errors.New("no transports listed")
+	errLocalSoakTransportUnknown = errors.New("unknown transport")
+)
 
 // TestLocalThroughputSoak pumps a deterministic byte pattern through a
 // locally-built tunnel for -olcrtc.local-soak-duration and reports
@@ -90,15 +102,34 @@ func TestLocalThroughputSoak(t *testing.T) {
 		t.Fatalf("invalid -olcrtc.local-soak-chunk=%d", *localSoakChunk)
 	}
 
+	transports, err := resolveLocalSoakTransports(*localSoakTransport)
+	if err != nil {
+		t.Fatalf("invalid -olcrtc.local-soak-transport=%q: %v", *localSoakTransport, err)
+	}
+
+	for _, transportName := range transports {
+		t.Run(transportName, func(t *testing.T) {
+			runLocalSoakOnce(t, transportName)
+		})
+	}
+}
+
+// runLocalSoakOnce builds a fresh tunnel for transportName and pumps it
+// for one full -olcrtc.local-soak-duration window. Each subtest gets its
+// own carrier, SOCKS port and goroutines via t.Cleanup, so transports
+// don't share state and a leak in one of them won't poison the next.
+func runLocalSoakOnce(t *testing.T, transportName string) {
+	t.Helper()
+
 	// Connection setup itself can be slow (first WebRTC handshake on
 	// some transports), so don't fold it into the duration budget.
 	const setupBudget = 30 * time.Second
 
 	t.Logf("[soak] transport=%s duration=%s chunk=%d verify=%t progress=%s",
-		*localSoakTransport, *localSoakDuration, *localSoakChunk,
+		transportName, *localSoakDuration, *localSoakChunk,
 		*localSoakVerify, *localSoakProgress)
 
-	rt := startLocalSoakTunnel(t, *localSoakTransport)
+	rt := startLocalSoakTunnel(t, transportName)
 	echoAddr := startEchoServer(t)
 
 	conn, err := connectViaSOCKSWithin(rt.socksAddr, echoAddr, setupBudget)
@@ -120,13 +151,51 @@ func TestLocalThroughputSoak(t *testing.T) {
 	}
 
 	t.Logf("[soak] DONE transport=%s elapsed=%s sent=%s recv=%s send=%s/s recv=%s/s",
-		*localSoakTransport,
+		transportName,
 		stats.elapsed.Round(time.Second),
 		humanBytes(stats.sent),
 		humanBytes(stats.recv),
 		humanBytes(int64(float64(stats.sent)/stats.elapsed.Seconds())),
 		humanBytes(int64(float64(stats.recv)/stats.elapsed.Seconds())),
 	)
+}
+
+// resolveLocalSoakTransports turns the -olcrtc.local-soak-transport flag
+// value into an ordered, deduplicated list of built-in transport names.
+// Accepts "all" as a shorthand for builtInTransportNames(), or a
+// comma-separated subset (with whitespace tolerated around items).
+func resolveLocalSoakTransports(value string) ([]string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, errLocalSoakTransportEmpty
+	}
+	if strings.EqualFold(trimmed, "all") {
+		return builtInTransportNames(), nil
+	}
+
+	known := make(map[string]struct{}, 4)
+	for _, name := range builtInTransportNames() {
+		known[name] = struct{}{}
+	}
+
+	items := splitTestList(trimmed)
+	if len(items) == 0 {
+		return nil, errLocalSoakTransportNone
+	}
+
+	seen := make(map[string]struct{}, len(items))
+	out := make([]string, 0, len(items))
+	for _, name := range items {
+		if _, ok := known[name]; !ok {
+			return nil, fmt.Errorf("%w: %q", errLocalSoakTransportUnknown, name)
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	return out, nil
 }
 
 // startLocalSoakTunnel mirrors startTunnel but lets the caller pick the

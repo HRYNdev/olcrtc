@@ -28,6 +28,8 @@ liveness:
 socks:
   proxy_addr: "" # например "127.0.0.1"
   proxy_port: 0 # например 1080
+  proxy_user: "" # необязательная auth для upstream-прокси (RFC 1929)
+  proxy_pass: ""
 
 sei:
   fps: 60
