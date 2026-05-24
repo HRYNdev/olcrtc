@@ -1,94 +1,104 @@
-# Docker Local Setup
+# Локальная настройка Docker
 
-This guide shows one way to run OLCRTC with a local-only Docker setup.
+Здесь описан один из способов запуска сервера olcrtc с локальной конфигурацией Docker.
 
-## Main idea
- 
-- keep the editable Docker files in a hidden `.local` folder
-- keep config files out of Git in the `.local` folder 
-- allow users to update repository normally with `git pull`
+## Идея
 
-## 1. Clone the repository
+- держать изменяемые Docker-файлы в скрытой папке `.local`
+- хранить конфигурационные файлы вне Git, в папке `.local`
+- позволять пользователям обновлять репозиторий обычным `git pull`
+
+## 1. Клонирование репозитория
 
 ```bash
 git clone https://github.com/openlibrecommunity/olcrtc.git
 cd olcrtc
 ```
 
-## 2. Update to the latest version
+## 2. Обновление до последней версии
 
-When you want to get a newer version from upstream, run:
+Чтобы получить новую версию из upstream, выполните команду ниже:
 
 ```bash
-git pull https://github.com/openlibrecommunity/olcrtc.git
+git pull https://github.com/openlibrecommunity/olcrtc.git -recurse-submodules
 ```
 
-If you use submodules in your environment, you can keep the same pull flow and add `--recurse-submodules`.
+## 3. Папка для локальных конфигураций
 
-## 3. Create the local folder
-
-Create a `.local` directory in the repository root:
+Создайте директорию `.local` в корне репозитория:
 
 ```bash
 mkdir -p .local
 ```
 
-This folder should contain files that belong only to your machine.
+Эта папка должна содержать файлы, которые будут использоваться только на вашей сервере.
 
-## 4. Copy the server compose file into `.local`
+## 4. Скопируйте docker-compose.yml в `.local`
 
-Copy the server compose file so your local version does not get overwritten by the next pull:
+Скопируйте файл ``docker-compose.yml`` (есть в репозитории), чтобы ваша локальная версия не перезаписывалась при следующем обноволении репозитория через ``git pull``:
 
 ```bash
 cp docker-compose.server.yml .local/docker-compose.server.yml
 ```
 
-If the upstream compose file changes later, copy it again after pulling updates.
+Если файл `docker-compose.yml` позже изменится, скопируйте его снова этой же командой после `git pull`.
 
-## 5. Create the local env file
+## 5. Создайте локальный файл окружения
 
-Create `.local/.env` and fill in the runtime values according to the connection type of your choice.
+Создайте `.local/.env` и заполните значения выполнения в соответствии с выбранным типом подключения.
 
-An example can be found in `docs/examples/.env.telemost.server.example`.
+Пример можно найти в `docs/examples/.env.telemost.server.example`.
 
-## 6. Start OLCRTC
+## 6. Запуск OLCRTC
 
-Run Docker Compose with the local compose file and env file:
+Запуск контейнеризированного сервера используя  ``docker-compose.server.yml`` и локальный ``.env``:
 
 ```bash
 docker compose -f .local/docker-compose.server.yml --env-file .local/.env up -d
 ```
 
-Check the container status:
+Проверка состояния контейнера:
 
 ```bash
 docker compose -f .local/docker-compose.server.yml --env-file .local/.env ps
 ```
 
-Follow the logs if you need to debug startup:
+ Просмотр логов контейнера:
 
 ```bash
 docker compose -f .local/docker-compose.server.yml --env-file .local/.env logs -f
+docker logs olcrtc-server
 ```
 
-## 7. Update the local setup later
+## 7. Обновление контейнера
 
-After a new upstream pull, copy the current server compose file again:
+Запустить команду ниже для получения новой версии репозитория из облака:
 
 ```bash
 git pull https://github.com/openlibrecommunity/olcrtc.git
+```
+
+После каждого обновления сравните новый и старый файл:
+
+```bash
+diff -wy .local/docker-compose.yml docker-compose.server.yml
+```
+
+Если есть отличия скопируйте файл из корня в папку ``.local``:
+
+```bash
 cp docker-compose.server.yml .local/docker-compose.server.yml
 ```
 
-Then restart the container with the same command:
+Затем перезапустите контейнер командами ниже:
 
 ```bash
-docker compose -f .local/docker-compose.server.yml --env-file .local/.env.telemost.server up -d
+docker compose -f .local/docker-compose.server.yml down
+docker compose -f .local/docker-compose.server.yml --env-file .local/.env up -d
 ```
 
-## Notes
+## Примечания
 
-- Keep all local Docker files inside `.local`.
-- Do not commit `.local` to the repository.
-- Keep shared documentation in `docs/` and server-specific values in `.local`.
-- If you change the upstream compose file, refresh the local copy before starting the container again.
+- Храните все локальные Docker-файлы внутри отдельной папки `.local`.
+- Не добавляйте `.local` в репозиторий (она должна быть в файле ``.gitignore``)
+- Держите общую документацию в `docs/`, а специфичные настройки в `.local`.
