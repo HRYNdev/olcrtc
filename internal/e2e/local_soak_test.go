@@ -236,7 +236,10 @@ func startLocalSoakTunnel(t *testing.T, transportName string) *tunnelRuntime {
 			DNSServer:        localDNSServer,
 		}, func() { close(ready) })
 	}()
-	waitForReady(t, ready)
+	// Video transports go through ICE+DTLS+SRTP+smux before becoming
+	// ready, so reuse the longer setup budget the soak test allows for
+	// the SOCKS connect.
+	waitForReadyWithin(t, ready, 30*time.Second)
 
 	return &tunnelRuntime{
 		socksAddr: socksAddr,
