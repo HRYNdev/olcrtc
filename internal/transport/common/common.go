@@ -1,5 +1,5 @@
 // Package common provides building blocks shared by the video-track based
-// transports (videochannel, seichannel) — fragment/reassembly, ack waiters,
+// transports (videochannel, seichannel) - fragment/reassembly, ack waiters,
 // and per-peer random IDs. vp8channel does its own KCP-based framing and
 // only consumes RandomID.
 package common
@@ -208,7 +208,7 @@ func (a *AckRegistry) Unregister(seq uint32) {
 }
 
 // Resolve delivers crc to the waiter for seq, if present. A missing waiter
-// is silently ignored — the sender has already moved on.
+// is silently ignored - the sender has already moved on.
 func (a *AckRegistry) Resolve(seq, crc uint32) {
 	a.mu.Lock()
 	waiter := a.waiters[seq]

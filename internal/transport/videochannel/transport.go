@@ -73,7 +73,7 @@ type streamTransport struct {
 	sendMu          sync.Mutex
 	startWriter     sync.Once
 	fragAcks        *fragAckTracker
-	reassembler    *common.Reassembler
+	reassembler     *common.Reassembler
 	videoW          int
 	videoH          int
 	videoFPS        int
@@ -650,7 +650,7 @@ func (p *streamTransport) handleInboundFrame(frame transportFrame) {
 		p.sendAck(frame.seq, frame.crc, frame.fragIdx)
 	case common.ResultPartial, common.ResultDuplicate:
 		// Every fragment we successfully decoded gets acked, including
-		// duplicates — under retransmits the sender may have lost the
+		// duplicates - under retransmits the sender may have lost the
 		// earlier ack and is waiting on this one.
 		p.sendAck(frame.seq, frame.crc, frame.fragIdx)
 	case common.ResultIgnore:

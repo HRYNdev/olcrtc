@@ -81,7 +81,7 @@ func TestReconnectWindowEnforcesCapWithinWindow(t *testing.T) {
 
 // TestResetPeerClearsBindingForNewPeer covers fix 032151b: after an
 // upper-layer handshake failure the supervisor calls ResetPeer, and the
-// next peer in the room must be allowed to latch — not blocked by the
+// next peer in the room must be allowed to latch - not blocked by the
 // previously-latched (now stale) endpoint.
 //
 // jitsi_test.go has no coverage for this path.
@@ -102,7 +102,7 @@ func TestResetPeerClearsBindingForNewPeer(t *testing.T) {
 	frameA := makeBridgeFrameForEpoch(t, 0x1111, 0, []byte("from-A"))
 	js.deliverBridgeMessage(makeBridgeMessageFrom("peerA", map[string]any{rawFieldKey: frameA}), true)
 
-	// Peer B tries while A still owns the latch — must be dropped.
+	// Peer B tries while A still owns the latch - must be dropped.
 	frameB1 := makeBridgeFrameForEpoch(t, 0x2222, 0, []byte("from-B-blocked"))
 	js.deliverBridgeMessage(makeBridgeMessageFrom("peerB", map[string]any{rawFieldKey: frameB1}), true)
 
@@ -196,7 +196,7 @@ func TestChurnPeerEpochChanges(t *testing.T) {
 		t.Fatalf("stale frames delivered: %d (filter regression)", staleDelivered.Load())
 	}
 	if delivered.Load() == 0 {
-		t.Fatal("no frames delivered at all — filter is too aggressive")
+		t.Fatal("no frames delivered at all - filter is too aggressive")
 	}
 }
 

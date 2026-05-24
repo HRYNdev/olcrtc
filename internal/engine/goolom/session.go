@@ -1,8 +1,8 @@
 // Package goolom implements an engine.Session backed by the Goolom SFU
 // signaling protocol. Goolom is the proprietary SFU developed for Yandex
-// Telemost; the on-wire protocol — capabilities offer, separated subscriber
+// Telemost; the on-wire protocol - capabilities offer, separated subscriber
 // and publisher PeerConnections, ack/pong keepalive, slots-based subscribe
-// model — is what this engine speaks.
+// model - is what this engine speaks.
 //
 // HTTP auth (room-info lookup, telemetry referer, etc.) lives in the auth
 // package; this engine consumes a media-server WebSocket URL plus the
@@ -35,10 +35,10 @@ const (
 	wsReadTimeout      = 60 * time.Second
 	wsHandshakeTimeout = 15 * time.Second
 
-	keyUID         = "uid"
-	keyDescription = "description"
-	keyPcSeq       = "pcSeq"
-	keyName        = "name"
+	keyUID          = "uid"
+	keyDescription  = "description"
+	keyPcSeq        = "pcSeq"
+	keyName         = "name"
 	stateTerminated = "terminated"
 
 	credentialKeyRoomID           = "roomID"
@@ -88,7 +88,7 @@ type Session struct {
 	peerID           string
 	roomID           string
 	credentials      string
-	roomURL          string // referer for telemetry — opaque to the engine
+	roomURL          string // referer for telemetry - opaque to the engine
 	telemetryReferer string
 	refresh          func(ctx context.Context) (engine.Credentials, error)
 

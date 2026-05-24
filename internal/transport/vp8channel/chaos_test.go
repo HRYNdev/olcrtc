@@ -122,7 +122,7 @@ func runChaosLoopback(t *testing.T, msgs [][]byte, cfg chaosCfg, timeout time.Du
 
 	var droppedAB, droppedBA atomic.Uint64
 	go chaosPump(t, stop, a2b, rtB, cfg, &droppedAB)
-	// Return path stays clean by default — KCP ACKs must come back reliably
+	// Return path stays clean by default - KCP ACKs must come back reliably
 	// for fair loss measurement; loss on one direction is enough to stress.
 	go chaosPump(t, stop, b2a, rtA, chaosCfg{}, &droppedBA)
 
@@ -161,7 +161,7 @@ func TestKCPSurvivesModeratePacketLoss(t *testing.T) {
 	dur, dropped := runChaosLoopback(t, msgs, chaosCfg{lossRatio: 0.10, seed: 0xC0FFEE}, 20*time.Second)
 	t.Logf("delivered %d msgs in %s with %d packets dropped (10%% loss)", len(msgs), dur, dropped)
 	if dropped == 0 {
-		t.Fatal("chaos pump did not drop any packets — loss injection broken")
+		t.Fatal("chaos pump did not drop any packets - loss injection broken")
 	}
 }
 
@@ -259,7 +259,7 @@ func TestKCPRecoversFromBurstLoss(t *testing.T) {
 }
 
 // TestKCPThroughputBaseline establishes a perfect-channel throughput floor.
-// Not an assertion — if this number regresses meaningfully on the same
+// Not an assertion - if this number regresses meaningfully on the same
 // hardware, something changed in KCP options (window size, MTU, tick).
 func TestKCPThroughputBaseline(t *testing.T) {
 	if testing.Short() {

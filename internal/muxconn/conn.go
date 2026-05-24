@@ -52,7 +52,7 @@ const (
 
 // frameBufPool recycles plaintext buffers between Push (decrypts a wire
 // frame into a buffer) and Read (consumes the buffer fully then returns
-// it). It is global so all Conn instances share the same hot cache —
+// it). It is global so all Conn instances share the same hot cache -
 // most clients in the same process talk to a handful of peers, and
 // per-Conn pools fragment the warm set unnecessarily.
 var frameBufPool = sync.Pool{ //nolint:gochecknoglobals // intentional process-wide buffer pool

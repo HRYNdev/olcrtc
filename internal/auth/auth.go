@@ -7,7 +7,7 @@
 // expressed via the RoomCreator interface.
 //
 // The "none" auth provider passes a caller-supplied URL+Token through
-// unchanged — this is the path that sing-box and other downstream consumers
+// unchanged - this is the path that sing-box and other downstream consumers
 // take when they want to use olcrtc as a generic LiveKit/Goolom/Jitsi
 // transport without any service-specific behaviour baked in.
 package auth
@@ -30,7 +30,7 @@ var (
 //
 // URL is the signaling endpoint (e.g. wss://livekit.example/). Token is the
 // access token (LiveKit JWT, Goolom session credential, etc). Extra is for
-// engine-specific bits that don't fit the common shape — engines should not
+// engine-specific bits that don't fit the common shape - engines should not
 // rely on it being populated unless their paired auth provider documents it.
 type Credentials struct {
 	URL   string
@@ -56,7 +56,7 @@ type Provider interface {
 	// Engine reports which engine this auth provider feeds.
 	Engine() string
 	// DefaultServiceURL returns the well-known service URL for this provider
-	// (e.g. "https://stream.wb.ru"). Returns "" if no default exists — in that
+	// (e.g. "https://stream.wb.ru"). Returns "" if no default exists - in that
 	// case the caller must supply -url explicitly.
 	DefaultServiceURL() string
 	// Issue obtains credentials for the given room.

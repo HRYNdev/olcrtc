@@ -10,7 +10,7 @@ import (
 // conn wraps a Session as a net.Conn.
 // Read is backed by an io.Pipe fed by the engine's OnData callback.
 // Write calls Session.Send.
-// Deadlines are not supported — callers should use context cancellation.
+// Deadlines are not supported - callers should use context cancellation.
 type conn struct {
 	s *Session
 }

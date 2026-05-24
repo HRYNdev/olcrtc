@@ -143,7 +143,7 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 	}
 	stream := &engineVideoSession{session: session, vt: vt}
 
-	// Stream/track IDs must be unique per peer — Jitsi rejects session-accept
+	// Stream/track IDs must be unique per peer - Jitsi rejects session-accept
 	// when msid collides with another participant in the conference.
 	track, err := webrtc.NewTrackLocalStaticSample(
 		webrtc.RTPCodecCapability{

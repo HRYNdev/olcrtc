@@ -30,7 +30,7 @@ type Capabilities struct {
 	VideoTrack bool
 }
 
-// Credentials are produced by an auth provider — duplicated here to avoid an
+// Credentials are produced by an auth provider - duplicated here to avoid an
 // import cycle between engine and auth.
 type Credentials struct {
 	URL   string

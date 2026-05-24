@@ -138,7 +138,7 @@ type bridgeOutbound struct {
 
 // New creates a new Jitsi engine session.
 //
-// cfg.URL carries the Jitsi host (e.g. "meet.cryptopro.ru") — populated by the
+// cfg.URL carries the Jitsi host (e.g. "meet.cryptopro.ru") - populated by the
 // jitsi auth provider after parsing the user-supplied room URL. cfg.Extra
 // must contain the room name under the "room" key.
 func New(_ context.Context, cfg engine.Config) (engine.Session, error) {
@@ -364,7 +364,7 @@ func (s *Session) videoTrackHandler() func(*webrtc.TrackRemote, *webrtc.RTPRecei
 
 // negotiatePC builds the pion PeerConnection, applies Jicofo's offer,
 // answers it and registers all the per-side wiring (DTLS state, ICE
-// callbacks, transceiver direction). It's branchy on purpose — Jingle
+// callbacks, transceiver direction). It's branchy on purpose - Jingle
 // negotiation has many discrete steps that can fail and each step
 // belongs to the same logical operation, so splitting it into helpers
 // would obscure the wire order rather than clarify it.
@@ -376,7 +376,7 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
 
 	// pion auto-registers a default interceptor chain (sender reports,
 	// receiver reports, NACK, etc.) when none is supplied. Several of
-	// those probe the DTLS transport on a tick — until DTLS comes up
+	// those probe the DTLS transport on a tick - until DTLS comes up
 	// (which can take seconds against Jitsi's STUN-only path, or never
 	// in pathological cases) they spam logs with
 	// "the DTLS transport has not started yet". JVB performs its own
@@ -423,7 +423,7 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
 
 	// When sending video, AddTrack already creates the video m-line (sendonly).
 	// When only receiving, an explicit recvonly transceiver is required so the
-	// SDP answer includes a video m-line — without it JVB does not set up a
+	// SDP answer includes a video m-line - without it JVB does not set up a
 	// video forwarding path and ICE stalls. Mirrors the j library reference CLI:
 	// AddTrack and AddTransceiverFromKind(video,recvonly) are mutually exclusive
 	// in Plan B; using both produces a malformed SDP.
@@ -469,13 +469,13 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
 	// (trickle ICE) and source-add (other participants' SSRCs) the moment
 	// it sees us reply to session-initiate. If we started the drain loop
 	// only after Accept and SendSourceAdd, those stanzas would queue in
-	// the 64-slot channel while RTP — which travels straight over UDP/TURN
-	// and reaches us in tens of ms — arrives first. Pion then drops the
+	// the 64-slot channel while RTP - which travels straight over UDP/TURN
+	// and reaches us in tens of ms - arrives first. Pion then drops the
 	// peer's RTP as "unhandled SSRC, media section has an explicit SSRC"
 	// because HandleSourceAdd hasn't grafted the SSRC onto the remote SDP
 	// yet. The peer never produces an OnTrack callback, our handshake
 	// never gets an ACK, and the tunnel dies. Starting the consumer first
-	// closes that race window — any source-add Jicofo emits is picked up
+	// closes that race window - any source-add Jicofo emits is picked up
 	// the instant it lands on the wire.
 	s.wg.Add(1)
 	go s.trickleDrainLoop(pc, neg, jSess.LowLevel().Stanzas())
@@ -939,7 +939,7 @@ func (s *Session) peerLatchAccepts(from string) bool {
 }
 
 // decodeRaw extracts the bytes from an EndpointMessage produced by the j
-// library's BridgeSendRaw helper. Mirrors the unexported colibri.DecodeRaw —
+// library's BridgeSendRaw helper. Mirrors the unexported colibri.DecodeRaw -
 // the j library's BridgeMessage type alias keeps the necessary fields public,
 // but the helper itself lives in an internal package.
 func decodeRaw(m j.BridgeMessage) []byte {
@@ -963,14 +963,14 @@ func decodeRaw(m j.BridgeMessage) []byte {
 //
 //  1. Mark the session closed so send/recv loops drop new work.
 //  2. Close the pion PeerConnection (stops media, sends DTLS bye). This
-//     mirrors jvbJingleSession.close() in lib-jitsi-meet — note that
+//     mirrors jvbJingleSession.close() in lib-jitsi-meet - note that
 //     graceful leave there does NOT send Jingle session-terminate; Jicofo
 //     learns of the departure from the MUC presence-unavailable stanza
 //     and only then frees the JVB bridge slot.
 //  3. Close the underlying j.Session, which closes the colibri-ws bridge,
 //     performs the MUC presence-unavailable handshake (LeaveMUCWait
-//     waits for Prosody to echo our own unavailable presence — the
-//     XMPP-level equivalent of XMPPEvents.MUC_LEFT — with a 5s cap),
+//     waits for Prosody to echo our own unavailable presence - the
+//     XMPP-level equivalent of XMPPEvents.MUC_LEFT - with a 5s cap),
 //     and only then tears down the websocket.
 //  4. Cancel the supervisor context and wait for goroutines.
 //
@@ -979,7 +979,7 @@ func decodeRaw(m j.BridgeMessage) []byte {
 // stops replying to our session-terminate IQ. TerminateWait then ate its
 // 3s budget and we still left ghost participants behind. lib-jitsi-meet
 // avoids this entirely by relying on MUC presence as the single source of
-// truth for departure — Prosody's MUC layer is far more reliable than
+// truth for departure - Prosody's MUC layer is far more reliable than
 // Jicofo's IQ handler under load.
 func (s *Session) Close() error {
 	if !s.closed.CompareAndSwap(false, true) {
@@ -1200,7 +1200,7 @@ func (s *Session) CanSend() bool {
 		return false
 	}
 	if s.onData == nil && s.onPeerData == nil {
-		// pure video mode — readiness driven by PC connection state
+		// pure video mode - readiness driven by PC connection state
 		s.pcMu.Lock()
 		ready := s.pc != nil && s.pc.ConnectionState() == webrtc.PeerConnectionStateConnected
 		s.pcMu.Unlock()
@@ -1234,7 +1234,7 @@ func (s *Session) GetBufferedAmount() uint64 {
 //
 // Tracks added before Connect are sent as part of the session-accept SDP
 // (so Jicofo announces them to other participants automatically). Tracks
-// added afterwards are attached to the live PeerConnection — Jitsi's
+// added afterwards are attached to the live PeerConnection - Jitsi's
 // source-add flow is not yet implemented in this engine, so late tracks
 // will only be visible on the next reconnect.
 func (s *Session) AddVideoTrack(track webrtc.TrackLocal) error {

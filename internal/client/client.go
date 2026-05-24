@@ -142,7 +142,7 @@ func RunWithReady(ctx context.Context, cfg Config, onReady func()) error {
 	// (e.g. handshake timeout against a wedged seichannel transport)
 	// without ever calling Close on the carrier link, leaving our MUC
 	// presence behind as a ghost participant in the next test that
-	// joined the same room. shutdown is nil-safe — it skips fields
+	// joined the same room. shutdown is nil-safe - it skips fields
 	// that bringUpLink hadn't populated yet.
 	defer c.shutdown()
 
@@ -204,7 +204,7 @@ func (c *Client) bringUpLink(
 		}
 		// Carrier callback fires after the link is back up. If handshake
 		// still fails it usually means the server hasn't completed its
-		// own reinstall yet — keep the listener up and wait for either
+		// own reinstall yet - keep the listener up and wait for either
 		// another callback or a future liveness loss to re-trigger.
 		c.handleReconnect(ctx, cfg, cancel, "carrier")
 	})
@@ -287,8 +287,8 @@ func openControlStreamTimeout(
 // resolveDeviceID returns the device ID to send in CLIENT_HELLO.
 //
 // Precedence:
-//  1. Explicit deviceID arg (Config.DeviceID) — used verbatim.
-//  2. Persistent file at path (Config.DeviceIDPath) — read if it exists,
+//  1. Explicit deviceID arg (Config.DeviceID) - used verbatim.
+//  2. Persistent file at path (Config.DeviceIDPath) - read if it exists,
 //     otherwise generated and written for future runs.
 //  3. Random UUID per run when both inputs are empty.
 func resolveDeviceID(deviceID, path string) (string, error) {
@@ -392,12 +392,12 @@ func (c *Client) retryHandshake(ctx context.Context, cfg Config, cancel context.
 		}
 		// Don't fail the whole process on liveness reconnect: the carrier
 		// rebuild may take dozens of seconds (e.g. ICE restart on a flaky
-		// network). Keep the SOCKS5 listener open and wait — handleSocks5
+		// network). Keep the SOCKS5 listener open and wait - handleSocks5
 		// will return host-unreachable to clients until we recover. For
 		// carrier-driven reconnects the callback fires after the link is
 		// already up, so a missed handshake is more suspicious; cap it.
 		if reason == "carrier" && attempt >= 5 {
-			logger.Warnf("client reconnect: exhausted %d handshake attempts (reason=%s) — keeping listener up", attempt, reason)
+			logger.Warnf("client reconnect: exhausted %d handshake attempts (reason=%s) - keeping listener up", attempt, reason)
 			return
 		}
 		select {

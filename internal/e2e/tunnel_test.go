@@ -110,7 +110,7 @@ const (
 	// known to flap: it sometimes succeeds and sometimes fails for
 	// reasons outside our control (third-party server load, lossy SFU
 	// paths, etc.). The matrix runner records the outcome but does
-	// not fail the test either way. Use this sparingly — prefer
+	// not fail the test either way. Use this sparingly - prefer
 	// ExpectPass / ExpectFail when the behaviour is deterministic.
 	realE2EExpectUnstable
 )
@@ -234,7 +234,7 @@ type memoryStream struct {
 	// video tracks through a real (in-process) WebRTC stack.
 	//
 	// streamCtx is owned by the stream itself (cancelled in Close), not
-	// by the short-lived ctx that Connect receives — the video
+	// by the short-lived ctx that Connect receives - the video
 	// transport's connectCtx fires its deferred cancel as soon as
 	// streamTransport.Connect returns, which would otherwise tear down
 	// the async SDP negotiation goroutine before it can find its peer.
@@ -385,7 +385,7 @@ func (s *memoryStream) SetVideoTrackHandler(cb func(*webrtc.TrackRemote, *webrtc
 	// transceiver that AddTrack on the peer side will create even if
 	// SetVideoTrackHandler arrives before AddVideoTrack.
 	if _, err := s.ensurePC(); err != nil {
-		// e2e helper: swallow — the failure surfaces on the next
+		// e2e helper: swallow - the failure surfaces on the next
 		// AddVideoTrack/Connect path that actually needs the PC.
 		_ = err
 	}
@@ -813,13 +813,13 @@ func realRoomURL(ctx context.Context, t *testing.T, carrierName string) string {
 		t.Skip("skip wbstream real e2e: set -olcrtc.real-wbstream-room to an existing room ID")
 		return ""
 	case "jitsi":
-		// Jitsi has no notion of "creating" a room — names are conjured
+		// Jitsi has no notion of "creating" a room - names are conjured
 		// on first join. The default flag points at meet.cryptopro.ru
 		// by default. When the flag is left at its default value, a
 		// per-process random suffix is appended
 		// to the slug: two participants share a single room by design (one
-		// pair, one shared key), so any third participant — including another
-		// concurrent test process with the same shared key — would corrupt
+		// pair, one shared key), so any third participant - including another
+		// concurrent test process with the same shared key - would corrupt
 		// the wire protocol on both sides. Users overriding the flag are
 		// trusted to manage room uniqueness themselves.
 		_ = ctx

@@ -362,7 +362,7 @@ func TestHandleStreamDispatchAfterConnect(t *testing.T) {
 	req, err := json.Marshal(ConnectRequest{
 		Cmd:  testConnectCmd,
 		Addr: testConnectAddr,
-		Port: 1, // unreachable port — dispatch will fail dial and exit
+		Port: 1, // unreachable port - dispatch will fail dial and exit
 	})
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)

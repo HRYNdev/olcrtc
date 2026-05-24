@@ -1,6 +1,6 @@
 // Package transport defines transport abstractions and registry.
 //
-// A transport encodes byte payloads onto a carrier (engine) primitive — either
+// A transport encodes byte payloads onto a carrier (engine) primitive - either
 // a reliable byte stream (datachannel) or a video track (videochannel,
 // seichannel, vp8channel). Transport-specific tuning lives in per-transport
 // Options types; the common configuration shared by every transport lives in
@@ -41,7 +41,7 @@ type Transport interface {
 	Features() Features
 	// Reconnect asks the underlying carrier (engine) to tear down and
 	// re-establish the SFU connection. Upper layers call this when a
-	// liveness probe declares the link dead — useful when the engine has
+	// liveness probe declares the link dead - useful when the engine has
 	// not yet noticed silent packet loss.
 	Reconnect(reason string)
 }

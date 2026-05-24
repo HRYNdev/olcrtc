@@ -2,8 +2,8 @@
 // It fetches the connection metadata (media server URL, peer ID, room ID,
 // signing credentials) the Goolom engine needs to join a conference.
 //
-// Telemost does not expose an API to create rooms — they originate in the
-// Yandex UI — so this provider does not implement auth.RoomCreator.
+// Telemost does not expose an API to create rooms - they originate in the
+// Yandex UI - so this provider does not implement auth.RoomCreator.
 package telemost
 
 import (

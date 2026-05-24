@@ -27,7 +27,7 @@ var (
 	realStress = flag.Bool( //nolint:gochecknoglobals // package-level state intentional
 		"olcrtc.stress",
 		false,
-		"run real provider stress matrix (bulk transfer + sustained echo) — requires -olcrtc.real-e2e",
+		"run real provider stress matrix (bulk transfer + sustained echo) - requires -olcrtc.real-e2e",
 	)
 	realStressBulkDuration = flag.Duration( //nolint:gochecknoglobals // package-level state intentional
 		"olcrtc.stress-bulk-duration",
@@ -183,7 +183,7 @@ func runRealE2EStressCase(t *testing.T, carrierName, transportName, roomURL, ech
 	}
 
 	goroutinesAfter := runtime.NumGoroutine()
-	// Allow some slack — pion/quic spawn helpers that take time to wind down
+	// Allow some slack - pion/quic spawn helpers that take time to wind down
 	// after Close, but a real leak shows up as tens of extra goroutines.
 	const goroutineLeakSlack = 30
 	if goroutinesAfter > goroutinesBefore+goroutineLeakSlack {
@@ -204,7 +204,7 @@ func runRealE2EStressCase(t *testing.T, carrierName, transportName, roomURL, ech
 // MiB/s; videochannel/seichannel ~25 KB/s through 256-byte qr-encoded
 // frames at 25 FPS). An asynchronous writer outruns a slow transport,
 // fills muxconn / SOCKS / RTP-track buffers, and the deadlocked pipe
-// eventually trips a TCP-write deadline — which is not a real bug, just
+// eventually trips a TCP-write deadline - which is not a real bug, just
 // the natural consequence of pumping into a slow pipe with no flow
 // control. Request-response naturally rate-limits to the transport's
 // actual round-trip throughput, which is what we want to measure.
@@ -251,10 +251,10 @@ func streamPatternForDuration(conn net.Conn, duration time.Duration, chunkSize i
 }
 
 type echoStats struct {
-	count                int
-	lost                 int
-	p50, p95, p99        time.Duration
-	maxLatency           time.Duration
+	count         int
+	lost          int
+	p50, p95, p99 time.Duration
+	maxLatency    time.Duration
 }
 
 // sustainedEcho writes payloads of size `payloadSize` and waits for them to

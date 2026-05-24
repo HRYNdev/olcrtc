@@ -328,7 +328,7 @@ func (s *Server) reinstallSession(dead *smux.Session) {
 
 	s.sessMu.Lock()
 	if s.session != dead {
-		// Someone else already reinstalled — discard our build.
+		// Someone else already reinstalled - discard our build.
 		s.sessMu.Unlock()
 		_ = newSess.Close()
 		_ = newConn.Close()
@@ -487,7 +487,7 @@ func (s *Server) getPeerSession(peerID string) *peerSession {
 }
 
 // serve drives the smux Accept loop. The first accepted stream on a given
-// smux session is the control stream — the handshake runs there. Subsequent
+// smux session is the control stream - the handshake runs there. Subsequent
 // streams are tunnel streams and proxy traffic.
 func (s *Server) serve(ctx context.Context) {
 	if s.peerLn != nil {

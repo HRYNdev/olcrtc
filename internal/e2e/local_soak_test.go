@@ -407,7 +407,7 @@ func pumpReader(
 }
 
 // isExpectedShutdownErr filters errors that just mean "we asked the conn
-// to stop" — deadline expirations from our SetDeadline kick, EOF from the
+// to stop" - deadline expirations from our SetDeadline kick, EOF from the
 // peer half-closing, etc.
 func isExpectedShutdownErr(err error) bool {
 	if err == nil {
