@@ -39,13 +39,11 @@ func BuildCLI() error {
 	return buildBinary("olcrtc", "./cmd/olcrtc", goos, goarch)
 }
 
-// Cross builds olcrtc for specified platforms or all if none specified.
-// Usage: mage cross [platforms...]
-// Example: mage cross linux/amd64 windows/amd64
-func Cross(platforms ...string) error {
+// Cross builds olcrtc for all supported platforms.
+func Cross() error {
 	mg.Deps(Deps)
 
-	allTargets := []struct{ os, arch string }{
+	targets := []struct{ os, arch string }{
 		{"linux", "amd64"},
 		{"linux", "arm64"},
 		{"windows", "amd64"},
@@ -55,28 +53,6 @@ func Cross(platforms ...string) error {
 		{"freebsd", "arm64"},
 		{"openbsd", "amd64"},
 		{"openbsd", "arm64"},
-	}
-
-	var targets []struct{ os, arch string }
-	
-	if len(platforms) == 0 {
-		targets = allTargets
-	} else {
-		wanted := make(map[string]bool)
-		for _, p := range platforms {
-			wanted[p] = true
-		}
-		
-		for _, t := range allTargets {
-			key := t.os + "/" + t.arch
-			if wanted[key] {
-				targets = append(targets, t)
-			}
-		}
-		
-		if len(targets) == 0 {
-			return fmt.Errorf("no valid platforms specified. Available: linux/amd64, linux/arm64, windows/amd64, darwin/amd64, darwin/arm64, freebsd/amd64, freebsd/arm64, openbsd/amd64, openbsd/arm64")
-		}
 	}
 
 	for _, t := range targets {
