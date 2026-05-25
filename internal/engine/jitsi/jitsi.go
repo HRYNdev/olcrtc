@@ -32,6 +32,7 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	pioninterceptor "github.com/pion/interceptor"
+	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 	"github.com/zarazaex69/j"
 )
@@ -541,6 +542,17 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 	s.pcMu.Lock()
 	s.pc = pc
 	s.pcMu.Unlock()
+
+	// Start an RTCP keepalive. JVB tracks endpoint liveness via
+	// lastIncomingActivityInstant = max(lastRtpReceived, lastIceConsent).
+	// In a TURN-relay-only path, ICE consent updates can fail to reach
+	// JVB's lastIceActivityInstant tracker. Periodic RTCP RR packets
+	// guarantee lastRtpReceived is fresh and the endpoint is not expired
+	// after the default 1-minute inactivity timeout, which causes JVB to
+	// shut down the DTLS session and emit close_notify.
+	s.wg.Add(1)
+	go s.rtcpKeepalive(pc)
+
 	return nil
 }
 
@@ -548,6 +560,34 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 // interface here because peer is in j's internal/ tree and not importable.
 type negotiator interface {
 	HandleSourceAdd(stanza string) error
+}
+
+// rtcpKeepalive sends an empty RTCP Receiver Report every 5 seconds so JVB
+// updates its lastRtpPacketReceivedInstant tracker for our endpoint. JVB's
+// shouldExpire() check fires every minute and tears down the DTLS session
+// (causing the observed CloseNotify alert) when no activity has been seen in
+// more than the configured inactivityTimeout (default 1 minute). Even an
+// empty RR keeps the timestamp fresh - JVB does not require the report to
+// reference any specific SSRC.
+func (s *Session) rtcpKeepalive(pc *webrtc.PeerConnection) {
+	defer s.wg.Done()
+	const interval = 5 * time.Second
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	pkts := []rtcp.Packet{&rtcp.ReceiverReport{}}
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-ticker.C:
+			if err := pc.WriteRTCP(pkts); err != nil {
+				if s.closed.Load() {
+					return
+				}
+				logger.Debugf("jitsi: rtcp keepalive write: %v", err)
+			}
+		}
+	}
 }
 
 // trickleDrainLoop reads the XMPP stanza channel and feeds any
