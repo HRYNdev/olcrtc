@@ -35,7 +35,7 @@ var (
 	realSoakCarrier = flag.String( //nolint:gochecknoglobals // package-level state intentional
 		"olcrtc.real-soak-carrier",
 		"jitsi",
-		"carrier to use: jitsi|telemost|wbstream",
+		"carrier(s) to use: comma-separated list (e.g. jitsi,telemost,wbstream)",
 	)
 	realSoakTransport = flag.String( //nolint:gochecknoglobals // package-level state intentional
 		"olcrtc.real-soak-transport",
@@ -70,21 +70,28 @@ func TestRealThroughputSoak(t *testing.T) {
 		t.Skip("real soak duration is zero")
 	}
 
-	carrierName := *realSoakCarrier
+	carriers := splitTestList(*realSoakCarrier)
+	if len(carriers) == 0 {
+		t.Fatal("no carriers specified in -olcrtc.real-soak-carrier")
+	}
 	transports, err := resolveLocalSoakTransports(*realSoakTransport)
 	if err != nil {
 		t.Fatalf("invalid -olcrtc.real-soak-transport=%q: %v", *realSoakTransport, err)
 	}
 
-	roomCtx, cancelRoom := context.WithTimeout(context.Background(), *realSoakDuration+2*time.Minute)
-	defer cancelRoom()
-	roomURL := requireRealRoom(roomCtx, t, carrierName)
-
 	echoAddr := startEchoServer(t)
 
-	for _, transportName := range transports {
-		t.Run(transportName, func(t *testing.T) {
-			runRealSoakOnce(t, carrierName, transportName, roomURL, echoAddr)
+	for _, carrierName := range carriers {
+		t.Run(carrierName, func(t *testing.T) {
+			roomCtx, cancelRoom := context.WithTimeout(context.Background(), *realSoakDuration+2*time.Minute)
+			defer cancelRoom()
+			roomURL := requireRealRoom(roomCtx, t, carrierName)
+
+			for _, transportName := range transports {
+				t.Run(transportName, func(t *testing.T) {
+					runRealSoakOnce(t, carrierName, transportName, roomURL, echoAddr)
+				})
+			}
 		})
 	}
 }
