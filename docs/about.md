@@ -128,7 +128,7 @@ mode: srv
 auth:
   provider: jitsi
 room:
-  id: "https://meet.cryptopro.ru/REPLACE_ME_WITH_ROOM_ID"
+  id: "https://meet1.arbitr.ru/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:
@@ -144,7 +144,7 @@ mode: cnc
 auth:
   provider: jitsi
 room:
-  id: "https://meet.cryptopro.ru/REPLACE_ME_WITH_ROOM_ID"
+  id: "https://meet1.arbitr.ru/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:
@@ -208,7 +208,7 @@ Go версия в сборочных скриптах: `1.25`. Для `videocha
 ```go
 sess, err := olcrtc.New(ctx, olcrtc.Config{
     Auth:   "jitsi",
-    RoomID: "https://meet.cryptopro.ru/myroom",
+    RoomID: "https://meet1.arbitr.ru/myroom",
 })
 if err != nil {
     return err
@@ -222,7 +222,7 @@ conn, err := sess.Dial(ctx)
 srv := tunnel.New(tunnel.Config{
     Transport: "datachannel",
     Carrier:   "jitsi",
-    RoomURL:   "https://meet.cryptopro.ru/myroom",
+    RoomURL:   "https://meet1.arbitr.ru/myroom",
     KeyHex:    "<64-char hex>",
     DNSServer: "8.8.8.8:53",
 })

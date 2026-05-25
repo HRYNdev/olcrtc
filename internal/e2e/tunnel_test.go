@@ -43,7 +43,7 @@ const (
 	localDNSServer      = "127.0.0.1:53"
 	videoHWNone         = "none"
 	testClientDeviceID  = "client-1"
-	defaultJitsiRoomURL = "https://meet.cryptopro.ru/deadbeef"
+	defaultJitsiRoomURL = "https://meet1.arbitr.ru/deadbeef"
 )
 
 var (
@@ -681,7 +681,7 @@ func realE2ECaseExpectation(carrierName, transportName string) realE2EExpectatio
 		//
 		// Jitsi video-path transports are marked Unstable. They depend on
 		// the external JVB ICE/media path and can flap on self-hosted
-		// instances (e.g. meet.cryptopro.ru): ICE may stay in checking or
+		// instances (e.g. meet1.arbitr.ru): ICE may stay in checking or
 		// the video upstream may be suppressed even though signaling and
 		// the colibri-ws bridge are healthy. Flag the outcome, but don't
 		// fail the suite when these paths flap.
@@ -711,7 +711,7 @@ func realE2EExpectationLabel(expectation realE2EExpectation) string {
 // logUnstableOutcome records the result of an Unstable matrix entry
 // without failing the test. Unstable combos exist to keep the matrix
 // honest about transports that flap against a particular carrier
-// (e.g. seichannel against meet.cryptopro.ru's bandwidth allocator)
+// (e.g. seichannel against meet1.arbitr.ru's bandwidth allocator)
 // while still surfacing whether the run happened to pass or fail.
 func logUnstableOutcome(t *testing.T, label, carrierName, transportName string, err error) {
 	t.Helper()
@@ -814,7 +814,7 @@ func realRoomURL(ctx context.Context, t *testing.T, carrierName string) string {
 		return ""
 	case "jitsi":
 		// Jitsi has no notion of "creating" a room - names are conjured
-		// on first join. The default flag points at meet.cryptopro.ru
+		// on first join. The default flag points at meet1.arbitr.ru
 		// by default. When the flag is left at its default value, a
 		// per-process random suffix is appended
 		// to the slug: two participants share a single room by design (one

@@ -88,7 +88,7 @@ func TestRunWithConfigValidationAndDataDirErrors(t *testing.T) {
 		Mode:      "srv",
 		Transport: "datachannel",
 		Auth:      "jitsi",
-		RoomID:    "https://meet.cryptopro.ru/test",
+		RoomID:    "https://meet1.arbitr.ru/test",
 		KeyHex:    "key",
 		DNSServer: "8.8.8.8:53",
 	}
@@ -135,7 +135,7 @@ link: direct
 auth:
   provider: jitsi
 room:
-  id: https://meet.cryptopro.ru/test
+  id: https://meet1.arbitr.ru/test
 crypto:
   key: key
 net:

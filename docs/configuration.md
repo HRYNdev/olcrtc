@@ -91,7 +91,7 @@ mode: srv
 auth:
   provider: jitsi
 room:
-  id: "https://meet.cryptopro.ru/REPLACE_ME_WITH_ROOM_ID"
+  id: "https://meet1.arbitr.ru/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:
@@ -107,7 +107,7 @@ mode: cnc
 auth:
   provider: jitsi
 room:
-  id: "https://meet.cryptopro.ru/REPLACE_ME_WITH_ROOM_ID"
+  id: "https://meet1.arbitr.ru/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:
