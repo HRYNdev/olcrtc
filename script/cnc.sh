@@ -340,7 +340,7 @@ podman pull "$IMAGE_NAME"
 
 echo "[*] Building OlcRTC..."
 podman run --rm \
-    --add-host=host.containers.internal:host-gateway \
+    --network host \
     -v "$WORK_DIR":/app:Z \
     -v "$GOMOD_CACHE":/go/pkg/mod:Z \
     -v "$GO_BUILD_CACHE":/root/.cache/go-build:Z \
