@@ -1,5 +1,5 @@
 # Серверный конфиг: telemost + videochannel
-# Запуск: olcrtc docs/examples/server.telemost.videochannel.yaml
+# Запуск: olcrtc docs/examples/server/server.telemost.videochannel.yaml
 
 mode: srv
 

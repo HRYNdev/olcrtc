@@ -1,5 +1,5 @@
 # Серверный конфиг: wbstream + vp8channel
-# Запуск: olcrtc docs/examples/server.wbstream.vp8channel.yaml
+# Запуск: olcrtc docs/examples/server/server.wbstream.vp8channel.yaml
 
 mode: srv
 

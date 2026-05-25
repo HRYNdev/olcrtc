@@ -1,5 +1,5 @@
 # Серверный конфиг: jitsi + seichannel
-# Запуск: olcrtc docs/examples/server.jitsi.seichannel.yaml
+# Запуск: olcrtc docs/examples/server/server.jitsi.seichannel.yaml
 
 mode: srv
 

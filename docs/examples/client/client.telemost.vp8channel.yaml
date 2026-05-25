@@ -1,5 +1,5 @@
 # Клиентский конфиг: telemost + vp8channel
-# Запуск: olcrtc docs/examples/client.telemost.vp8channel.yaml
+# Запуск: olcrtc docs/examples/client/client.telemost.vp8channel.yaml
 
 mode: cnc
 

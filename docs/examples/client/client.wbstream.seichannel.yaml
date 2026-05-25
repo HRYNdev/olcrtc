@@ -1,5 +1,5 @@
 # Клиентский конфиг: wbstream + seichannel
-# Запуск: olcrtc docs/examples/client.wbstream.seichannel.yaml
+# Запуск: olcrtc docs/examples/client/client.wbstream.seichannel.yaml
 
 mode: cnc
 

@@ -1,5 +1,5 @@
 # Клиентский конфиг: wbstream + vp8channel
-# Запуск: olcrtc docs/examples/client.wbstream.vp8channel.yaml
+# Запуск: olcrtc docs/examples/client/client.wbstream.vp8channel.yaml
 
 mode: cnc
 

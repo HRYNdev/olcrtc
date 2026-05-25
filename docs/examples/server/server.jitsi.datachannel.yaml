@@ -1,5 +1,5 @@
 # Серверный конфиг: jitsi + datachannel
-# Запуск: olcrtc docs/examples/server.jitsi.datachannel.yaml
+# Запуск: olcrtc docs/examples/server/server.jitsi.datachannel.yaml
 
 mode: srv
 

@@ -1,5 +1,5 @@
 # Серверный конфиг: jitsi + vp8channel
-# Запуск: olcrtc docs/examples/server.jitsi.vp8channel.yaml
+# Запуск: olcrtc docs/examples/server/server.jitsi.vp8channel.yaml
 
 mode: srv
 

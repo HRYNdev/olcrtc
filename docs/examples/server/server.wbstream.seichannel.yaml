@@ -1,5 +1,5 @@
 # Серверный конфиг: wbstream + seichannel
-# Запуск: olcrtc docs/examples/server.wbstream.seichannel.yaml
+# Запуск: olcrtc docs/examples/server/server.wbstream.seichannel.yaml
 
 mode: srv
 

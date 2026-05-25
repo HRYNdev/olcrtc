@@ -1,5 +1,5 @@
 # Серверный конфиг: telemost + vp8channel
-# Запуск: olcrtc docs/examples/server.telemost.vp8channel.yaml
+# Запуск: olcrtc docs/examples/server/server.telemost.vp8channel.yaml
 
 mode: srv
 

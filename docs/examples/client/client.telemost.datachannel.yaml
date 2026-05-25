@@ -1,5 +1,5 @@
 # Клиентский конфиг: telemost + datachannel
-# Запуск: olcrtc docs/examples/client.telemost.datachannel.yaml
+# Запуск: olcrtc docs/examples/client/client.telemost.datachannel.yaml
 
 mode: cnc
 

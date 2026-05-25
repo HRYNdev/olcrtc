@@ -1,5 +1,5 @@
 # Серверный конфиг: wbstream + videochannel
-# Запуск: olcrtc docs/examples/server.wbstream.videochannel.yaml
+# Запуск: olcrtc docs/examples/server/server.wbstream.videochannel.yaml
 
 mode: srv
 

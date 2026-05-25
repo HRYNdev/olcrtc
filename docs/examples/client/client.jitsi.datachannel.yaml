@@ -1,5 +1,5 @@
 # Клиентский конфиг: jitsi + datachannel
-# Запуск: olcrtc docs/examples/client.jitsi.datachannel.yaml
+# Запуск: olcrtc docs/examples/client/client.jitsi.datachannel.yaml
 
 mode: cnc
 

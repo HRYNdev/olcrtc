@@ -1,5 +1,5 @@
 # Клиентский конфиг: telemost + seichannel
-# Запуск: olcrtc docs/examples/client.telemost.seichannel.yaml
+# Запуск: olcrtc docs/examples/client/client.telemost.seichannel.yaml
 
 mode: cnc
 

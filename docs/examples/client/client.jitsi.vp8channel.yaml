@@ -1,5 +1,5 @@
 # Клиентский конфиг: jitsi + vp8channel
-# Запуск: olcrtc docs/examples/client.jitsi.vp8channel.yaml
+# Запуск: olcrtc docs/examples/client/client.jitsi.vp8channel.yaml
 
 mode: cnc
 

@@ -1,5 +1,5 @@
 # Серверный конфиг: jitsi + videochannel
-# Запуск: olcrtc docs/examples/server.jitsi.videochannel.yaml
+# Запуск: olcrtc docs/examples/server/server.jitsi.videochannel.yaml
 
 mode: srv
 

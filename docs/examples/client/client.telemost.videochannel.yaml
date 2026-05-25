@@ -1,5 +1,5 @@
 # Клиентский конфиг: telemost + videochannel
-# Запуск: olcrtc docs/examples/client.telemost.videochannel.yaml
+# Запуск: olcrtc docs/examples/client/client.telemost.videochannel.yaml
 
 mode: cnc
 

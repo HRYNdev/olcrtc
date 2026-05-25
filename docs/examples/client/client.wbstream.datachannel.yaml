@@ -1,5 +1,5 @@
 # Клиентский конфиг: wbstream + datachannel
-# Запуск: olcrtc docs/examples/client.wbstream.datachannel.yaml
+# Запуск: olcrtc docs/examples/client/client.wbstream.datachannel.yaml
 
 mode: cnc
 

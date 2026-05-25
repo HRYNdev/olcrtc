@@ -1,5 +1,5 @@
 # Серверный конфиг: telemost + datachannel
-# Запуск: olcrtc docs/examples/server.telemost.datachannel.yaml
+# Запуск: olcrtc docs/examples/server/server.telemost.datachannel.yaml
 
 mode: srv
 
