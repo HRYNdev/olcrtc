@@ -85,22 +85,76 @@ func Lint() error {
 	return sh.RunV("golangci-lint", "run", "./...")
 }
 
-// Test runs all tests.
+// Test runs all unit tests (short mode, skips long-running chaos/throughput tests).
 func Test() error {
-	return sh.RunV(goexe, "test", "-race", "-count=1", "./...")
+	return sh.RunV(goexe, "test", "-race", "-count=1", "-short", "./...")
 }
 
-// E2E runs end-to-end tests from internal/e2e.
+// TestFull runs all tests including chaos and throughput baselines (no real providers).
+func TestFull() error {
+	return sh.RunV(goexe, "test", "-race", "-count=1", "-timeout", "10m", "./...")
+}
+
+// E2E runs the real-provider e2e matrix plus stress tests.
+// Configure via env: E2E_CARRIERS, E2E_TRANSPORTS, E2E_TIMEOUT, E2E_STRESS.
 func E2E() error {
-	args := []string{"test", "-race", "-count=1", "-v", "-timeout", "120s"}
+	args := []string{"test", "-race", "-count=1", "-v", "-timeout", "30m"}
+	args = append(args, "-olcrtc.real-e2e=true")
 	if carriers := os.Getenv("E2E_CARRIERS"); carriers != "" {
-		args = append(args, "-olcrtc.real-e2e=true", "-olcrtc.real-carriers="+carriers)
+		args = append(args, "-olcrtc.real-carriers="+carriers)
 	}
 	if transports := os.Getenv("E2E_TRANSPORTS"); transports != "" {
 		args = append(args, "-olcrtc.real-transports="+transports)
 	}
 	if timeout := os.Getenv("E2E_TIMEOUT"); timeout != "" {
 		args = append(args, "-olcrtc.real-timeout="+timeout)
+	}
+	if os.Getenv("E2E_STRESS") != "" {
+		args = append(args, "-olcrtc.stress=true")
+		if d := os.Getenv("E2E_STRESS_DURATION"); d != "" {
+			args = append(args, "-olcrtc.stress-duration="+d)
+		}
+	}
+	args = append(args, "./internal/e2e/...")
+	return sh.RunV(goexe, args...)
+}
+
+// Soak runs the real-provider throughput soak test.
+// Configure via env: SOAK_CARRIERS, SOAK_TRANSPORTS, SOAK_DURATION.
+func Soak() error {
+	carriers := envOr("SOAK_CARRIERS", "telemost,jitsi,wbstream")
+	transports := envOr("SOAK_TRANSPORTS", "datachannel,vp8channel")
+	duration := envOr("SOAK_DURATION", "10m")
+
+	args := []string{"test", "-count=1", "-v",
+		"-timeout", "4h",
+		"-olcrtc.real-e2e=true",
+		"-olcrtc.real-soak=true",
+		"-olcrtc.real-soak-carrier=" + carriers,
+		"-olcrtc.real-soak-transport=" + transports,
+		"-olcrtc.real-soak-duration=" + duration,
+		"-run", "^TestRealThroughputSoak$",
+		"./internal/e2e/...",
+	}
+	return sh.RunV(goexe, args...)
+}
+
+// LocalSoak runs the local (in-memory) throughput soak.
+// Configure via env: SOAK_TRANSPORTS, SOAK_DURATION, SOAK_CHAOS.
+func LocalSoak() error {
+	transports := envOr("SOAK_TRANSPORTS", "all")
+	duration := envOr("SOAK_DURATION", "6m")
+	chaos := os.Getenv("SOAK_CHAOS")
+
+	args := []string{"test", "-count=1", "-v",
+		"-timeout", "4h",
+		"-olcrtc.local-soak=true",
+		"-olcrtc.local-soak-transport=" + transports,
+		"-olcrtc.local-soak-duration=" + duration,
+		"-run", "^TestLocalThroughputSoak$",
+	}
+	if chaos != "" {
+		args = append(args, "-olcrtc.local-soak-chaos="+chaos)
 	}
 	args = append(args, "./internal/e2e/...")
 	return sh.RunV(goexe, args...)
