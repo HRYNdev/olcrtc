@@ -44,7 +44,8 @@ func (Provider) Engine() string { return "jitsi" }
 const defaultServiceURL = "https://meet1.arbitr.ru"
 
 // DefaultServiceURL returns the default Jitsi Meet service URL used by config
-// defaults and interactive helpers.
+// defaults and interactive helpers. Users should verify which server is
+// accessible in their network: https://meet1.arbitr.ru or https://meet.cryptopro.ru
 func (Provider) DefaultServiceURL() string { return defaultServiceURL }
 
 // Issue parses cfg.RoomURL into host+room and returns engine credentials.

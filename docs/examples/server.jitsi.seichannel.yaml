@@ -8,6 +8,8 @@ auth:
 
 # Для jitsi: полный URL комнаты (https://host/room или host/room).
 # Должен совпадать с клиентом.
+# Доступные серверы: meet1.arbitr.ru или meet.cryptopro.ru
+# Проверьте в браузере, какой работает в вашей сети.
 room:
   id: "https://meet1.arbitr.ru/REPLACE_WITH_ROOM_NAME"
 

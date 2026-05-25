@@ -72,7 +72,7 @@ olcrtc client.yaml
 
 | Provider | Engine | Комментарий |
 |---|---|---|
-| `jitsi` | `jitsi` | URL комнаты Jitsi, без отдельной регистрации |
+| `jitsi` | `jitsi` | URL комнаты Jitsi (`meet1.arbitr.ru` или `meet.cryptopro.ru`), без отдельной регистрации |
 | `telemost` | `goolom` | credentials через Yandex Telemost API, с отдельной регистрацией |
 | `wbstream` | `livekit` | credentials через WbBStream API, с отдельной регистрацией |
 | `none` | задаётся в `engine.name` | прямой engine-режим с `engine.url` и `engine.token`, с отдельной регистрацией |
@@ -130,6 +130,8 @@ mode: srv
 auth:
   provider: jitsi
 room:
+  # Используйте тот Jitsi-сервер, который работает в вашей сети:
+  # https://meet1.arbitr.ru/ROOM  или  https://meet.cryptopro.ru/ROOM
   id: "https://meet1.arbitr.ru/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
@@ -146,6 +148,8 @@ mode: cnc
 auth:
   provider: jitsi
 room:
+  # Используйте тот Jitsi-сервер, который работает в вашей сети:
+  # https://meet1.arbitr.ru/ROOM  или  https://meet.cryptopro.ru/ROOM
   id: "https://meet1.arbitr.ru/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
@@ -210,6 +214,7 @@ Go версия в сборочных скриптах: `1.25`. Для `videocha
 ```go
 sess, err := olcrtc.New(ctx, olcrtc.Config{
     Auth:   "jitsi",
+    // Используйте meet1.arbitr.ru или meet.cryptopro.ru - тот, что работает в вашей сети
     RoomID: "https://meet1.arbitr.ru/myroom",
 })
 if err != nil {
@@ -224,6 +229,7 @@ conn, err := sess.Dial(ctx)
 srv := tunnel.New(tunnel.Config{
     Transport: "datachannel",
     Carrier:   "jitsi",
+    // Используйте meet1.arbitr.ru или meet.cryptopro.ru - тот, что работает в вашей сети
     RoomURL:   "https://meet1.arbitr.ru/myroom",
     KeyHex:    "<64-char hex>",
     DNSServer: "8.8.8.8:53",

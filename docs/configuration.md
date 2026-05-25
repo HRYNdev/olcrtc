@@ -86,11 +86,17 @@ olcrtc /etc/olcrtc/client.yaml
 
 ### Сервер
 
+> **Jitsi-провайдер:** используйте тот сервер, который доступен в вашей сети. Проверьте оба в браузере и выберите рабочий:
+> - `https://meet1.arbitr.ru/` 
+> - `https://meet.cryptopro.ru/`
+
 ```yaml
 mode: srv
 auth:
   provider: jitsi
 room:
+  # Используйте тот Jitsi-сервер, который работает в вашей сети:
+  # https://meet1.arbitr.ru/ROOM  или  https://meet.cryptopro.ru/ROOM
   id: "https://meet1.arbitr.ru/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
@@ -107,6 +113,8 @@ mode: cnc
 auth:
   provider: jitsi
 room:
+  # Используйте тот Jitsi-сервер, который работает в вашей сети:
+  # https://meet1.arbitr.ru/ROOM  или  https://meet.cryptopro.ru/ROOM
   id: "https://meet1.arbitr.ru/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"

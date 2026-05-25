@@ -15,6 +15,7 @@
 //
 //	sess, err := olcrtc.New(ctx, olcrtc.Config{
 //	    Auth:   "jitsi",
+//	    // Use meet1.arbitr.ru or meet.cryptopro.ru - whichever works in your network
 //	    RoomID: "https://meet1.arbitr.ru/myroom",
 //	})
 //

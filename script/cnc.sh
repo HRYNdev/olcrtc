@@ -129,9 +129,29 @@ echo "[*] Using transport: $TRANSPORT"
 echo ""
 
 if [ "$AUTH" = "jitsi" ]; then
-    read -p "Jitsi base URL [default: https://meet1.arbitr.ru/]: " JITSI_BASE_INPUT
-    JITSI_BASE_URL=${JITSI_BASE_INPUT:-https://meet1.arbitr.ru/}
-    JITSI_BASE_URL="${JITSI_BASE_URL%/}"
+    echo ""
+    echo "Выберите Jitsi-сервер (проверьте в браузере, какой работает в вашей сети):"
+    echo "  1) https://meet1.arbitr.ru/"
+    echo "  2) https://meet.cryptopro.ru/"
+    echo "  3) Другой (ввести вручную)"
+    read -p "Введите номер [1-3, по умолчанию: 1]: " JITSI_SERVER_CHOICE
+
+    case "$JITSI_SERVER_CHOICE" in
+        2)
+            JITSI_BASE_URL="https://meet.cryptopro.ru"
+            ;;
+        3)
+            read -p "Введите URL Jitsi-сервера: " JITSI_BASE_INPUT
+            JITSI_BASE_URL="${JITSI_BASE_INPUT%/}"
+            if [ -z "$JITSI_BASE_URL" ]; then
+                echo "[X] URL не может быть пустым"
+                exit 1
+            fi
+            ;;
+        *)
+            JITSI_BASE_URL="https://meet1.arbitr.ru"
+            ;;
+    esac
 
     read -p "Enter Jitsi room name or URL: " JITSI_ROOM_INPUT
     if [ -z "$JITSI_ROOM_INPUT" ]; then
