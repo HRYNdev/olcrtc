@@ -108,10 +108,13 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		resp, err = t.base.RoundTrip(req)
 		if err == nil || !isRetriableError(err) {
-			return resp, err
+			if err != nil {
+				return resp, fmt.Errorf("round trip: %w", err)
+			}
+			return resp, nil
 		}
 	}
-	return resp, err
+	return resp, fmt.Errorf("round trip after %d retries: %w", maxRetries, err)
 }
 
 func isRetriableError(err error) bool {
