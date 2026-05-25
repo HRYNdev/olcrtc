@@ -909,7 +909,7 @@ func e2eTransportOptions(transportName string) transport.Options {
 	case "vp8channel":
 		return vp8channel.Options{FPS: 60, BatchSize: 64}
 	case "seichannel":
-		return seichannel.Options{FPS: 30, BatchSize: 4, FragmentSize: 512, AckTimeoutMS: 1500}
+		return seichannel.Options{FPS: 60, BatchSize: 64, FragmentSize: 512, AckTimeoutMS: 1500}
 	}
 	return nil
 }
