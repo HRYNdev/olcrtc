@@ -2,9 +2,12 @@ package e2e
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"testing"
 	"time"
+
+	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 )
 
 // Real-carrier throughput soak: same pump as TestLocalThroughputSoak but
@@ -112,6 +115,9 @@ func runRealSoakOnce(t *testing.T, carrierName, transportName, roomURL, echoAddr
 
 	rt, err := startRealTunnel(ctx, t, carrierName, transportName, roomURL, testClientDeviceID, testClientDeviceID)
 	if err != nil {
+		if errors.Is(err, enginebuiltin.ErrAuthFailed) {
+			t.Skipf("auth failed (skip): %v", err)
+		}
 		if expectation == realE2EExpectUnstable || expectation == realE2EExpectFail {
 			t.Skipf("start tunnel failed (expected %s): %v", realE2EExpectationLabel(expectation), err)
 		}
