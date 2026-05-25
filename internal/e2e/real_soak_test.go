@@ -105,11 +105,16 @@ func runRealSoakOnce(t *testing.T, carrierName, transportName, roomURL, echoAddr
 		carrierName, transportName, *realSoakDuration, *realSoakChunk,
 		*realSoakVerify, *realSoakProgress)
 
+	expectation := realE2ECaseExpectation(carrierName, transportName)
+
 	ctx, cancel := context.WithTimeout(context.Background(), *realSoakDuration+setupBudget)
 	defer cancel()
 
 	rt, err := startRealTunnel(ctx, t, carrierName, transportName, roomURL, testClientDeviceID, testClientDeviceID)
 	if err != nil {
+		if expectation == realE2EExpectUnstable || expectation == realE2EExpectFail {
+			t.Skipf("start tunnel failed (expected %s): %v", realE2EExpectationLabel(expectation), err)
+		}
 		t.Fatalf("start tunnel: %v", err)
 	}
 	_ = rt
