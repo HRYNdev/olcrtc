@@ -302,7 +302,10 @@ func (s *Session) joinAndOpenBridge(ctx context.Context) (*j.Session, error) {
 	}
 	logger.Infof("jitsi: joined %s/%s; colibri-ws=%s", s.host, s.room, jSess.ColibriWS)
 
-	if s.onData != nil || s.onPeerData != nil {
+	needBridge := s.onData != nil || s.onPeerData != nil
+	sctpBridge := needBridge && jSess.ColibriWS == ""
+
+	if needBridge && jSess.ColibriWS != "" {
 		bctx, bcancel := context.WithTimeout(ctx, bridgeOpenTimeout)
 		err := jSess.OpenBridge(bctx)
 		bcancel()
@@ -310,19 +313,31 @@ func (s *Session) joinAndOpenBridge(ctx context.Context) (*j.Session, error) {
 			_ = jSess.Close()
 			return nil, fmt.Errorf("open bridge: %w", err)
 		}
-		// Re-latch peer on every bridge open: after a reconnect the partner's
-		// MUC nick may have changed.
 		s.peerEndpoint.Store(nil)
 		s.peerVideoSSRC.Store(0)
 		s.bridgeReady.Store(true)
-		logger.Infof("jitsi: bridge open (endpoints=%v)", jSess.Endpoints())
+		logger.Infof("jitsi: bridge open colibri-ws (endpoints=%v)", jSess.Endpoints())
 	}
 
 	if s.shouldNegotiatePC() {
-		if err := s.negotiatePC(ctx, jSess); err != nil {
+		if err := s.negotiatePC(ctx, jSess, sctpBridge); err != nil {
 			_ = jSess.Close()
 			return nil, err
 		}
+	}
+
+	if sctpBridge {
+		bctx, bcancel := context.WithTimeout(ctx, bridgeOpenTimeout)
+		err := jSess.WaitBridgeSCTP(bctx)
+		bcancel()
+		if err != nil {
+			_ = jSess.Close()
+			return nil, fmt.Errorf("open bridge sctp: %w", err)
+		}
+		s.peerEndpoint.Store(nil)
+		s.peerVideoSSRC.Store(0)
+		s.bridgeReady.Store(true)
+		logger.Infof("jitsi: bridge open sctp (endpoints=%v)", jSess.Endpoints())
 	}
 
 	return jSess, nil
@@ -370,7 +385,7 @@ func (s *Session) videoTrackHandler() func(*webrtc.TrackRemote, *webrtc.RTPRecei
 // would obscure the wire order rather than clarify it.
 //
 //nolint:cyclop // sequential Jingle negotiation steps; refactoring would hide ordering
-func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
+func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge bool) error {
 	settings := webrtc.SettingEngine{}
 	settings.LoggerFactory = logger.NewPionLoggerFactory()
 
@@ -479,6 +494,13 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session) error {
 	// the instant it lands on the wire.
 	s.wg.Add(1)
 	go s.trickleDrainLoop(pc, neg, jSess.LowLevel().Stanzas())
+
+	if sctpBridge {
+		if err := jSess.PrepareBridgeSCTP(pc); err != nil {
+			_ = pc.Close()
+			return fmt.Errorf("prepare bridge sctp: %w", err)
+		}
+	}
 
 	if err := neg.Accept(ctx); err != nil {
 		_ = pc.Close()
