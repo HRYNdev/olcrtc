@@ -347,6 +347,98 @@ mage mobile   # собрать Android AAR
 
 ---
 
+## Несколько инстансов на одном сервере
+
+Можно запустить несколько серверов olcrtc на одной машине — каждый со своим конфигом (разные провайдеры, комнаты, транспорты). Для этого создай отдельный YAML-файл для каждого инстанса и запусти каждый в отдельном процессе.
+
+### Пример: два сервера
+
+```yaml
+# server-jitsi.yaml
+mode: srv
+auth:
+  provider: jitsi
+room:
+  id: "https://meet1.arbitr.ru/room1"
+crypto:
+  key: "aaaa...1111"
+net:
+  transport: datachannel
+  dns: "8.8.8.8:53"
+data: data
+```
+
+```yaml
+# server-wbstream.yaml
+mode: srv
+auth:
+  provider: wbstream
+room:
+  id: "<room-id>"
+crypto:
+  key: "bbbb...2222"
+net:
+  transport: vp8channel
+  dns: "8.8.8.8:53"
+data: data
+```
+
+Запусти каждый в отдельном терминале (или через `tmux` / `screen` / `systemd`):
+
+```sh
+./build/olcrtc-linux-amd64 server-jitsi.yaml
+./build/olcrtc-linux-amd64 server-wbstream.yaml
+```
+
+### Клиенты
+
+На клиентской машине — по одному конфигу на каждый сервер, с **разными SOCKS5 портами**:
+
+```yaml
+# client-jitsi.yaml
+mode: cnc
+auth:
+  provider: jitsi
+room:
+  id: "https://meet1.arbitr.ru/room1"
+crypto:
+  key: "aaaa...1111"
+net:
+  transport: datachannel
+  dns: "8.8.8.8:53"
+socks:
+  host: "127.0.0.1"
+  port: 8808
+data: data
+```
+
+```yaml
+# client-wbstream.yaml
+mode: cnc
+auth:
+  provider: wbstream
+room:
+  id: "<room-id>"
+crypto:
+  key: "bbbb...2222"
+net:
+  transport: vp8channel
+  dns: "8.8.8.8:53"
+socks:
+  host: "127.0.0.1"
+  port: 8809
+data: data
+```
+
+```sh
+./build/olcrtc-linux-amd64 client-jitsi.yaml      # SOCKS5 на :8808
+./build/olcrtc-linux-amd64 client-wbstream.yaml    # SOCKS5 на :8809
+```
+
+Переключение между инстансами в olcbox — просто выбираешь нужный SOCKS5 порт.
+
+---
+
 Используешь скрипты вместо ручной сборки? -> [Быстрый старт](fast.md)
 
 Все настройки и матрица совместимости -> [settings.md](settings.md)
