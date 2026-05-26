@@ -212,7 +212,7 @@ func (p *streamTransport) Send(data []byte) error {
 
 	for attempt := range maxSendAttempts {
 		// Only enqueue fragments on the first attempt. Retries just wait
-		// longer — the fragments from the previous attempt are still in
+		// longer - the fragments from the previous attempt are still in
 		// the outbound channel being drained by writerLoop. Re-enqueuing
 		// causes dead-fragment backlog that eventually clogs the channel.
 		if attempt == 0 {

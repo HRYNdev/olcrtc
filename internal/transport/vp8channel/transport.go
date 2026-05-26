@@ -109,17 +109,17 @@ type streamTransport struct {
 	localEpoch   uint32
 	peerEpoch    atomic.Uint32
 
-	kcp         *kcpRuntime
-	kcpMu       sync.RWMutex
-	reconnectMu sync.Mutex
-	reconnectFn func()
+	kcp           *kcpRuntime
+	kcpMu         sync.RWMutex
+	reconnectMu   sync.Mutex
+	reconnectFn   func()
 	peerConfirmed atomic.Bool
 
 	// Multi-peer support: when onPeerData is set, each remote epoch gets
 	// its own KCP runtime and data is routed via onPeerData(peerID, ...).
-	peersMu  sync.RWMutex
-	peers    map[uint32]*kcpRuntime // epoch → KCP runtime
-	peerOut  map[uint32]chan []byte // epoch → outbound queue
+	peersMu sync.RWMutex
+	peers   map[uint32]*kcpRuntime // epoch → KCP runtime
+	peerOut map[uint32]chan []byte // epoch → outbound queue
 }
 
 // New creates a vp8channel transport backed by a carrier engine.
@@ -722,7 +722,7 @@ func (p *streamTransport) handleIncomingFrame(frame []byte) {
 // session so multiple clients can coexist in the same room.
 func (p *streamTransport) handlePeerFrame(peerEpoch uint32, kcpPayload []byte) {
 	if len(kcpPayload) == 0 {
-		// Keepalive — ensure peer is registered but nothing to deliver.
+		// Keepalive - ensure peer is registered but nothing to deliver.
 		p.getOrCreatePeerKCP(peerEpoch)
 		return
 	}
