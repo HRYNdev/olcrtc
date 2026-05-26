@@ -11,17 +11,15 @@
 ## About
 olcRTC - across the sea
 
-Project that allows users to bypass blocking by parasitizing and tunneling on unblocked and whitelisted services in Russia, use legal webRTC services
+Project that bypass blocking by parasitizing on whitelisted services in Russia, use legal meet services
 
 ## Status
 
 Beta
 <br>
-See all info in [issues](https://github.com/openlibrecommunity/olcrtc/issues)
+See all info in [docs](docs/)
 <br>
-Issues? contact us at [@openlibrecommunity](https://t.me/openlibrecommunity)
-<br>
-Or wait for the release or at least a release
+Issues? contact us at [@openlibrecommunity](https://t.me/openlibrecommunity) or make an [issue](https://github.com/openlibrecommunity/olcrtc/issues)
 <br>
 Community ui client: [alananisimov/olcbox](https://github.com/alananisimov/olcbox)
 
