@@ -1,4 +1,9 @@
+
+
 <div align="center">
+
+![Westand](docs/asset/westand.svg)
+
 
 <img src="https://github.com/openlibrecommunity/material/blob/master/olcrtc.png" width="250" height="250">
 
@@ -6,7 +11,6 @@
 ![Golang](https://img.shields.io/badge/-Golang-0D1117?style=flat-square&logo=go&logoColor=00A7D0)
 
 </div>
-
 
 ## About
 olcRTC - across the sea
@@ -41,17 +45,14 @@ Community ui client: [alananisimov/olcbox](https://github.com/alananisimov/olcbo
 
 [Client subscription format](docs/sub.md)
 
-
 <div align="center">
 
 ---
-
 
 Telegram: [zarazaex](https://t.me/zarazaexe)
 <br>
 Email: [zarazaex@tuta.io](mailto:zarazaex@tuta.io)
 <br>
 Site: [zarazaex.xyz](https://zarazaex.xyz)
-
 
 </div>
