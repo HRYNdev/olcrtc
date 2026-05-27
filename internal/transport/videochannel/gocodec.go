@@ -1,6 +1,7 @@
 package videochannel
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -73,6 +74,11 @@ func (d *goDecoder) PushSample(sample []byte) error {
 	}
 	frame, err := d.dec.Decode(sample)
 	if err != nil {
+		// Inter-frame arrived before any keyframe (e.g. SFU started forwarding
+		// mid-GOP). Drop silently; the next keyframe will reset the reference.
+		if errors.Is(err, vp8.ErrNoReference) {
+			return nil
+		}
 		return fmt.Errorf("vp8 decode: %w", err)
 	}
 	gray := frame.Grayscale()

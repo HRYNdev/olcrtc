@@ -3,7 +3,7 @@ module github.com/openlibrecommunity/olcrtc
 go 1.26.3
 
 require (
-	codeberg.org/rape4me/kc v0.0.0-20260526155601-5f6fc8dfaaa1
+	codeberg.org/rape4me/kc v0.0.0-20260527043314-71657a097a6f
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/livekit/protocol v1.46.0
