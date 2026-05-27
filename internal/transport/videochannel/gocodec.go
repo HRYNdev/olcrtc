@@ -9,7 +9,7 @@ import (
 	"codeberg.org/rape4me/kc/vp8"
 )
 
-// goEncoder is a pure Go VP8 encoder replacing ffmpegEncoder.
+// goEncoder is a pure Go VP8 encoder.
 type goEncoder struct {
 	enc       *vp8.Encoder
 	width     int
@@ -39,7 +39,11 @@ func (e *goEncoder) EncodeFrame(frame []byte) ([]byte, error) {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.enc.Encode(frame)
+	encoded, err := e.enc.Encode(frame)
+	if err != nil {
+		return nil, fmt.Errorf("vp8 encode: %w", err)
+	}
+	return encoded, nil
 }
 
 func (e *goEncoder) Close() error {
@@ -47,7 +51,7 @@ func (e *goEncoder) Close() error {
 	return nil
 }
 
-// goDecoder is a pure Go VP8 decoder replacing ffmpegDecoder.
+// goDecoder is a pure Go VP8 decoder.
 type goDecoder struct {
 	dec       *vp8.Decoder
 	width     int
