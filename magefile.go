@@ -205,8 +205,10 @@ func TestFull() error {
 // E2e runs the real-provider smoke matrix.
 // Configure via env: E2E_CARRIERS, E2E_TRANSPORTS, E2E_TIMEOUT, E2E_STRESS.
 func E2e() error {
-	args := []string{"test", "-race", "-count=1", "-v", "-timeout", "30m"}
-	args = append(args, "-olcrtc.real-e2e=true")
+	args := []string{"test", "-race", "-count=1", "-v", "-timeout", "30m",
+		"./internal/e2e/...",
+		"-olcrtc.real-e2e=true",
+	}
 	if carriers := os.Getenv("E2E_CARRIERS"); carriers != "" {
 		args = append(args, "-olcrtc.real-carriers="+carriers)
 	}
@@ -222,7 +224,6 @@ func E2e() error {
 			args = append(args, "-olcrtc.stress-duration="+d)
 		}
 	}
-	args = append(args, "./internal/e2e/...")
 	return sh.RunV(goexe, args...)
 }
 
@@ -239,6 +240,7 @@ func Stress() error {
 	args := []string{"test", "-count=1", "-v",
 		"-timeout", overall,
 		"-run", "^TestRealProviderTransportStress$",
+		"./internal/e2e/...",
 		"-olcrtc.real-e2e=true",
 		"-olcrtc.stress=true",
 		"-olcrtc.stress-bulk-duration=" + bulk,
@@ -251,7 +253,6 @@ func Stress() error {
 	if transports := os.Getenv("E2E_TRANSPORTS"); transports != "" {
 		args = append(args, "-olcrtc.real-transports="+transports)
 	}
-	args = append(args, "./internal/e2e/...")
 	return sh.RunV(goexe, args...)
 }
 
@@ -265,12 +266,12 @@ func Soak() error {
 	args := []string{"test", "-count=1", "-v",
 		"-timeout", "12h",
 		"-run", "^TestRealThroughputSoak$",
+		"./internal/e2e/...",
 		"-olcrtc.real-e2e=true",
 		"-olcrtc.real-soak=true",
 		"-olcrtc.real-soak-carrier=" + carriers,
 		"-olcrtc.real-soak-transport=" + transports,
 		"-olcrtc.real-soak-duration=" + duration,
-		"./internal/e2e/...",
 	}
 	return sh.RunV(goexe, args...)
 }
@@ -285,6 +286,7 @@ func LocalSoak() error {
 	args := []string{"test", "-count=1", "-v",
 		"-timeout", "12h",
 		"-run", "^TestLocalThroughputSoak$",
+		"./internal/e2e/...",
 		"-olcrtc.local-soak=true",
 		"-olcrtc.local-soak-transport=" + transports,
 		"-olcrtc.local-soak-duration=" + duration,
@@ -292,7 +294,6 @@ func LocalSoak() error {
 	if chaos != "" {
 		args = append(args, "-olcrtc.local-soak-chaos="+chaos)
 	}
-	args = append(args, "./internal/e2e/...")
 	return sh.RunV(goexe, args...)
 }
 
