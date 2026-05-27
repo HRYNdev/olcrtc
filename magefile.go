@@ -204,8 +204,14 @@ func TestFull() error {
 
 // E2e runs the real-provider smoke matrix.
 // Configure via env: E2E_CARRIERS, E2E_TRANSPORTS, E2E_TIMEOUT, E2E_STRESS.
+//
+// Note: -race is intentionally NOT enabled here. The race detector adds
+// significant CPU overhead and breaks timing-sensitive handshake tests
+// against real networks (telemost/videochannel handshake regularly times
+// out under -race). Race coverage for production code paths is provided
+// by `mage testFull` against in-memory carriers.
 func E2e() error {
-	args := []string{"test", "-race", "-count=1", "-v", "-timeout", "30m",
+	args := []string{"test", "-count=1", "-v", "-timeout", "30m",
 		"./internal/e2e/...",
 		"-olcrtc.real-e2e=true",
 	}
