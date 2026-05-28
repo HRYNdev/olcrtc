@@ -231,8 +231,8 @@ github.com/xtaci/lossyconn v0.0.0-20190602105132-8df528c0c9ae/go.mod h1:gXtu8J62
 github.com/xtaci/smux v1.5.57 h1:N72VbGoSYxgcm6mPOYX0QzEZNVD3UI/JlVvAtXF+WrY=
 github.com/xtaci/smux v1.5.57/go.mod h1:IGQ9QYrBphmb/4aTnLEcJby0TNr3NV+OslIOMrX825Q=
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
-github.com/zarazaex69/gr v0.1.4 h1:7u9JRGCFqAfMKk3cG2VR9uiZRSHdCdv25ySwzK4LTOY=
-github.com/zarazaex69/gr v0.1.4/go.mod h1:hAk5j/s2QFlvr3bJkjPwakZENsMBx6VOUN1GwYzYoRw=
+github.com/zarazaex69/gr v0.1.5 h1:Lpr4WrNXHL/ma65ZXeQH2UyFi6HziJoqqjaYCLisOQY=
+github.com/zarazaex69/gr v0.1.5/go.mod h1:hAk5j/s2QFlvr3bJkjPwakZENsMBx6VOUN1GwYzYoRw=
 github.com/zarazaex69/j v0.0.0-20260525090009-ce2ca552a46b h1:Qod8qBMKesKg+gIqL3f1yqh/v00qG/dnTEMqTkz7pTU=
 github.com/zarazaex69/j v0.0.0-20260525090009-ce2ca552a46b/go.mod h1:7/ypJTenOIPx23fpo5uF7l4u+rxZqg9cFbTL/N77Ktc=
 github.com/zeebo/assert v1.3.0 h1:g7C04CbJuIDKNPFHmsk4hwZDO5O+kntRxzaUoNXj+IQ=
