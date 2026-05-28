@@ -933,12 +933,12 @@ func e2eTransportOptions(transportName string) transport.Options {
 	switch transportName {
 	case "videochannel":
 		return videochannel.Options{
-			Width:      1080,
-			Height:     1080,
-			FPS:        60,
-			Bitrate:    "5000k",
+			Width:      320,
+			Height:     320,
+			FPS:        25,
+			Bitrate:    "500k",
 			HW:         videoHWNone,
-			QRSize:     512,
+			QRSize:     256,
 			QRRecovery: "low",
 			Codec:      "qrcode",
 			TileModule: 4,
