@@ -212,10 +212,12 @@ func streamPatternForDuration(conn net.Conn, duration time.Duration, chunkSize i
 	if chunkSize <= 0 {
 		chunkSize = 4096
 	}
-	// Per-chunk roundtrip deadline. Slow transports (videochannel) can
-	// take seconds+ per chunk in practice; 15s gives ample margin
-	// without making genuine stalls hang forever.
-	const chunkTimeout = 15 * time.Second
+	// Per-chunk roundtrip deadline. Videochannel uses per-fragment acks
+	// with up to 20 retransmit attempts; during SFU renegotiation frames
+	// can be lost for several seconds, triggering the full retransmit
+	// cycle (~40s worst case). 45s covers that while still catching
+	// genuine stalls within a reasonable time.
+	const chunkTimeout = 45 * time.Second
 
 	start := time.Now()
 	deadline := start.Add(duration)

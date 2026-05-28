@@ -262,8 +262,8 @@ func TestPerAttemptAckTimeoutScalesWithFragments(t *testing.T) {
 		t.Fatalf("perAttemptAckTimeout(2,25) = %v, want %v", got, defaultAckTimeout)
 	}
 
-	// 16 fragments @ 25 FPS: 16 * 40ms * 2 = 1280ms.
-	if got, want := perAttemptAckTimeout(16, 25), 1280*time.Millisecond; got != want {
+	// 16 fragments @ 25 FPS: 16 * 40ms * 3 = 1920ms.
+	if got, want := perAttemptAckTimeout(16, 25), 1920*time.Millisecond; got != want {
 		t.Fatalf("perAttemptAckTimeout(16,25) = %v, want %v", got, want)
 	}
 

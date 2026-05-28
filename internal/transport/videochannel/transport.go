@@ -23,7 +23,7 @@ import (
 const (
 	defaultMaxPayloadSize = 16 * 1024
 	defaultFragmentSize   = 256
-	defaultAckTimeout     = 300 * time.Millisecond
+	defaultAckTimeout     = 1 * time.Second
 	defaultFrameInterval  = 40 * time.Millisecond
 	defaultConnectTimeout = 30 * time.Second
 	maxSendAttempts       = 20
@@ -301,7 +301,7 @@ func perAttemptAckTimeout(fragments, fps int) time.Duration {
 		fps = 25
 	}
 	frameInterval := time.Second / time.Duration(fps)
-	estimated := time.Duration(fragments) * frameInterval * 2
+	estimated := time.Duration(fragments) * frameInterval * 3
 	if estimated < defaultAckTimeout {
 		return defaultAckTimeout
 	}
