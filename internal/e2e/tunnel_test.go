@@ -79,7 +79,7 @@ var (
 	)
 	realE2ETelemostRoom = flag.String( //nolint:gochecknoglobals // package-level state intentional
 		"olcrtc.real-telemost-room",
-		"41514917109506",
+		"02789996238784",
 		"Telemost room URL or id for real e2e",
 	)
 	realE2EWBStreamRoom = flag.String( //nolint:gochecknoglobals // package-level state intentional
@@ -935,12 +935,12 @@ func e2eTransportOptions(transportName string) transport.Options {
 		return videochannel.Options{
 			Width:      1080,
 			Height:     1080,
-			FPS:        10,
-			Bitrate:    "1000k",
+			FPS:        60,
+			Bitrate:    "5000k",
 			HW:         videoHWNone,
 			QRSize:     512,
 			QRRecovery: "low",
-			Codec:      "qrcode",
+			Codec:      "tile",
 			TileModule: 4,
 			TileRS:     20,
 		}

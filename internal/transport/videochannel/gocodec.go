@@ -81,9 +81,9 @@ func (d *goDecoder) PushSample(sample []byte) error {
 	frame, err := d.dec.Decode(sample)
 	if err != nil {
 		if errors.Is(err, vp8.ErrNoReference) {
-			return nil // skip inter-frames until keyframe arrives
+			return nil
 		}
-		return nil // skip undecodable frames (e.g. from other participants)
+		return nil
 	}
 	gray := frame.Grayscale()
 	select {
