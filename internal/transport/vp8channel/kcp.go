@@ -76,7 +76,7 @@ func startKCP(out chan<- []byte, onData func([]byte), epochHdr [epochHdrLen]byte
 	}
 
 	// nodelay=1, interval=5ms, fast resend=2, congestion control OFF (nc=1).
-	// KCP does NOT regulate the send rate here — the writerLoop byte pacer
+	// KCP does NOT regulate the send rate here - the writerLoop byte pacer
 	// does, fed at a fixed rate just under the carrier's policer knee. KCP's
 	// own loss-based congestion control is the wrong controller for a hard
 	// policer: with nc=0 the unavoidable ~4% drops collapsed cwnd and starved

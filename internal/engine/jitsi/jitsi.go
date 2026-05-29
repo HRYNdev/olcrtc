@@ -111,15 +111,15 @@ type Session struct {
 	// EndpointMessage passed the bridgeMagic check. Once set, all bridge
 	// messages from other senders are dropped, isolating us from chatter by
 	// unrelated olcrtc processes that happen to share the same room.
-	peerEndpoint atomic.Pointer[string]
-	peerEpochMu  sync.Mutex
-	peerEpochs   map[string]uint32
-	done         chan struct{}
-	doneOnce     sync.Once
-	cancel       context.CancelFunc
+	peerEndpoint  atomic.Pointer[string]
+	peerEpochMu   sync.Mutex
+	peerEpochs    map[string]uint32
+	done          chan struct{}
+	doneOnce      sync.Once
+	cancel        context.CancelFunc
 	trickleCancel context.CancelFunc
-	runCtx       context.Context //nolint:containedctx // engine owns the supervisor lifetime
-	wg           sync.WaitGroup
+	runCtx        context.Context //nolint:containedctx // engine owns the supervisor lifetime
+	wg            sync.WaitGroup
 
 	videoTrackMu sync.RWMutex
 	videoTracks  []webrtc.TrackLocal
@@ -1210,7 +1210,7 @@ func (s *Session) reconnect(ctx context.Context) error {
 
 	s.bridgeReady.Store(false)
 
-	// Close PC only — keep the XMPP session alive.
+	// Close PC only - keep the XMPP session alive.
 	s.pcMu.Lock()
 	oldPC := s.pc
 	s.pc = nil
@@ -1238,31 +1238,31 @@ func (s *Session) reconnect(ctx context.Context) error {
 	// a fresh session-initiate when another peer arrives.
 	logger.Infof("jitsi: rejoin %s/%s (non-blocking) ...", s.host, s.room)
 	if err := jSess.Rejoin(ctx, s.name); err != nil {
-		logger.Warnf("jitsi: rejoin failed: %v — full reconnect", err)
+		logger.Warnf("jitsi: rejoin failed: %v - full reconnect", err)
 		return s.reconnectFull(ctx)
 	}
 
 	// Wait for Jicofo to send session-initiate (when a peer joins the room).
 	logger.Infof("jitsi: waiting for session-initiate in %s/%s ...", s.host, s.room)
 	if _, err := jSess.WaitJingleReinitiate(ctx); err != nil {
-		logger.Warnf("jitsi: wait reinitiate failed: %v — full reconnect", err)
+		logger.Warnf("jitsi: wait reinitiate failed: %v - full reconnect", err)
 		return s.reconnectFull(ctx)
 	}
 
-	// Got session-initiate — negotiate PC and open bridge.
+	// Got session-initiate - negotiate PC and open bridge.
 	sctpBridge := jSess.ColibriWS == ""
 	if err := s.negotiatePC(ctx, jSess, sctpBridge); err != nil {
-		logger.Warnf("jitsi: negotiate after reinitiate failed: %v — full reconnect", err)
+		logger.Warnf("jitsi: negotiate after reinitiate failed: %v - full reconnect", err)
 		return s.reconnectFull(ctx)
 	}
 	if sctpBridge {
 		if err := s.openBridgeSCTP(ctx, jSess); err != nil {
-			logger.Warnf("jitsi: bridge after reinitiate failed: %v — full reconnect", err)
+			logger.Warnf("jitsi: bridge after reinitiate failed: %v - full reconnect", err)
 			return s.reconnectFull(ctx)
 		}
 	} else {
 		if err := s.openBridgeWS(ctx, jSess); err != nil {
-			logger.Warnf("jitsi: bridge after reinitiate failed: %v — full reconnect", err)
+			logger.Warnf("jitsi: bridge after reinitiate failed: %v - full reconnect", err)
 			return s.reconnectFull(ctx)
 		}
 	}
