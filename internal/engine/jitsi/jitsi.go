@@ -575,9 +575,11 @@ type negotiator interface {
 func (s *Session) rtcpKeepalive(pc *webrtc.PeerConnection) {
 	defer s.wg.Done()
 	const interval = 5 * time.Second
+	const maxErrors = 3
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	pkts := []rtcp.Packet{&rtcp.ReceiverReport{}}
+	errCount := 0
 	for {
 		select {
 		case <-s.done:
@@ -587,7 +589,15 @@ func (s *Session) rtcpKeepalive(pc *webrtc.PeerConnection) {
 				if s.closed.Load() {
 					return
 				}
-				logger.Debugf("jitsi: rtcp keepalive write: %v", err)
+				errCount++
+				logger.Debugf("jitsi: rtcp keepalive write (%d/%d): %v", errCount, maxErrors, err)
+				if errCount >= maxErrors {
+					logger.Warnf("jitsi: rtcp keepalive giving up after %d errors", maxErrors)
+					s.requestReconnect("rtcp keepalive dead")
+					return
+				}
+			} else {
+				errCount = 0
 			}
 		}
 	}
