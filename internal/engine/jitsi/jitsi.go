@@ -1329,19 +1329,37 @@ func (s *Session) reconnect(ctx context.Context) error {
 	s.resetPeerEpochs()
 	s.drainSendQueue()
 
-	jSess := s.jSess.Load()
-	if jSess == nil {
-		return s.reconnectFull(ctx)
+	// Re-establish the XMPP/MUC session from scratch rather than reusing the
+	// lightweight jSess.Rejoin (leave+join) path. Rejoin skips the Jicofo
+	// focus-allocation IQ, and Jitsi gates the MUC on focus: once the server
+	// is left alone in the room, Jicofo idle-terminates the conference
+	// (session-terminate <expired/>) and tears down the room, after which a
+	// bare presence is rejected with <presence type='error'><not-allowed/>.
+	// The library's JoinMUC then matches a stale status-110 still buffered in
+	// its stanza channel and falsely reports success, so we wait forever for a
+	// session-initiate that never comes while actually being outside the room.
+	//
+	// j.JoinMUC re-runs dial -> focus allocation -> MUC join in the correct
+	// order (focus first, so Jicofo recreates the room), exactly like the
+	// initial Connect, but WITHOUT blocking on session-initiate — preserving
+	// the non-blocking reconnect contract. We wait for the fresh
+	// session-initiate separately via WaitJingleReinitiate once a peer rejoins.
+	if old := s.jSess.Swap(nil); old != nil {
+		_ = old.Close()
 	}
 
-	// Rejoin MUC (leave + join) without waiting for session-initiate.
-	// This resets Jicofo's state for our participant so it will send
-	// a fresh session-initiate when another peer arrives.
 	logger.Infof("jitsi: rejoin %s/%s (non-blocking) ...", s.host, s.room)
-	if err := jSess.Rejoin(ctx, s.name); err != nil {
+	jSess, err := j.JoinMUC(ctx, j.Config{
+		Host:  s.host,
+		Room:  s.room,
+		Nick:  s.name,
+		Debug: logger.IsVerbose(),
+	})
+	if err != nil {
 		logger.Warnf("jitsi: rejoin failed: %v - full reconnect", err)
 		return s.reconnectFull(ctx)
 	}
+	s.jSess.Store(jSess)
 
 	// Wait for Jicofo to send session-initiate (when a peer joins the room).
 	logger.Infof("jitsi: waiting for session-initiate in %s/%s ...", s.host, s.room)
