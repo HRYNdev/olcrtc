@@ -1481,49 +1481,53 @@ func (s *Session) requestReconnect(reason string) {
 }
 
 func (s *Session) handleReconnectAttempt(ctx context.Context) bool {
-	now := time.Now()
-	s.reconnectMu.Lock()
-	// Reset the reconnect counter once the bridge has been stable for
-	// stableUptime since the previous reconnect: long-running sessions
-	// will collect occasional churn-driven reconnects (peer leaves,
-	// JVB restart, etc.) which, without this reset, accumulate over
-	// hours and eventually trip maxReconnects on a perfectly recoverable
-	// failure. Falling back to the older window-based reset keeps the
-	// safety net for tight reconnect storms.
-	last := s.lastReconnectAt.Load()
-	stable := last != 0 && now.Sub(time.Unix(0, last)) >= stableUptime
-	if stable || s.reconnectWindowStart.IsZero() || now.Sub(s.reconnectWindowStart) > reconnectWindow {
-		s.reconnectWindowStart = now
-		s.reconnectCount = 0
-	}
-	s.reconnectCount++
-	count := s.reconnectCount
-	s.reconnectMu.Unlock()
-
-	if count > maxReconnects {
-		s.signalEnded("jitsi reconnect limit reached")
-		return true
-	}
-
-	backoff := time.Duration(count) * 2 * time.Second
-	if backoff > 30*time.Second {
-		backoff = 30 * time.Second
-	}
-
+	// Counter semantics: we track *consecutive failures*, not the total
+	// number of reconnect attempts. A reconnect that ultimately succeeds
+	// resets the counter to zero. Without this, a long-running session
+	// that legitimately reconnects (peer leaves and rejoins, JVB restarts,
+	// network blips) eventually crosses maxReconnects on a perfectly
+	// recoverable failure and the supervisor permanently shuts the engine
+	// down. The cap is meant as a safety net against pathologically
+	// repeated failure, not as a budget on legitimate reconnect events.
 	for {
-		if err := s.reconnect(ctx); err != nil {
-			logger.Warnf("jitsi reconnect failed: %v", err)
-			select {
-			case <-ctx.Done():
-				return true
-			case <-s.done:
-				return true
-			case <-time.After(backoff):
-				continue
-			}
+		s.reconnectMu.Lock()
+		failures := s.reconnectCount
+		s.reconnectMu.Unlock()
+		if failures > maxReconnects {
+			s.signalEnded("jitsi reconnect limit reached")
+			return true
 		}
-		s.drainReconnectQueue()
-		return false
+
+		backoff := time.Duration(failures) * 2 * time.Second
+		if backoff > 30*time.Second {
+			backoff = 30 * time.Second
+		}
+
+		err := s.reconnect(ctx)
+		if err == nil {
+			s.reconnectMu.Lock()
+			s.reconnectCount = 0
+			s.reconnectWindowStart = time.Time{}
+			s.reconnectMu.Unlock()
+			s.drainReconnectQueue()
+			return false
+		}
+
+		logger.Warnf("jitsi reconnect failed: %v", err)
+		s.reconnectMu.Lock()
+		s.reconnectCount++
+		if s.reconnectWindowStart.IsZero() {
+			s.reconnectWindowStart = time.Now()
+		}
+		s.reconnectMu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			return true
+		case <-s.done:
+			return true
+		case <-time.After(backoff):
+		}
 	}
 }
 
@@ -1573,9 +1577,21 @@ func (s *Session) reconnect(ctx context.Context) error {
 	}
 	s.jSess.Store(jSess)
 
-	// Wait for Jicofo to send session-initiate (when a peer joins the room).
-	logger.Infof("jitsi: waiting for session-initiate in %s/%s ...", s.host, s.room)
-	if _, err := jSess.WaitJingleReinitiate(ctx); err != nil {
+	// Wait for Jicofo to send session-initiate, but with a bounded
+	// timeout: if the recovery sits here forever the supervisor itself
+	// wedges and any subsequent reconnect requests pile up unhandled
+	// (handleReconnectAttempt is the single consumer of reconnectCh).
+	// Empirically Jicofo emits session-initiate within ~1 s once
+	// min-participants is reached; 30 s is a generous upper bound that
+	// still surfaces a stuck recovery before the chaos cycle below
+	// declares a wedge. On timeout we fall through to reconnectFull,
+	// which tears the j.Session down completely and rebuilds from the
+	// blocking Connect path that does include WaitJingle.
+	const reinitiateTimeout = 30 * time.Second
+	reinitCtx, reinitCancel := context.WithTimeout(ctx, reinitiateTimeout)
+	_, err = jSess.WaitJingleReinitiate(reinitCtx)
+	reinitCancel()
+	if err != nil {
 		logger.Warnf("jitsi: wait reinitiate failed: %v - full reconnect", err)
 		return s.reconnectFull(ctx)
 	}
@@ -1651,6 +1667,12 @@ func (s *Session) reinitiateBridge(ctx context.Context, jSess *j.Session) error 
 }
 
 // reconnectFull tears down everything and does a full rejoin (blocking on session-initiate).
+//
+// j.Join blocks on WaitJingle internally, so without a bounded timeout
+// here the supervisor stalls indefinitely whenever Jicofo decides not
+// to issue a session-initiate (peer not in MUC, conference garbage
+// collected, etc). Surfacing a bounded error lets handleReconnectAttempt
+// retry from scratch instead of leaving the engine permanently wedged.
 func (s *Session) reconnectFull(ctx context.Context) error {
 	if old := s.jSess.Swap(nil); old != nil {
 		_ = old.Close()
@@ -1660,8 +1682,12 @@ func (s *Session) reconnectFull(ctx context.Context) error {
 	s.resetPeerEpochs()
 	s.drainSendQueue()
 
+	const fullReconnectTimeout = 60 * time.Second
+	bctx, bcancel := context.WithTimeout(ctx, fullReconnectTimeout)
+	defer bcancel()
+
 	logger.Infof("jitsi: full reconnect %s/%s as %s ...", s.host, s.room, s.name)
-	jSess, err := s.joinAndOpenBridge(ctx)
+	jSess, err := s.joinAndOpenBridge(bctx)
 	if err != nil {
 		return err
 	}
