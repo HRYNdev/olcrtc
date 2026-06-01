@@ -180,11 +180,11 @@ func TestSanitiseNick(t *testing.T) {
 		raw  string
 		want string
 	}{
-		{"alice", "alice"},
+		{nameAlice, nameAlice},
 		{"Alice Smith", "Alice-Smith"},
 		{"Конрад Олег", "Konrad-Oleg"},
 		{"olcrtc-bot42", "olcrtc-bot42"},
-		{"  bob  ", "bob"},
+		{"  bob  ", nameBob},
 		{"$$$ %%%", ""},
 		{"verylongnicknamethatexceedslimit", "verylongnicknamet"[:16]},
 	}

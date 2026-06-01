@@ -55,11 +55,7 @@ const (
 	// Without this, the peer's own recovery (which produces a fresh epoch)
 	// drives us into an infinite reconnect loop.
 	reconnectGrace = 20 * time.Second
-	// stableUptime is how long the bridge must stay healthy before the
-	// reconnectCount is reset. Without this, healthy reconnects accumulated
-	// over hours of operation eventually cross maxReconnects and the engine
-	// gives up on a perfectly recoverable failure.
-	stableUptime = 60 * time.Second
+
 	// xmppKeepaliveInterval keeps the underlying XMPP transport alive while
 	// we wait for a peer. BOSH has no built-in stream management; without
 	// any application traffic Prosody closes the BOSH session after roughly
@@ -666,7 +662,7 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 	// after the default 1-minute inactivity timeout, which causes JVB to
 	// shut down the DTLS session and emit close_notify.
 	s.wg.Add(1)
-	go s.rtcpKeepalive(pcCtx, pc)
+	go s.rtcpKeepalive(pcCtx, pc) //nolint:contextcheck // pcCtx intentionally derives from s.runCtx to outlive this call
 
 	return nil
 }
@@ -1297,7 +1293,7 @@ func (s *Session) inReconnectGrace() bool {
 // magic. A non-olcrtc participant in the same MUC (a regular Jitsi web
 // client, an unrelated bot, etc.) gets filtered out before we ever
 // get here.
-func (s *Session) peerLatchAccepts(from string) bool {
+func (s *Session) peerLatchAccepts(from string) bool { //nolint:unparam // filter contract; always-true is policy
 	if cur := s.peerEndpoint.Load(); cur != nil {
 		if *cur == from {
 			return true

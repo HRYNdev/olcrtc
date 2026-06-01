@@ -48,12 +48,12 @@ package jitsi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -67,6 +67,16 @@ const (
 	envPairedIdle          = "OLCRTC_JITSI_PAIRED_IDLE"
 	envPairedChaosInterval = "OLCRTC_JITSI_PAIRED_CHAOS_INTERVAL"
 	envPairedVerbose       = "OLCRTC_JITSI_PAIRED_VERBOSE"
+
+	nameAlice = "alice"
+	nameBob   = "bob"
+)
+
+var (
+	errCastFailed       = errors.New("cast to *Session failed")
+	errBridgeTimeout    = errors.New("bridge not ready before deadline")
+	errRoundtripTimeout = errors.New("roundtrip timeout")
+	errReceiveTimeout   = errors.New("receive timeout")
 )
 
 type pairedConfig struct {
@@ -84,7 +94,7 @@ func (c *pairedConfig) durationLabel() string {
 	return c.duration.String()
 }
 
-func readPairedConfig(t *testing.T) *pairedConfig {
+func readPairedConfig(t *testing.T) *pairedConfig { //nolint:cyclop // config parsing is naturally branchy
 	t.Helper()
 	host := strings.TrimSpace(os.Getenv(envPairedHost))
 	if host == "" {
@@ -153,10 +163,10 @@ func (p *pairedInstance) note(b []byte) {
 	p.mu.Unlock()
 }
 
-func (p *pairedInstance) snapshot() (count int64, lastAt time.Time) {
+func (p *pairedInstance) snapshot() int64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.receivedFromOther, p.lastReceiveAt
+	return p.receivedFromOther
 }
 
 // startInstance spins up one Session at a time so the second one is
@@ -178,7 +188,7 @@ func startInstance(ctx context.Context, t *testing.T, cfg *pairedConfig, name st
 	js, ok := sess.(*Session)
 	if !ok {
 		_ = sess.Close()
-		return nil, fmt.Errorf("%s: cast to *Session failed", name)
+		return nil, fmt.Errorf("%s: cast to *Session failed: %w", name, errCastFailed)
 	}
 	js.SetShouldReconnect(func() bool { return ctx.Err() == nil })
 	inst.js = js
@@ -201,11 +211,11 @@ func waitForBridge(ctx context.Context, inst *pairedInstance, deadline time.Time
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("%s: wait for bridge: %w", inst.name, ctx.Err())
 		case <-time.After(time.Second):
 		}
 	}
-	return fmt.Errorf("%s: bridge not ready before deadline", inst.name)
+	return fmt.Errorf("%s: bridge not ready before deadline: %w", inst.name, errBridgeTimeout)
 }
 
 // pumpLoop sends a small heartbeat payload from `from` to the other
@@ -229,8 +239,8 @@ func pumpLoop(ctx context.Context, t *testing.T, from *pairedInstance, interval 
 		seq++
 		buf := append([]byte(nil), payload...)
 		if len(buf) >= 8 {
-			for i := 0; i < 8; i++ {
-				buf[i] = byte(seq >> (8 * i))
+			for i := range 8 {
+				buf[i] = byte(seq >> (8 * i)) //nolint:gosec // intentional truncation to byte
 			}
 		}
 		if err := from.js.Send(buf); err != nil {
@@ -245,7 +255,6 @@ type pairedStats struct {
 	cycles            int64
 	chaosKicks        int64
 	wedgesPair        int64 // periods where neither side received any data
-	maxObservedRttMs  atomic.Int64
 	startedAt         time.Time
 	lastChaosAt       time.Time
 	bothSidesReceived bool
@@ -268,7 +277,7 @@ type pairedStats struct {
 //   - Either side hits ErrSessionClosed at the engine level
 //     (the closed flag is the canonical "we gave up" signal).
 //
-//nolint:cyclop // chaos cycle structure naturally branches on phase + side
+//nolint:cyclop,gocognit // chaos cycle structure naturally branches on phase + side
 func TestJitsiPairedChaosStress(t *testing.T) {
 	cfg := readPairedConfig(t)
 	infinite := cfg.duration == 0
@@ -289,7 +298,7 @@ func TestJitsiPairedChaosStress(t *testing.T) {
 
 	// Spin up Alice first so she's already in the room when Bob arrives —
 	// this guarantees min-participants triggers session-initiate.
-	alice, err := startInstance(ctx, t, cfg, "alice")
+	alice, err := startInstance(ctx, t, cfg, nameAlice)
 	if err != nil {
 		t.Fatalf("alice: %v", err)
 	}
@@ -298,7 +307,7 @@ func TestJitsiPairedChaosStress(t *testing.T) {
 	// Brief settle so Alice is fully in the MUC before Bob joins.
 	time.Sleep(2 * time.Second)
 
-	bob, err := startInstance(ctx, t, cfg, "bob")
+	bob, err := startInstance(ctx, t, cfg, nameBob)
 	if err != nil {
 		t.Fatalf("bob: %v", err)
 	}
@@ -374,10 +383,10 @@ func TestJitsiPairedChaosStress(t *testing.T) {
 
 		// === Phase B: pick a victim and chaos ===
 		victim := alice
-		victimName := "alice"
+		victimName := nameAlice
 		if rng.Intn(2) == 1 {
 			victim = bob
-			victimName = "bob"
+			victimName = nameBob
 		}
 		if cfg.verbose {
 			t.Logf("[paired][%d] CHAOS victim=%s — teardownPC + requestReconnect", stats.cycles, victimName)
@@ -393,10 +402,10 @@ func TestJitsiPairedChaosStress(t *testing.T) {
 		// engine has wedged.
 		recoveryBudget := cfg.idle + 60*time.Second
 		survivor := alice
-		survivorName := "alice"
+		survivorName := nameAlice
 		if victim == alice {
 			survivor = bob
-			survivorName = "bob"
+			survivorName = nameBob
 		}
 		if err := waitFreshReceive(ctx, survivor, recoveryBudget); err != nil {
 			stats.wedgesPair++
@@ -425,21 +434,21 @@ func TestJitsiPairedChaosStress(t *testing.T) {
 func waitFirstReceive(ctx context.Context, a, b *pairedInstance, budget time.Duration) error {
 	deadline := time.Now().Add(budget)
 	for time.Now().Before(deadline) {
-		ac, _ := a.snapshot()
-		bc, _ := b.snapshot()
+		ac := a.snapshot()
+		bc := b.snapshot()
 		if ac > 0 && bc > 0 {
 			return nil
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("wait first receive: %w", ctx.Err())
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
-	ac, _ := a.snapshot()
-	bc, _ := b.snapshot()
-	return fmt.Errorf("did not see bidirectional roundtrip in %s (alice=%d bob=%d)",
-		budget, ac, bc)
+	ac := a.snapshot()
+	bc := b.snapshot()
+	return fmt.Errorf("did not see bidirectional roundtrip in %s (alice=%d bob=%d): %w",
+		budget, ac, bc, errRoundtripTimeout)
 }
 
 // waitFreshReceive blocks until target sees a NEW receive after this call,
@@ -447,20 +456,20 @@ func waitFirstReceive(ctx context.Context, a, b *pairedInstance, budget time.Dur
 // bridge fully recovered: bytes are arriving from the (forced-to-reconnect)
 // peer.
 func waitFreshReceive(ctx context.Context, target *pairedInstance, budget time.Duration) error {
-	startCount, _ := target.snapshot()
+	startCount := target.snapshot()
 	deadline := time.Now().Add(budget)
 	for time.Now().Before(deadline) {
-		c, _ := target.snapshot()
+		c := target.snapshot()
 		if c > startCount {
 			return nil
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("wait fresh receive: %w", ctx.Err())
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
-	return fmt.Errorf("no new receive in %s (count stuck at %d)", budget, startCount)
+	return fmt.Errorf("no new receive in %s (count stuck at %d): %w", budget, startCount, errReceiveTimeout)
 }
 
 func reportPairedStats(t *testing.T, s *pairedStats, cfg *pairedConfig) {
