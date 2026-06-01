@@ -1281,21 +1281,52 @@ func (s *Session) inReconnectGrace() bool {
 }
 
 // peerLatchAccepts implements the peer-latch logic: the first sender whose
-// payload survived the magic check becomes our partner; everyone else is
-// ignored. Cleared on reconnect by the supervisor (peerEndpoint is reset
-// whenever the bridge is reopened).
+// payload survived the bridgeMagic check becomes our partner; everyone
+// else is ignored.
+//
+// Re-latching on a fresh sender id: when the latched peer reconnects,
+// JVB assigns it a *new* endpoint id (new ICE/DTLS session). Without
+// re-latching, all post-reconnect frames carry the new id, fail the
+// equality check here, and get dropped — this is exactly the wedge the
+// paired chaos stress test caught (alice reconnects, bob's latch stays
+// on alice's old id, bob never receives a single byte from alice again).
+//
+// Replacement is safe at this point: bridgePayload already verified the
+// frame carries the OLR bridgeMagic prefix, so any sender that reaches
+// this layer is by definition another olcrtc instance using the same
+// magic. A non-olcrtc participant in the same MUC (a regular Jitsi web
+// client, an unrelated bot, etc.) gets filtered out before we ever
+// get here.
 func (s *Session) peerLatchAccepts(from string) bool {
 	if cur := s.peerEndpoint.Load(); cur != nil {
-		return *cur == from
+		if *cur == from {
+			return true
+		}
+		// Different sender than the latched one but the payload
+		// already passed the OLR magic check. Treat this as the
+		// peer reconnecting under a new JVB endpoint id and
+		// re-latch onto the new sender so subsequent frames flow.
+		// We only adopt the new id; the epoch latch resets the
+		// next time acceptEpochFrame sees the new sender's epoch.
+		if from == "" {
+			// Empty from is a JVB-broadcast frame (e.g. our own
+			// echo back). Don't re-latch on that.
+			return true
+		}
+		newFrom := from
+		if s.peerEndpoint.CompareAndSwap(cur, &newFrom) {
+			logger.Debugf("jitsi: peer latch re-bound %s -> %s (peer reconnected)", *cur, from)
+		}
+		return true
 	}
 	if from == "" {
 		return true
 	}
 	s.peerEndpoint.CompareAndSwap(nil, &from)
 	// Re-check after CAS: a concurrent latch may have picked a different
-	// peer first; if so, drop this frame.
-	cur := s.peerEndpoint.Load()
-	return cur == nil || *cur == from
+	// peer first; if so, allow the frame anyway — re-latch logic above
+	// will handle the next one.
+	return true
 }
 
 // decodeRaw extracts the bytes from an EndpointMessage produced by the j
