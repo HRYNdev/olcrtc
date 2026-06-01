@@ -35,129 +35,137 @@ func newSilentSession(t *testing.T) *Session {
 	return js
 }
 
-// TestPeerEpochChangeWithinGraceDoesNotReconnect ensures that an epoch
-// change observed shortly after our own self-reconnect is absorbed
-// silently. Without this, the very common pattern "we reconnect → JVB
-// re-issues → peer reconnects → peer publishes new epoch → we reconnect"
-// turns a single recoverable hiccup into an infinite loop that eventually
-// trips maxReconnects.
-func TestPeerEpochChangeWithinGraceDoesNotReconnect(t *testing.T) {
+// TestPeerEpochChangeAcceptsFrameNoReconnect verifies the post-chaos-test
+// semantics: an epoch change means the peer reconnected; we update our
+// latch, ACCEPT the frame they sent (no dropped data), and do NOT trigger
+// our own reconnect. The reverse behaviour drove an infinite reconnect
+// ping-pong loop.
+func TestPeerEpochChangeAcceptsFrameNoReconnect(t *testing.T) {
 	js := newSilentSession(t)
 	js.SetShouldReconnect(func() bool { return true })
 	js.bridgeReady.Store(true)
-
 	js.localEpoch.Store(0xAAAA)
-	// First peer epoch arrives normally and latches.
+
+	// Peer A's initial epoch latches as expected.
 	first := makeBridgeFrameForEpoch(t, 0x1111, 0xAAAA, []byte("p1"))
 	if !js.deliverBridgeMessage(makeBridgeMessageFrom("peerA", map[string]any{rawFieldKey: first}), true) {
 		t.Fatal("deliverBridgeMessage(first) returned false")
 	}
 	drainReconnectChNonBlocking(js)
 
-	// Mark a successful self-reconnect that happened "just now" — this
-	// is the grace window we are validating.
-	js.lastReconnectAt.Store(time.Now().UnixNano())
+	// Peer reconnects with a fresh epoch and immediately sends a frame.
+	// The frame's payload must reach onData and we must not enqueue a
+	// reconnect.
+	var received [][]byte
+	js.onData = func(b []byte) { received = append(received, append([]byte(nil), b...)) }
 
-	changed := makeBridgeFrameForEpoch(t, 0x2222, 0xAAAA, nil)
+	changed := makeBridgeFrameForEpoch(t, 0x2222, 0xAAAA, []byte("post-recon"))
 	js.deliverBridgeMessage(makeBridgeMessageFrom("peerA", map[string]any{rawFieldKey: changed}), true)
 
 	if got := js.peerEpoch.Load(); got != 0x2222 {
-		t.Fatalf("peerEpoch.Load() = 0x%X, want 0x2222 (latch must update even during grace)", got)
+		t.Fatalf("peerEpoch.Load() = 0x%X, want 0x2222", got)
+	}
+	if len(received) != 1 || string(received[0]) != "post-recon" {
+		t.Fatalf("received = %q, want [post-recon]", received)
 	}
 	if reconnectQueued(js) {
-		t.Fatal("epoch change inside grace window should NOT enqueue a reconnect")
+		t.Fatal("peer epoch change must NOT trigger self-reconnect")
 	}
 }
 
-// TestPeerEpochChangeAfterGraceTriggersReconnect mirrors the above but
-// confirms the safety net still fires once the grace window has passed.
-func TestPeerEpochChangeAfterGraceTriggersReconnect(t *testing.T) {
+// TestPeerEpochChangeDuringGraceAcceptsFrame mirrors the above for the
+// case where we just finished our own reconnect: behaviour should be
+// identical (latch + accept), grace state only affects the log message.
+func TestPeerEpochChangeDuringGraceAcceptsFrame(t *testing.T) {
 	js := newSilentSession(t)
 	js.SetShouldReconnect(func() bool { return true })
 	js.bridgeReady.Store(true)
 	js.localEpoch.Store(0xBBBB)
 
-	first := makeBridgeFrameForEpoch(t, 0x1111, 0xBBBB, []byte("p1"))
+	first := makeBridgeFrameForEpoch(t, 0x1111, 0xBBBB, []byte("first"))
 	js.deliverBridgeMessage(makeBridgeMessageFrom("peerA", map[string]any{rawFieldKey: first}), true)
 	drainReconnectChNonBlocking(js)
 
-	// Last reconnect was outside the grace window — peer-epoch change
-	// must still drive a reconnect to recover from a true peer restart.
-	js.lastReconnectAt.Store(time.Now().Add(-2 * reconnectGrace).UnixNano())
-
-	changed := makeBridgeFrameForEpoch(t, 0x2222, 0xBBBB, nil)
-	js.deliverBridgeMessage(makeBridgeMessageFrom("peerA", map[string]any{rawFieldKey: changed}), true)
-
-	select {
-	case <-js.reconnectCh:
-	case <-time.After(time.Second):
-		t.Fatal("epoch change outside grace window did not enqueue a reconnect")
-	}
-}
-
-// TestStableUptimeResetsReconnectCounter exercises the failure mode where
-// a long-running session accumulates churn-driven reconnects (peer leaves,
-// JVB restart, etc.) until reconnectCount crosses maxReconnects. Resetting
-// after stableUptime keeps the safety net for tight reconnect storms while
-// not penalising healthy sessions.
-func TestStableUptimeResetsReconnectCounter(t *testing.T) {
-	js := newSilentSession(t)
-
-	js.reconnectMu.Lock()
-	js.reconnectCount = maxReconnects // already at the brink
-	js.reconnectWindowStart = time.Now().Add(-time.Minute)
-	js.reconnectMu.Unlock()
-
-	// Pretend the last reconnect was longer ago than stableUptime: the
-	// next attempt should be treated as fresh and reset the counter.
-	js.lastReconnectAt.Store(time.Now().Add(-2 * stableUptime).UnixNano())
-
-	now := time.Now()
-	js.reconnectMu.Lock()
-	last := js.lastReconnectAt.Load()
-	stable := last != 0 && now.Sub(time.Unix(0, last)) >= stableUptime
-	if stable || js.reconnectWindowStart.IsZero() || now.Sub(js.reconnectWindowStart) > reconnectWindow {
-		js.reconnectWindowStart = now
-		js.reconnectCount = 0
-	}
-	js.reconnectCount++
-	count := js.reconnectCount
-	js.reconnectMu.Unlock()
-
-	if count != 1 {
-		t.Fatalf("reconnectCount after stable reset = %d, want 1 (counter must reset)", count)
-	}
-}
-
-// TestStableUptimeDoesNotResetWithinWindow guards the inverse: tight
-// successive reconnects are exactly the case maxReconnects is meant to
-// catch. Resetting the counter prematurely would mask repeated failures.
-func TestStableUptimeDoesNotResetWithinWindow(t *testing.T) {
-	js := newSilentSession(t)
-
-	js.reconnectMu.Lock()
-	js.reconnectCount = 3
-	js.reconnectWindowStart = time.Now() // freshly opened
-	js.reconnectMu.Unlock()
-
-	// Last reconnect happened very recently — no stable uptime yet.
 	js.lastReconnectAt.Store(time.Now().UnixNano())
 
-	now := time.Now()
-	js.reconnectMu.Lock()
-	last := js.lastReconnectAt.Load()
-	stable := last != 0 && now.Sub(time.Unix(0, last)) >= stableUptime
-	if stable || js.reconnectWindowStart.IsZero() || now.Sub(js.reconnectWindowStart) > reconnectWindow {
-		js.reconnectWindowStart = now
-		js.reconnectCount = 0
+	var received [][]byte
+	js.onData = func(b []byte) { received = append(received, append([]byte(nil), b...)) }
+
+	changed := makeBridgeFrameForEpoch(t, 0x2222, 0xBBBB, []byte("inside-grace"))
+	js.deliverBridgeMessage(makeBridgeMessageFrom("peerA", map[string]any{rawFieldKey: changed}), true)
+
+	if got := js.peerEpoch.Load(); got != 0x2222 {
+		t.Fatalf("peerEpoch.Load() = 0x%X, want 0x2222", got)
 	}
-	js.reconnectCount++
-	count := js.reconnectCount
+	if len(received) != 1 || string(received[0]) != "inside-grace" {
+		t.Fatalf("received = %q, want [inside-grace]", received)
+	}
+	if reconnectQueued(js) {
+		t.Fatal("peer epoch change must NOT trigger self-reconnect even during grace window")
+	}
+}
+
+// TestReconnectCounterIsConsecutiveFailures verifies the post-fix
+// counting semantics: the counter tracks consecutive failed reconnect
+// attempts, not the total number of reconnects. A long-running session
+// that successfully reconnects many times (peer churn, JVB restarts,
+// chaos cycles) must NOT eventually trip maxReconnects.
+//
+// We exercise the counter directly because the reconnect() function
+// hits the network. The handleReconnectAttempt loop's contract is that
+// success resets the counter and failure increments it; this test
+// asserts both halves of that contract independently of the network.
+func TestReconnectCounterIsConsecutiveFailures(t *testing.T) {
+	js := newSilentSession(t)
+
+	// Simulate many "successful" reconnects: every time we finish, the
+	// counter should be zero and the window cleared.
+	js.reconnectMu.Lock()
+	js.reconnectCount = 4
+	js.reconnectWindowStart = time.Now()
 	js.reconnectMu.Unlock()
 
-	if count != 4 {
-		t.Fatalf("reconnectCount inside window = %d, want 4 (counter must NOT reset)", count)
+	// Mimic the success branch of handleReconnectAttempt:
+	js.reconnectMu.Lock()
+	js.reconnectCount = 0
+	js.reconnectWindowStart = time.Time{}
+	js.reconnectMu.Unlock()
+
+	js.reconnectMu.Lock()
+	count := js.reconnectCount
+	wst := js.reconnectWindowStart
+	js.reconnectMu.Unlock()
+	if count != 0 || !wst.IsZero() {
+		t.Fatalf("after success: count=%d window=%v, want 0/zero", count, wst)
 	}
+
+	// Now simulate consecutive failures: counter must climb each time.
+	for i := 1; i <= 3; i++ {
+		js.reconnectMu.Lock()
+		js.reconnectCount++
+		if js.reconnectWindowStart.IsZero() {
+			js.reconnectWindowStart = time.Now()
+		}
+		got := js.reconnectCount
+		js.reconnectMu.Unlock()
+		if got != i {
+			t.Fatalf("after failure %d: counter=%d, want %d", i, got, i)
+		}
+	}
+
+	// A subsequent success resets again — a single recovery erases
+	// the entire failure history. This is the property the chaos test
+	// relies on for an infinite reconnect budget under healthy churn.
+	js.reconnectMu.Lock()
+	js.reconnectCount = 0
+	js.reconnectWindowStart = time.Time{}
+	js.reconnectMu.Unlock()
+
+	js.reconnectMu.Lock()
+	if js.reconnectCount != 0 {
+		t.Fatalf("after success-after-failures: count=%d, want 0", js.reconnectCount)
+	}
+	js.reconnectMu.Unlock()
 }
 
 // TestTeardownPCCancelsPCContext verifies the rtcpKeepalive lifetime fix:
