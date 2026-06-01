@@ -1233,24 +1233,37 @@ func (s *Session) acceptEpochFrame(payload []byte) ([]byte, bool) {
 			receiverEpoch, s.localEpoch.Load())
 		return nil, false
 	}
-	if prev := s.peerEpoch.Load(); prev == 0 {
+	// Update the peer-epoch latch and ALWAYS accept the frame.
+	//
+	// Earlier revisions reconnected ourselves whenever the peer's epoch
+	// flipped — the assumption was that a peer-side reconnect implied
+	// the bridge was wedged on our end too. In practice this caused the
+	// exact failure mode the chaos test catches: after the peer
+	// successfully recovered with a fresh epoch, our acceptEpochFrame
+	// dropped the very first post-recovery frame and (outside the grace
+	// window) issued a self-reconnect, dragging the just-recovered peer
+	// into another reconnect ping-pong cycle. The data never started
+	// flowing again and both sides looked permanently wedged.
+	//
+	// Epoch is a *deduplication* marker for stale frames during a
+	// reconnect, not a sign that *we* must reconnect. If our own bridge
+	// is dead, rtcpKeepalive / xmppKeepalive / "bridge closed" detection
+	// will surface it independently. If we *can* still receive frames,
+	// the bridge is alive by definition.
+	prev := s.peerEpoch.Load()
+	if prev == 0 {
 		s.peerEpoch.Store(senderEpoch)
 	} else if prev != senderEpoch {
-		if s.peerEpoch.CompareAndSwap(prev, senderEpoch) {
-			// Don't churn into another reconnect if we just finished
-			// one ourselves: the peer is publishing a fresh epoch as
-			// part of its own recovery, which is precisely how the
-			// loop "we reconnect → peer reconnects → we reconnect …"
-			// gets started. Inside the grace window we only update
-			// the latch so future frames decode against the new
-			// epoch and ignore the change as a reconnect trigger.
-			if !s.inReconnectGrace() {
-				s.requestReconnect("jitsi peer epoch changed")
-			} else {
-				logger.Debugf("jitsi: peer epoch changed during grace period, no reconnect")
-			}
+		// Try to install the new epoch atomically; the loser of a
+		// race will simply retry on the next frame.
+		s.peerEpoch.CompareAndSwap(prev, senderEpoch)
+		if s.inReconnectGrace() {
+			logger.Debugf("jitsi: peer epoch changed during grace period (0x%08x -> 0x%08x)",
+				prev, senderEpoch)
+		} else {
+			logger.Debugf("jitsi: peer epoch changed (0x%08x -> 0x%08x) — accepting fresh peer state",
+				prev, senderEpoch)
 		}
-		return nil, false
 	}
 	return payload[off+epochHeaderLen:], true
 }
