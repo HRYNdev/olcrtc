@@ -114,12 +114,9 @@ func TestByteStreamWebSocketNegotiatesPeerConnectionWithoutRTCPKeepalive(t *test
 	if js.shouldRequestVideo() {
 		t.Fatal("shouldRequestVideo() = true for bytestream-only session")
 	}
-	if shouldRunRTCPKeepalive(false, js.shouldRequestVideo()) {
-		t.Fatal("shouldRunRTCPKeepalive(false, false) = true for websocket bytestream session")
-	}
 }
 
-func TestByteStreamSCTPFallbackNegotiatesPeerConnectionWithRTCPKeepalive(t *testing.T) {
+func TestByteStreamSCTPFallbackNegotiatesPeerConnection(t *testing.T) {
 	sess, err := New(context.Background(), engine.Config{
 		URL:    testHost,
 		Extra:  map[string]string{credentialKeyRoom: testRoom},
@@ -139,9 +136,6 @@ func TestByteStreamSCTPFallbackNegotiatesPeerConnectionWithRTCPKeepalive(t *test
 	}
 	if js.shouldRequestVideo() {
 		t.Fatal("shouldRequestVideo() = true for bytestream-only session")
-	}
-	if !shouldRunRTCPKeepalive(true, js.shouldRequestVideo()) {
-		t.Fatal("shouldRunRTCPKeepalive(true, false) = false for SCTP bytestream fallback")
 	}
 }
 
@@ -170,9 +164,6 @@ func TestVideoSessionNegotiatesPeerConnectionAndRequestsVideo(t *testing.T) {
 	}
 	if !js.shouldRequestVideo() {
 		t.Fatal("shouldRequestVideo() = false for video session")
-	}
-	if !shouldRunRTCPKeepalive(false, js.shouldRequestVideo()) {
-		t.Fatal("shouldRunRTCPKeepalive(false, true) = false for video session")
 	}
 }
 

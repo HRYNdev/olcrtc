@@ -32,7 +32,6 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	pioninterceptor "github.com/pion/interceptor"
-	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 	"github.com/zarazaex69/j"
@@ -644,7 +643,7 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 	s.pc = pc
 	// Build a context that lives exactly as long as this PC instance.
 	// teardownPC cancels pcCancel so any goroutines bound to pcCtx
-	// (currently rtcpKeepalive) exit before a fresh PC takes its place.
+	// (the RTP keepalive) exit before a fresh PC takes its place.
 	if s.pcCancel != nil {
 		s.pcCancel()
 	}
@@ -652,27 +651,24 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 	pcCtx := s.pcCtx
 	s.pcMu.Unlock()
 
-	// Start an RTCP keepalive only when the PC carries media or the SCTP bridge
-	// fallback. colibri-ws byte streams keep the bridge alive separately and do
-	// not need a 5-second RTCP tick while idle.
-	if !shouldRunRTCPKeepalive(sctpBridge, requestVideo) {
-		return nil
-	}
-
-	// JVB tracks endpoint liveness via
-	// lastIncomingActivityInstant = max(lastRtpReceived, lastIceConsent).
-	// In a TURN-relay-only path, ICE consent updates can fail to reach
-	// JVB's lastIceActivityInstant tracker. Periodic RTCP RR packets
-	// guarantee lastRtpReceived is fresh and the endpoint is not expired
-	// after the default 1-minute inactivity timeout, which causes JVB to
-	// shut down the DTLS session and emit close_notify.
-	s.wg.Add(1)
-	go s.rtcpKeepalive(pcCtx, pc) //nolint:contextcheck // pcCtx intentionally derives from s.runCtx to outlive this call
-
-	// On pure byte-stream paths an empty RTCP RR does not refresh JVB's
-	// lastRtpReceived on this deployment, so we also pump real VP8 RTP on the
-	// keepalive track. Bound to the same pcCtx, so teardownPC stops it and the
-	// next negotiatePC (including a reinitiate) starts a fresh one.
+	// Keep the JVB endpoint alive on pure byte-stream paths by pumping real
+	// VP8 RTP on the keepalive track. JVB tracks liveness via
+	// lastIncomingActivity = max(lastRtpReceived, lastIceConsent); on TURN/SCTP
+	// paths neither ICE consent nor an empty RTCP RR refreshes it (the RR
+	// writes succeed yet the endpoint still expires - observed in production),
+	// so only genuine RTP keeps the endpoint from being expired after
+	// entity-expiration.timeout (~1 min), which is what triggers the DTLS
+	// close_notify and the reconnect cascade.
+	//
+	// We deliberately do NOT run an RTCP-RR keepalive here: besides being
+	// ineffective, its old "give up after N write errors -> reconnect" guard
+	// fired during the DTLS handshake window (WriteRTCP fails until DTLS is up)
+	// and tore down connections that were still establishing, turning a slow
+	// ICE/DTLS bring-up into a permanent reconnect loop. rtpKeepalive only
+	// logs write failures and never self-reconnects.
+	//
+	// Bound to pcCtx so teardownPC stops it and the next negotiatePC (including
+	// a reinitiate) starts a fresh one.
 	if kaTrack != nil {
 		s.wg.Add(1)
 		go s.rtpKeepalive(pcCtx, kaTrack) //nolint:contextcheck // pcCtx intentionally derives from s.runCtx to outlive this call
@@ -681,63 +677,10 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 	return nil
 }
 
-func shouldRunRTCPKeepalive(sctpBridge, requestVideo bool) bool {
-	return sctpBridge || requestVideo
-}
-
 // negotiator is the subset of *peer.Negotiator we need. Defined as an
 // interface here because peer is in j's internal/ tree and not importable.
 type negotiator interface {
 	HandleSourceAdd(stanza string) error
-}
-
-// rtcpKeepalive sends an empty RTCP Receiver Report every 5 seconds so JVB
-// updates its lastRtpPacketReceivedInstant tracker for our endpoint. JVB's
-// shouldExpire() check fires every minute and tears down the DTLS session
-// (causing the observed CloseNotify alert) when no activity has been seen in
-// more than the configured inactivityTimeout (default 1 minute). Even an
-// empty RR keeps the timestamp fresh - JVB does not require the report to
-// reference any specific SSRC.
-//
-// pcCtx is bound to the lifetime of pc: when teardownPC closes pc as part of
-// a reconnect, pcCtx is cancelled and this loop exits cleanly. Without that
-// binding, the loop would keep ticking after pc.Close(), accumulate write
-// errors against the dead PC, and fire a duplicate "rtcp keepalive dead"
-// reconnect that competes with the in-progress reconnect supervisor.
-func (s *Session) rtcpKeepalive(pcCtx context.Context, pc *webrtc.PeerConnection) {
-	defer s.wg.Done()
-	const interval = 5 * time.Second
-	const maxErrors = 3
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	pkts := []rtcp.Packet{&rtcp.ReceiverReport{}}
-	errCount := 0
-	for {
-		select {
-		case <-s.done:
-			return
-		case <-pcCtx.Done():
-			return
-		case <-ticker.C:
-			if pcCtx.Err() != nil {
-				return
-			}
-			if err := pc.WriteRTCP(pkts); err != nil {
-				if s.closed.Load() || pcCtx.Err() != nil {
-					return
-				}
-				errCount++
-				logger.Debugf("jitsi: rtcp keepalive write (%d/%d): %v", errCount, maxErrors, err)
-				if errCount >= maxErrors {
-					logger.Warnf("jitsi: rtcp keepalive giving up after %d errors", maxErrors)
-					s.requestReconnect("rtcp keepalive dead")
-					return
-				}
-			} else {
-				errCount = 0
-			}
-		}
-	}
 }
 
 // rtpKeepalive pumps a tiny VP8 keyframe onto the sendonly keepalive track
@@ -1342,7 +1285,7 @@ func (s *Session) acceptEpochFrame(payload []byte) ([]byte, bool) {
 	//
 	// Epoch is a *deduplication* marker for stale frames during a
 	// reconnect, not a sign that *we* must reconnect. If our own bridge
-	// is dead, rtcpKeepalive / xmppKeepalive / "bridge closed" detection
+	// is dead, rtpKeepalive / xmppKeepalive / "bridge closed" detection
 	// will surface it independently. If we *can* still receive frames,
 	// the bridge is alive by definition.
 	prev := s.peerEpoch.Load()
@@ -1729,9 +1672,9 @@ func (s *Session) reconnect(ctx context.Context) error {
 }
 
 // teardownPC closes the current PeerConnection, cancels any goroutines
-// bound to its lifetime (rtcpKeepalive), and clears trickle state.
+// bound to its lifetime (rtpKeepalive), and clears trickle state.
 //
-// Cancelling pcCtx before pc.Close() lets the rtcpKeepalive goroutine exit
+// Cancelling pcCtx before pc.Close() lets the rtpKeepalive goroutine exit
 // via its <-pcCtx.Done() branch instead of getting tripped by a write
 // failure against a closing PC and racing the supervisor with a duplicate
 // "rtcp keepalive dead" reconnect request.
