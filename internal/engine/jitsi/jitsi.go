@@ -736,7 +736,7 @@ func (s *Session) bridgeKeepalive() {
 // transport (WebSocket or BOSH) keeps observing application traffic.
 //
 // Why we need it: Prosody's BOSH plugin defaults to bosh_max_inactivity=60s
-// (and Jitsi's docker images set it explicitly to 60s on visitor domains).
+// (and some Jitsi deployments set it explicitly to 60s on visitor domains).
 // Once the inactivity timer expires Prosody returns <body type="terminate"/>
 // and our long-poll fails with "connection closed" — exactly the symptom
 // observed when nobody else joins the room within 60s. A 25s ping cadence
