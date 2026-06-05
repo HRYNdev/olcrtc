@@ -93,7 +93,7 @@ func TestNewSucceeds(t *testing.T) {
 	}
 }
 
-func TestByteStreamNegotiatesPeerConnectionWithoutRequestingVideo(t *testing.T) {
+func TestByteStreamWebSocketSkipsPeerConnectionWithoutRequestingVideo(t *testing.T) {
 	sess, err := New(context.Background(), engine.Config{
 		URL:    testHost,
 		Extra:  map[string]string{credentialKeyRoom: testRoom},
@@ -108,8 +108,31 @@ func TestByteStreamNegotiatesPeerConnectionWithoutRequestingVideo(t *testing.T) 
 	if !ok {
 		t.Fatal("sess is not *Session")
 	}
-	if !js.shouldNegotiatePC() {
-		t.Fatal("shouldNegotiatePC() = false for bytestream session")
+	if js.shouldNegotiatePC(false) {
+		t.Fatal("shouldNegotiatePC(false) = true for websocket bytestream session")
+	}
+	if js.shouldRequestVideo() {
+		t.Fatal("shouldRequestVideo() = true for bytestream-only session")
+	}
+}
+
+func TestByteStreamSCTPFallbackNegotiatesPeerConnectionWithoutRequestingVideo(t *testing.T) {
+	sess, err := New(context.Background(), engine.Config{
+		URL:    testHost,
+		Extra:  map[string]string{credentialKeyRoom: testRoom},
+		OnData: func([]byte) {},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = sess.Close() }()
+
+	js, ok := sess.(*Session)
+	if !ok {
+		t.Fatal("sess is not *Session")
+	}
+	if !js.shouldNegotiatePC(true) {
+		t.Fatal("shouldNegotiatePC(true) = false for SCTP bytestream fallback")
 	}
 	if js.shouldRequestVideo() {
 		t.Fatal("shouldRequestVideo() = true for bytestream-only session")
@@ -130,14 +153,14 @@ func TestVideoSessionNegotiatesPeerConnectionAndRequestsVideo(t *testing.T) {
 	if !ok {
 		t.Fatal("sess is not *Session")
 	}
-	if js.shouldNegotiatePC() {
-		t.Fatal("shouldNegotiatePC() = true before bytestream/video is configured")
+	if js.shouldNegotiatePC(false) {
+		t.Fatal("shouldNegotiatePC(false) = true before bytestream/video is configured")
 	}
 	if err := js.AddVideoTrack(nil); err != nil {
 		t.Fatalf("AddVideoTrack(nil): %v", err)
 	}
-	if !js.shouldNegotiatePC() {
-		t.Fatal("shouldNegotiatePC() = false for video session")
+	if !js.shouldNegotiatePC(false) {
+		t.Fatal("shouldNegotiatePC(false) = false for video session")
 	}
 	if !js.shouldRequestVideo() {
 		t.Fatal("shouldRequestVideo() = false for video session")
