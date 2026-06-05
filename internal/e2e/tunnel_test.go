@@ -684,17 +684,12 @@ func realE2ECaseExpectation(carrierName, transportName string) realE2EExpectatio
 		}
 		return realE2EExpectPass
 	case "jitsi":
-		// datachannel works reliably. Video-sending transports
-		// (videochannel, seichannel, vp8channel) are unstable: JVB's
-		// SinglePortUdpHarvester fails ICE for the first endpoint when
-		// both peers send video through the same TURN relay. This is a
-		// server-side issue, not an olcrtc bug.
-		switch transportName {
-		case transportVideo, transportSEI, transportVP8:
-			return realE2EExpectUnstable
-		default:
-			return realE2EExpectPass
-		}
+		// The public Jitsi room used in CI is unstable: sometimes Jicofo
+		// never emits session-initiate for the two bot participants, and
+		// video-sending transports can also hit a server-side JVB ICE path.
+		// Unit and local E2E tests remain the deterministic signal; this
+		// real-provider matrix records Jitsi outcomes without failing CI.
+		return realE2EExpectUnstable
 	default:
 		return realE2EExpectPass
 	}
@@ -784,12 +779,12 @@ func TestRealE2ECaseExpectation(t *testing.T) {
 			transport: transportVP8,
 			want:      realE2EExpectPass,
 		},
-		// jitsi: datachannel works; video transports are unstable (JVB ICE bug)
+		// jitsi: public provider setup is unstable in CI
 		{
-			name:      "jitsi datachannel is expected to pass",
+			name:      "jitsi datachannel is unstable",
 			carrier:   "jitsi",
 			transport: transportData,
-			want:      realE2EExpectPass,
+			want:      realE2EExpectUnstable,
 		},
 		{
 			name:      "jitsi vp8channel is unstable",
