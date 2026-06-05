@@ -379,7 +379,7 @@ func (s *Session) completeJingleSetup(ctx context.Context, jSess *j.Session) err
 		}
 	}
 
-	if s.shouldNegotiatePC(sctpBridge) {
+	if s.shouldNegotiatePC(needBridge) {
 		if err := s.negotiatePC(ctx, jSess, sctpBridge); err != nil {
 			return err
 		}
@@ -425,8 +425,8 @@ func (s *Session) openBridgeSCTP(ctx context.Context, jSess *j.Session) error {
 	return nil
 }
 
-func (s *Session) shouldNegotiatePC(sctpBridge bool) bool {
-	return sctpBridge || s.shouldRequestVideo()
+func (s *Session) shouldNegotiatePC(needBridge bool) bool {
+	return needBridge || s.shouldRequestVideo()
 }
 
 func (s *Session) shouldRequestVideo() bool {
@@ -460,7 +460,7 @@ func (s *Session) videoTrackHandler() func(*webrtc.TrackRemote, *webrtc.RTPRecei
 // belongs to the same logical operation, so splitting it into helpers
 // would obscure the wire order rather than clarify it.
 //
-//nolint:cyclop // sequential Jingle negotiation steps; refactoring would hide ordering
+//nolint:cyclop,gocognit // sequential Jingle negotiation steps; refactoring would hide ordering
 func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge bool) error {
 	settings := webrtc.SettingEngine{}
 	settings.LoggerFactory = logger.NewPionLoggerFactory()
@@ -613,7 +613,14 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 	pcCtx := s.pcCtx
 	s.pcMu.Unlock()
 
-	// Start an RTCP keepalive. JVB tracks endpoint liveness via
+	// Start an RTCP keepalive only when the PC carries media or the SCTP bridge
+	// fallback. colibri-ws byte streams keep the bridge alive separately and do
+	// not need a 5-second RTCP tick while idle.
+	if !shouldRunRTCPKeepalive(sctpBridge, requestVideo) {
+		return nil
+	}
+
+	// JVB tracks endpoint liveness via
 	// lastIncomingActivityInstant = max(lastRtpReceived, lastIceConsent).
 	// In a TURN-relay-only path, ICE consent updates can fail to reach
 	// JVB's lastIceActivityInstant tracker. Periodic RTCP RR packets
@@ -624,6 +631,10 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 	go s.rtcpKeepalive(pcCtx, pc) //nolint:contextcheck // pcCtx intentionally derives from s.runCtx to outlive this call
 
 	return nil
+}
+
+func shouldRunRTCPKeepalive(sctpBridge, requestVideo bool) bool {
+	return sctpBridge || requestVideo
 }
 
 // negotiator is the subset of *peer.Negotiator we need. Defined as an
@@ -1172,6 +1183,7 @@ func (s *Session) acceptPeerEpochFrame(from string, payload []byte) ([]byte, boo
 	return payload[off+epochHeaderLen:], true
 }
 
+//nolint:cyclop // epoch filtering has several explicit drop cases
 func (s *Session) acceptEpochFrame(payload []byte) ([]byte, bool) {
 	const epochHeaderLen = 8
 	if len(payload) < len(bridgeMagic)+epochHeaderLen {
@@ -1625,7 +1637,7 @@ func (s *Session) teardownPC() {
 func (s *Session) reinitiateBridge(ctx context.Context, jSess *j.Session) error {
 	needBridge := s.onData != nil || s.onPeerData != nil
 	sctpBridge := needBridge && jSess.ColibriWS == ""
-	if s.shouldNegotiatePC(sctpBridge) {
+	if s.shouldNegotiatePC(needBridge) {
 		if err := s.negotiatePC(ctx, jSess, sctpBridge); err != nil {
 			logger.Warnf("jitsi: negotiate after reinitiate failed: %v - full reconnect", err)
 			return s.reconnectFull(ctx)

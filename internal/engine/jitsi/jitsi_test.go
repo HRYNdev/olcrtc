@@ -93,7 +93,7 @@ func TestNewSucceeds(t *testing.T) {
 	}
 }
 
-func TestByteStreamWebSocketSkipsPeerConnectionWithoutRequestingVideo(t *testing.T) {
+func TestByteStreamWebSocketNegotiatesPeerConnectionWithoutRTCPKeepalive(t *testing.T) {
 	sess, err := New(context.Background(), engine.Config{
 		URL:    testHost,
 		Extra:  map[string]string{credentialKeyRoom: testRoom},
@@ -108,15 +108,18 @@ func TestByteStreamWebSocketSkipsPeerConnectionWithoutRequestingVideo(t *testing
 	if !ok {
 		t.Fatal("sess is not *Session")
 	}
-	if js.shouldNegotiatePC(false) {
-		t.Fatal("shouldNegotiatePC(false) = true for websocket bytestream session")
+	if !js.shouldNegotiatePC(true) {
+		t.Fatal("shouldNegotiatePC(true) = false for websocket bytestream session")
 	}
 	if js.shouldRequestVideo() {
 		t.Fatal("shouldRequestVideo() = true for bytestream-only session")
 	}
+	if shouldRunRTCPKeepalive(false, js.shouldRequestVideo()) {
+		t.Fatal("shouldRunRTCPKeepalive(false, false) = true for websocket bytestream session")
+	}
 }
 
-func TestByteStreamSCTPFallbackNegotiatesPeerConnectionWithoutRequestingVideo(t *testing.T) {
+func TestByteStreamSCTPFallbackNegotiatesPeerConnectionWithRTCPKeepalive(t *testing.T) {
 	sess, err := New(context.Background(), engine.Config{
 		URL:    testHost,
 		Extra:  map[string]string{credentialKeyRoom: testRoom},
@@ -136,6 +139,9 @@ func TestByteStreamSCTPFallbackNegotiatesPeerConnectionWithoutRequestingVideo(t 
 	}
 	if js.shouldRequestVideo() {
 		t.Fatal("shouldRequestVideo() = true for bytestream-only session")
+	}
+	if !shouldRunRTCPKeepalive(true, js.shouldRequestVideo()) {
+		t.Fatal("shouldRunRTCPKeepalive(true, false) = false for SCTP bytestream fallback")
 	}
 }
 
@@ -164,6 +170,9 @@ func TestVideoSessionNegotiatesPeerConnectionAndRequestsVideo(t *testing.T) {
 	}
 	if !js.shouldRequestVideo() {
 		t.Fatal("shouldRequestVideo() = false for video session")
+	}
+	if !shouldRunRTCPKeepalive(false, js.shouldRequestVideo()) {
+		t.Fatal("shouldRunRTCPKeepalive(false, true) = false for video session")
 	}
 }
 
@@ -343,6 +352,7 @@ func TestReconnectEpochAnnounceWithZeroPeerEpochIsAccepted(t *testing.T) {
 	}
 }
 
+//nolint:cyclop // setup asserts latch, epoch, and delivery state
 func TestRequireTargetedPeerDropsOtherClientBroadcastBeforeLatch(t *testing.T) {
 	var received [][]byte
 	sess, err := New(context.Background(), engine.Config{
