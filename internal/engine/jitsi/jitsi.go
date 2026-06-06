@@ -550,10 +550,7 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 		}
 	})
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		logger.Debugf("jitsi pc state: %s", state.String())
-		if state == webrtc.PeerConnectionStateFailed && !s.closed.Load() && s.onEnded != nil {
-			s.onEnded("jitsi peer connection failed")
-		}
+		s.handlePeerConnectionState(state)
 	})
 
 	neg := jSess.Negotiator()
@@ -1815,6 +1812,13 @@ func (s *Session) signalEnded(reason string) {
 	s.bridgeReady.Store(false)
 	if s.onEnded != nil {
 		s.onEnded(reason)
+	}
+}
+
+func (s *Session) handlePeerConnectionState(state webrtc.PeerConnectionState) {
+	logger.Debugf("jitsi pc state: %s", state.String())
+	if state == webrtc.PeerConnectionStateFailed && !s.closed.Load() {
+		s.requestReconnect("jitsi peer connection failed")
 	}
 }
 
