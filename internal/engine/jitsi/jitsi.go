@@ -460,7 +460,7 @@ func (s *Session) videoTrackHandler() func(*webrtc.TrackRemote, *webrtc.RTPRecei
 // belongs to the same logical operation, so splitting it into helpers
 // would obscure the wire order rather than clarify it.
 //
-//nolint:cyclop,gocognit // sequential Jingle negotiation steps; refactoring would hide ordering
+//nolint:cyclop // sequential Jingle negotiation steps; refactoring would hide ordering
 func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge bool) error {
 	settings := webrtc.SettingEngine{}
 	settings.LoggerFactory = logger.NewPionLoggerFactory()
