@@ -365,8 +365,8 @@ func (s *Session) waitForJingle() {
 	}
 }
 
-// completeJingleSetup opens the bridge and negotiates the PeerConnection after
-// receiving session-initiate from Jicofo.
+// completeJingleSetup opens the bridge and negotiates a PeerConnection only
+// when media or the SCTP bridge fallback needs one.
 func (s *Session) completeJingleSetup(ctx context.Context, jSess *j.Session) error {
 	logger.Infof("jitsi: session-initiate received; colibri-ws=%s", jSess.ColibriWS)
 
@@ -379,7 +379,7 @@ func (s *Session) completeJingleSetup(ctx context.Context, jSess *j.Session) err
 		}
 	}
 
-	if s.shouldNegotiatePC() {
+	if s.shouldNegotiatePC(needBridge) {
 		if err := s.negotiatePC(ctx, jSess, sctpBridge); err != nil {
 			return err
 		}
@@ -425,14 +425,8 @@ func (s *Session) openBridgeSCTP(ctx context.Context, jSess *j.Session) error {
 	return nil
 }
 
-func (s *Session) shouldNegotiatePC() bool {
-	if s.onData != nil {
-		return true
-	}
-	if s.onPeerData != nil {
-		return true
-	}
-	return s.shouldRequestVideo()
+func (s *Session) shouldNegotiatePC(needBridge bool) bool {
+	return needBridge || s.shouldRequestVideo()
 }
 
 func (s *Session) shouldRequestVideo() bool {
@@ -466,7 +460,7 @@ func (s *Session) videoTrackHandler() func(*webrtc.TrackRemote, *webrtc.RTPRecei
 // belongs to the same logical operation, so splitting it into helpers
 // would obscure the wire order rather than clarify it.
 //
-//nolint:cyclop // sequential Jingle negotiation steps; refactoring would hide ordering
+//nolint:cyclop,gocognit // sequential Jingle negotiation steps; refactoring would hide ordering
 func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge bool) error {
 	settings := webrtc.SettingEngine{}
 	settings.LoggerFactory = logger.NewPionLoggerFactory()
@@ -509,6 +503,7 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 
 	s.videoTrackMu.RLock()
 	hasLocalTracks := len(s.videoTracks) > 0
+	requestVideo := hasLocalTracks || s.onVideoTrack != nil
 	for _, track := range s.videoTracks {
 		if _, addErr := pc.AddTrack(track); addErr != nil {
 			s.videoTrackMu.RUnlock()
@@ -519,12 +514,10 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 	s.videoTrackMu.RUnlock()
 
 	// When sending video, AddTrack already creates the video m-line (sendonly).
-	// When only receiving, an explicit recvonly transceiver is required so the
-	// SDP answer includes a video m-line - without it JVB does not set up a
-	// video forwarding path and ICE stalls. Mirrors the j library reference CLI:
-	// AddTrack and AddTransceiverFromKind(video,recvonly) are mutually exclusive
-	// in Plan B; using both produces a malformed SDP.
-	if !hasLocalTracks {
+	// When only receiving video, an explicit recvonly transceiver is required
+	// so the SDP answer includes a video m-line. SCTP-only byte streams do not
+	// need a video m-line, so keep that idle path lean.
+	if requestVideo && !hasLocalTracks {
 		if _, err := pc.AddTransceiverFromKind(
 			webrtc.RTPCodecTypeVideo,
 			webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly},
@@ -598,7 +591,7 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 		}
 	}
 
-	if s.shouldRequestVideo() {
+	if requestVideo {
 		// Tell JVB to forward video streams to this endpoint.
 		if err := jSess.RequestVideo(ctx, 720); err != nil {
 			logger.Debugf("jitsi: request video: %v", err)
@@ -617,7 +610,14 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 	pcCtx := s.pcCtx
 	s.pcMu.Unlock()
 
-	// Start an RTCP keepalive. JVB tracks endpoint liveness via
+	// Start an RTCP keepalive only when the PC carries media or the SCTP bridge
+	// fallback. colibri-ws byte streams keep the bridge alive separately and do
+	// not need a 5-second RTCP tick while idle.
+	if !shouldRunRTCPKeepalive(sctpBridge, requestVideo) {
+		return nil
+	}
+
+	// JVB tracks endpoint liveness via
 	// lastIncomingActivityInstant = max(lastRtpReceived, lastIceConsent).
 	// In a TURN-relay-only path, ICE consent updates can fail to reach
 	// JVB's lastIceActivityInstant tracker. Periodic RTCP RR packets
@@ -628,6 +628,10 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 	go s.rtcpKeepalive(pcCtx, pc) //nolint:contextcheck // pcCtx intentionally derives from s.runCtx to outlive this call
 
 	return nil
+}
+
+func shouldRunRTCPKeepalive(sctpBridge, requestVideo bool) bool {
+	return sctpBridge || requestVideo
 }
 
 // negotiator is the subset of *peer.Negotiator we need. Defined as an
@@ -734,7 +738,7 @@ func (s *Session) bridgeKeepalive() {
 // transport (WebSocket or BOSH) keeps observing application traffic.
 //
 // Why we need it: Prosody's BOSH plugin defaults to bosh_max_inactivity=60s
-// (and Jitsi's docker images set it explicitly to 60s on visitor domains).
+// (and some Jitsi deployments set it explicitly to 60s on visitor domains).
 // Once the inactivity timer expires Prosody returns <body type="terminate"/>
 // and our long-poll fails with "connection closed" — exactly the symptom
 // observed when nobody else joins the room within 60s. A 25s ping cadence
@@ -1176,6 +1180,7 @@ func (s *Session) acceptPeerEpochFrame(from string, payload []byte) ([]byte, boo
 	return payload[off+epochHeaderLen:], true
 }
 
+//nolint:cyclop // epoch filtering has several explicit drop cases
 func (s *Session) acceptEpochFrame(payload []byte) ([]byte, bool) {
 	const epochHeaderLen = 8
 	if len(payload) < len(bridgeMagic)+epochHeaderLen {
@@ -1624,19 +1629,23 @@ func (s *Session) teardownPC() {
 	}
 }
 
-// reinitiateBridge negotiates a new PeerConnection and opens the bridge channel.
+// reinitiateBridge negotiates a new PeerConnection only when required and opens
+// the bridge channel.
 func (s *Session) reinitiateBridge(ctx context.Context, jSess *j.Session) error {
-	sctpBridge := jSess.ColibriWS == ""
-	if err := s.negotiatePC(ctx, jSess, sctpBridge); err != nil {
-		logger.Warnf("jitsi: negotiate after reinitiate failed: %v - full reconnect", err)
-		return s.reconnectFull(ctx)
+	needBridge := s.onData != nil || s.onPeerData != nil
+	sctpBridge := needBridge && jSess.ColibriWS == ""
+	if s.shouldNegotiatePC(needBridge) {
+		if err := s.negotiatePC(ctx, jSess, sctpBridge); err != nil {
+			logger.Warnf("jitsi: negotiate after reinitiate failed: %v - full reconnect", err)
+			return s.reconnectFull(ctx)
+		}
 	}
 	if sctpBridge {
 		if err := s.openBridgeSCTP(ctx, jSess); err != nil {
 			logger.Warnf("jitsi: bridge after reinitiate failed: %v - full reconnect", err)
 			return s.reconnectFull(ctx)
 		}
-	} else {
+	} else if needBridge {
 		if err := s.openBridgeWS(ctx, jSess); err != nil {
 			logger.Warnf("jitsi: bridge after reinitiate failed: %v - full reconnect", err)
 			return s.reconnectFull(ctx)
