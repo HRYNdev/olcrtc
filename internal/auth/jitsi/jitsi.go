@@ -41,7 +41,7 @@ type Provider struct{}
 // Engine reports which engine consumes credentials from this auth provider.
 func (Provider) Engine() string { return "jitsi" }
 
-const defaultServiceURL = "https://meet.small-dm.ru"
+const defaultServiceURL = "https://meet.handyweb.org"
 
 // DefaultServiceURL returns the default Jitsi Meet service URL used by config
 // defaults and interactive helpers. Users should verify which server is
