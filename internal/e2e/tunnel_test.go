@@ -684,12 +684,10 @@ func realE2ECaseExpectation(carrierName, transportName string) realE2EExpectatio
 		}
 		return realE2EExpectPass
 	case "jitsi":
-		// The public Jitsi room used in CI is unstable: sometimes Jicofo
-		// never emits session-initiate for the two bot participants, and
-		// video-sending transports can also hit a server-side JVB ICE path.
-		// Unit and local E2E tests remain the deterministic signal; this
-		// real-provider matrix records Jitsi outcomes without failing CI.
-		return realE2EExpectUnstable
+		if transportName == transportData {
+			return realE2EExpectPass
+		}
+		return realE2EExpectFail
 	default:
 		return realE2EExpectPass
 	}
@@ -779,30 +777,30 @@ func TestRealE2ECaseExpectation(t *testing.T) {
 			transport: transportVP8,
 			want:      realE2EExpectPass,
 		},
-		// jitsi: public provider setup is unstable in CI
+		// jitsi: datachannel must pass, other transports expected to fail
 		{
-			name:      "jitsi datachannel is unstable",
+			name:      "jitsi datachannel is expected to pass",
 			carrier:   "jitsi",
 			transport: transportData,
-			want:      realE2EExpectUnstable,
+			want:      realE2EExpectPass,
 		},
 		{
-			name:      "jitsi vp8channel is unstable",
+			name:      "jitsi vp8channel is expected to fail",
 			carrier:   "jitsi",
 			transport: transportVP8,
-			want:      realE2EExpectUnstable,
+			want:      realE2EExpectFail,
 		},
 		{
-			name:      "jitsi videochannel is unstable",
+			name:      "jitsi videochannel is expected to fail",
 			carrier:   "jitsi",
 			transport: transportVideo,
-			want:      realE2EExpectUnstable,
+			want:      realE2EExpectFail,
 		},
 		{
-			name:      "jitsi seichannel is unstable",
+			name:      "jitsi seichannel is expected to fail",
 			carrier:   "jitsi",
 			transport: transportSEI,
-			want:      realE2EExpectUnstable,
+			want:      realE2EExpectFail,
 		},
 	}
 
