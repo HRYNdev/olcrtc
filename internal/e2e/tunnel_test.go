@@ -785,10 +785,10 @@ func TestRealE2ECaseExpectation(t *testing.T) {
 			want:      realE2EExpectPass,
 		},
 		{
-			name:      "jitsi vp8channel is expected to fail",
+			name:      "jitsi vp8channel",
 			carrier:   "jitsi",
 			transport: transportVP8,
-			want:      realE2EExpectFail,
+			want:      realE2EExpectPass,
 		},
 		{
 			name:      "jitsi videochannel is expected to fail",
