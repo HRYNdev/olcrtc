@@ -24,6 +24,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -524,47 +525,14 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 	s.videoTrackMu.RUnlock()
 
 	// When sending video, AddTrack already creates the video m-line (sendonly).
-	// When we have no local video we still need a video m-line, and the choice
-	// matters for endpoint liveness on JVB:
-	//
-	//   - Video-receiver paths (onVideoTrack set): a recvonly transceiver so
-	//     JVB sets up forwarding. The inbound RTP keeps the endpoint alive on
-	//     its own, no keepalive track needed.
-	//
-	//   - Pure byte-stream paths (datachannel transport: onData/onPeerData set,
-	//     no video handler): NO media flows. JVB tracks endpoint liveness via
-	//     lastIncomingActivity = max(lastRtpReceived, lastIceConsent); on
-	//     TURN/SCTP paths neither ICE consent nor an empty RTCP RR reliably
-	//     refresh it, so the endpoint is expired after entity-expiration.timeout
-	//     (~1 min) and JVB emits a DTLS close_notify - the head of the reconnect
-	//     cascade we observe. We attach a sendonly VP8 keepalive track and pump
-	//     a tiny keyframe on it (see rtpKeepalive); real RTP is the only signal
-	//     JVB's activity tracker honours on these paths. This mirrors what an
-	//     ordinary Jitsi client (and the vp8channel transport) does implicitly
-	//     by always sending media.
-	//
-	// AddTrack and AddTransceiverFromKind(video,recvonly) are mutually exclusive
-	// on one m-line in Plan B, so these are an either/or.
+	// When we have no local video we still need a video m-line; the choice
+	// matters for endpoint liveness on JVB (see addVideoOrKeepaliveTrack).
 	var kaTrack *webrtc.TrackLocalStaticSample
 	if !hasLocalTracks {
-		if s.wantsVideoReceive() {
-			if _, err := pc.AddTransceiverFromKind(
-				webrtc.RTPCodecTypeVideo,
-				webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly},
-			); err != nil {
-				_ = pc.Close()
-				return fmt.Errorf("add video recvonly: %w", err)
-			}
-		} else {
-			kaTrack, err = newKeepaliveTrack()
-			if err != nil {
-				_ = pc.Close()
-				return fmt.Errorf("create keepalive track: %w", err)
-			}
-			if _, addErr := pc.AddTrack(kaTrack); addErr != nil {
-				_ = pc.Close()
-				return fmt.Errorf("add keepalive track: %w", addErr)
-			}
+		kaTrack, err = s.addVideoOrKeepaliveTrack(pc)
+		if err != nil {
+			_ = pc.Close()
+			return err
 		}
 	}
 
@@ -671,7 +639,7 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 	// a reinitiate) starts a fresh one.
 	if kaTrack != nil {
 		s.wg.Add(1)
-		go s.rtpKeepalive(pcCtx, kaTrack) //nolint:contextcheck // pcCtx intentionally derives from s.runCtx to outlive this call
+		go s.rtpKeepalive(pcCtx, kaTrack) //nolint:contextcheck // pcCtx derives from s.runCtx
 	}
 
 	return nil
@@ -729,6 +697,30 @@ func (s *Session) rtpKeepalive(pcCtx context.Context, track *webrtc.TrackLocalSt
 	}
 }
 
+// addVideoOrKeepaliveTrack adds the appropriate video m-line when no local
+// tracks are present. For video-receiver paths it adds a recvonly transceiver;
+// for pure byte-stream paths it adds a sendonly VP8 keepalive track that pumps
+// real RTP to keep the JVB endpoint alive (see rtpKeepalive).
+func (s *Session) addVideoOrKeepaliveTrack(pc *webrtc.PeerConnection) (*webrtc.TrackLocalStaticSample, error) {
+	if s.wantsVideoReceive() {
+		if _, err := pc.AddTransceiverFromKind(
+			webrtc.RTPCodecTypeVideo,
+			webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly},
+		); err != nil {
+			return nil, fmt.Errorf("add video recvonly: %w", err)
+		}
+		return nil, nil //nolint:nilnil // nil track signals no keepalive needed
+	}
+	kaTrack, err := newKeepaliveTrack()
+	if err != nil {
+		return nil, fmt.Errorf("create keepalive track: %w", err)
+	}
+	if _, addErr := pc.AddTrack(kaTrack); addErr != nil {
+		return nil, fmt.Errorf("add keepalive track: %w", addErr)
+	}
+	return kaTrack, nil
+}
+
 // wantsVideoReceive reports whether the carrier expects to receive remote
 // video (a handler is registered). When false and there are no local tracks,
 // the session is a pure byte-stream and needs the RTP keepalive track.
@@ -742,18 +734,22 @@ func (s *Session) wantsVideoReceive() bool {
 // IDs are randomised per negotiation because Jitsi rejects session-accept when
 // an msid collides with another participant in the conference.
 func newKeepaliveTrack() (*webrtc.TrackLocalStaticSample, error) {
-	return webrtc.NewTrackLocalStaticSample(
+	t, err := webrtc.NewTrackLocalStaticSample(
 		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: 90000},
 		"jitsi-ka-"+randomTrackSuffix(),
 		"olcrtc-ka-"+randomTrackSuffix(),
 	)
+	if err != nil {
+		return nil, fmt.Errorf("new keepalive track: %w", err)
+	}
+	return t, nil
 }
 
 // randomTrackSuffix returns a short unique token for track/stream IDs.
 func randomTrackSuffix() string {
 	var b [6]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
+		return strconv.FormatInt(time.Now().UnixNano(), 10)
 	}
 	return base64.RawURLEncoding.EncodeToString(b[:])
 }
