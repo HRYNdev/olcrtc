@@ -684,12 +684,7 @@ func realE2ECaseExpectation(carrierName, transportName string) realE2EExpectatio
 		}
 		return realE2EExpectPass
 	case "jitsi":
-		switch transportName {
-		case transportData, transportVP8:
-			return realE2EExpectPass
-		default:
-			return realE2EExpectFail
-		}
+		return realE2EExpectPass
 	default:
 		return realE2EExpectPass
 	}
@@ -793,16 +788,16 @@ func TestRealE2ECaseExpectation(t *testing.T) {
 			want:      realE2EExpectPass,
 		},
 		{
-			name:      "jitsi videochannel is expected to fail",
+			name:      "jitsi videochannel",
 			carrier:   "jitsi",
 			transport: transportVideo,
-			want:      realE2EExpectFail,
+			want:      realE2EExpectPass,
 		},
 		{
-			name:      "jitsi seichannel is expected to fail",
+			name:      "jitsi seichannel",
 			carrier:   "jitsi",
 			transport: transportSEI,
-			want:      realE2EExpectFail,
+			want:      realE2EExpectPass,
 		},
 	}
 
