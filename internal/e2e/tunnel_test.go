@@ -684,10 +684,12 @@ func realE2ECaseExpectation(carrierName, transportName string) realE2EExpectatio
 		}
 		return realE2EExpectPass
 	case "jitsi":
-		if transportName == transportData {
+		switch transportName {
+		case transportData, transportVP8:
 			return realE2EExpectPass
+		default:
+			return realE2EExpectFail
 		}
-		return realE2EExpectFail
 	default:
 		return realE2EExpectPass
 	}
