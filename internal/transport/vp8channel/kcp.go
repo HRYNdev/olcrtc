@@ -27,13 +27,13 @@ const (
 	// clamped. Stay below that with headroom for KCP overhead (24 bytes).
 	kcpMTU = 1400
 
-	// Send/receive window in segments. Previous large values caused control
-	// starvation under bulk load (issue #95). Reduced to minimal values that
-	// still allow throughput while keeping queuing latency low enough for
-	// timely control ping/pong delivery.
-	//
-	// 512 sndwnd × 1400 MTU = ~700KB in flight — roughly half-second at 1.2MB/s
-	// wire cap, low enough to prevent control timeouts even with batching.
+	// Send/receive window in segments, sized to the bandwidth-delay product
+	// of the policed video path. VP8 over QR encoding has very low throughput
+	// (~0.3 MB/s observed). We use a moderate send window to balance:
+	// - Large enough for reasonable throughput (don't underutilize the pipe)
+	// - Small enough that control-plane pongs can get through within liveness timeout
+	// With 512 segments * 1400 bytes = ~716KB in-flight, and ~0.3 MB/s throughput,
+	// data sits in queue for ~2-3 seconds, giving control a chance to pass.
 	kcpSndWnd = 512
 	kcpRcvWnd = 1024
 
@@ -81,7 +81,12 @@ func startKCP(out chan<- []byte, onData func([]byte), epochHdr [epochHdrLen]byte
 	// the wire to ~45 KiB/s. With nc=1 KCP just keeps the BDP-sized window
 	// full and retransmits the few losses; the pacer caps the rate so we
 	// never overdrive the policer into its collapse zone.
-	sess.SetNoDelay(1, 5, 2, 1)
+	// nodelay=1, interval=20ms (slower for QR-encoded VP8), fast resend=2, congestion control OFF (nc=1).
+	// QR-encoded VP8 has very low throughput (~0.3 MB/s), so we use a larger interval
+	// to allow batching and reduce overhead. KCP's own loss-based congestion control
+	// is disabled (nc=1) because the carrier has hard bandwidth limits; the writerLoop
+	// byte pacer handles rate limiting.
+	sess.SetNoDelay(1, 20, 2, 1)
 	sess.SetWindowSize(kcpSndWnd, kcpRcvWnd)
 	sess.SetMtu(kcpMTU)
 	// Upstream marked SetStreamMode deprecated without providing a replacement;
@@ -114,9 +119,6 @@ func (r *kcpRuntime) readLoop(onData func([]byte)) {
 			continue
 		}
 		if size > kcpMaxMessage {
-			// Stream framing is now corrupted - there is no safe way to
-			// resync without a session reset. Bail and let the upper layer
-			// reconnect.
 			return
 		}
 		payload := make([]byte, size)
