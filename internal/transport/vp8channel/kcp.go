@@ -27,16 +27,14 @@ const (
 	// clamped. Stay below that with headroom for KCP overhead (24 bytes).
 	kcpMTU = 1400
 
-	// Send/receive window in segments, sized to the bandwidth-delay product
-	// of the policed video path (~1.2 MB/s wire cap, sub-second RTT), NOT to
-	// "as much as possible". A large send window let the upper layer dump
-	// megabytes into KCP instantly; with the wire paced to ~1.2 MB/s those
-	// segments then sat queued for SECONDS, so KCP's RTO fired and triggered
-	// a retransmit storm while control-plane pongs starved behind the same
-	// queue (-> missed pongs -> reconnect). A small send window bounds
-	// in-flight data to ~BDP, keeping queuing latency low. The receive
-	// window stays generous so the peer is never the bottleneck.
-	kcpSndWnd = 768
+	// Send/receive window in segments. Previous large values caused control
+	// starvation under bulk load (issue #95). Reduced to minimal values that
+	// still allow throughput while keeping queuing latency low enough for
+	// timely control ping/pong delivery.
+	//
+	// 512 sndwnd × 1400 MTU = ~700KB in flight — roughly half-second at 1.2MB/s
+	// wire cap, low enough to prevent control timeouts even with batching.
+	kcpSndWnd = 512
 	kcpRcvWnd = 1024
 
 	// Length prefix for our message framing on top of KCP stream mode.

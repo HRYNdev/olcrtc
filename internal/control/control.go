@@ -33,7 +33,11 @@ const (
 	// the ping shares the bulk smux/KCP stream: under a heavy transfer the
 	// ping byte can be head-of-line blocked behind queued data for several
 	// seconds, which is liveness-OK, not a dead link.
-	DefaultTimeout = 15 * time.Second
+	//
+	// Increased from 15s to 30s to prevent false-positive disconnects on
+	// vp8channel and other video-paced transports where KCP batching and
+	// frame pacing can delay control packets under load (issue #95).
+	DefaultTimeout = 30 * time.Second
 	// DefaultFailures is the default number of consecutive missed pongs before
 	// the stream is marked unhealthy.
 	DefaultFailures = 4
