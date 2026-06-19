@@ -157,7 +157,7 @@ func runRealE2EStressCase(t *testing.T, carrierName, transportName, roomURL, ech
 	defer func() { _ = conn.Close() }()
 
 	if d := *realStressBulkDuration; d > 0 {
-		written, dur, err := streamPatternForDuration(conn, d, *realStressBulkChunkSize)
+		written, dur, err := streamPatternForDuration(conn, d, *realStressBulkChunkSize, transportName)
 		if err != nil {
 			return fmt.Errorf("bulk pump: %w", err)
 		}
@@ -170,7 +170,7 @@ func runRealE2EStressCase(t *testing.T, carrierName, transportName, roomURL, ech
 	}
 
 	if d := *realStressDuration; d > 0 {
-		stats, err := sustainedEcho(conn, *realStressEchoSize, d)
+		stats, err := sustainedEcho(conn, *realStressEchoSize, d, transportName)
 		if err != nil {
 			return fmt.Errorf("sustained echo: %w", err)
 		}
@@ -208,14 +208,18 @@ func runRealE2EStressCase(t *testing.T, carrierName, transportName, roomURL, ech
 // the natural consequence of pumping into a slow pipe with no flow
 // control. Request-response naturally rate-limits to the transport's
 // actual round-trip throughput, which is what we want to measure.
-func streamPatternForDuration(conn net.Conn, duration time.Duration, chunkSize int) (int64, time.Duration, error) {
+func streamPatternForDuration(conn net.Conn, duration time.Duration, chunkSize int, transportName string) (int64, time.Duration, error) {
 	if chunkSize <= 0 {
 		chunkSize = 4096
 	}
-	// Per-chunk roundtrip deadline. Slow transports (videochannel) can
-	// take seconds+ per chunk in practice; 15s gives ample margin
-	// without making genuine stalls hang forever.
-	const chunkTimeout = 15 * time.Second
+	// Per-chunk roundtrip deadline. Slow transports (videochannel, vp8channel)
+	// can take seconds+ per chunk in practice. Default 15s is enough for
+	// datachannel, but video-paced transports need more slack due to pacing
+	// and KCP queuing (issue #95).
+	chunkTimeout := 15 * time.Second
+	if transportName == "videochannel" || transportName == "seichannel" || transportName == "vp8channel" {
+		chunkTimeout = 60 * time.Second // Generous timeout for video-paced transports
+	}
 
 	start := time.Now()
 	deadline := start.Add(duration)
@@ -263,7 +267,7 @@ type echoStats struct {
 // stuck transport surfaces as a finite-time test failure rather than a hang.
 //
 //nolint:cyclop // per-rt deadlines + error wrapping naturally branch many ways
-func sustainedEcho(conn net.Conn, payloadSize int, duration time.Duration) (echoStats, error) {
+func sustainedEcho(conn net.Conn, payloadSize int, duration time.Duration, transportName string) (echoStats, error) {
 	if payloadSize < 4 {
 		payloadSize = 4
 	}
@@ -280,8 +284,14 @@ func sustainedEcho(conn net.Conn, payloadSize int, duration time.Duration) (echo
 	latencies := make([]time.Duration, 0, 1024)
 
 	buf := make([]byte, payloadSize)
+	// Per-operation timeout. Video-paced transports need more slack due to
+	// frame pacing and KCP batching (issue #95).
+	opTimeout := 5 * time.Second
+	if transportName == "videochannel" || transportName == "seichannel" || transportName == "vp8channel" {
+		opTimeout = 60 * time.Second
+	}
 	for time.Now().Before(deadline) {
-		if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		if err := conn.SetWriteDeadline(time.Now().Add(opTimeout)); err != nil {
 			return stats, fmt.Errorf("set write deadline: %w", err)
 		}
 		start := time.Now()
@@ -289,7 +299,7 @@ func sustainedEcho(conn net.Conn, payloadSize int, duration time.Duration) (echo
 			stats.lost++
 			return stats, fmt.Errorf("write at rt #%d: %w", stats.count, err)
 		}
-		if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		if err := conn.SetReadDeadline(time.Now().Add(opTimeout)); err != nil {
 			return stats, fmt.Errorf("set read deadline: %w", err)
 		}
 		if _, err := io.ReadFull(reader, buf); err != nil {
