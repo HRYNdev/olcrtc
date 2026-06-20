@@ -684,13 +684,9 @@ func realE2ECaseExpectation(carrierName, transportName string) realE2EExpectatio
 		}
 		return realE2EExpectPass
 	case "jitsi":
-		// Jitsi supports both datachannel and vp8channel for tunnel traffic.
-		// VP8 channel provides better reliability when datachannels are
-		// constrained or filtered by intermediary middleboxes.
-		if transportName == transportData || transportName == transportVP8 {
-			return realE2EExpectPass
-		}
-		return realE2EExpectFail
+		// Jitsi supports all transports for tunnel traffic.
+		// videochannel and seichannel now stable after RTP keepalive fixes.
+		return realE2EExpectPass
 	default:
 		return realE2EExpectPass
 	}
