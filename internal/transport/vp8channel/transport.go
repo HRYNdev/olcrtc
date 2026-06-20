@@ -531,8 +531,11 @@ func (p *streamTransport) drainControlOutbound() {
 func (p *streamTransport) ResetPeer() {
 	p.peerConfirmed.Store(false)
 	p.peerEpoch.Store(0)
+	// Preserve control epoch across reset to avoid breaking ping/pong routing.
+	// Control frames use a separate epoch path and must stay stable.
+	controlHdr := p.controlEpochHeader()
 	p.restartKCP(p.rotateEpochHeader())
-	p.restartControlKCP()
+	p.restartControlKCPWithHeader(controlHdr)
 }
 
 // Reconnect forwards to the underlying engine session.
@@ -553,8 +556,9 @@ func (p *streamTransport) SetReconnectCallback(cb func()) {
 		// need a new handshake and liveness does not time out.
 		p.peerConfirmed.Store(false)
 		p.peerEpoch.Store(0)
+		controlHdr := p.controlEpochHeader() // snapshot BEFORE data epoch rotation
 		p.restartKCP(p.rotateEpochHeader())
-		p.restartControlKCP()
+		p.restartControlKCPWithHeader(controlHdr)
 		if cb != nil {
 			cb()
 		}
@@ -795,6 +799,34 @@ func (p *streamTransport) restartControlKCP() {
 	}
 	chdr := p.controlEpochHeader()
 	rt, err := startKCP(p.controlOutbound, controlCb, chdr)
+	if err != nil {
+		return
+	}
+	p.controlKCPMu.Lock()
+	p.controlKCP = rt
+	p.controlKCPMu.Unlock()
+}
+
+// restartControlKCPWithHeader restarts the control KCP with a specific epoch header,
+// used to preserve the control epoch across carrier reconnects.
+func (p *streamTransport) restartControlKCPWithHeader(hdr [epochHdrLen]byte) {
+	p.drainControlOutbound()
+	p.controlKCPMu.Lock()
+	old := p.controlKCP
+	p.controlKCP = nil
+	p.controlKCPMu.Unlock()
+	if old != nil {
+		old.close()
+	}
+	controlCb := func(data []byte) {
+		p.controlOnDataMu.RLock()
+		cb := p.onControlData
+		p.controlOnDataMu.RUnlock()
+		if cb != nil {
+			cb(data)
+		}
+	}
+	rt, err := startKCP(p.controlOutbound, controlCb, hdr)
 	if err != nil {
 		return
 	}
