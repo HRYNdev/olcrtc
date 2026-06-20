@@ -63,8 +63,6 @@ jobs:
     name: Real E2E (Providers x Transports)
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    # Skip on push/PR: external carriers often block GitHub Actions IPs
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
