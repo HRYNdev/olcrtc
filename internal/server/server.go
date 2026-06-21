@@ -861,26 +861,40 @@ func (s *Server) acceptHandshake(ctx context.Context, sess *smux.Session) bool {
 }
 
 func (s *Server) servePeer(ps *peerSession) {
-	// In peer-routing mode the handshake runs on the isolated control KCP
-	// session (acceptHandshake). The first data frame may arrive before the
-	// control handshake completes, so we spin-wait here until sessionID is
-	// set. If the context is cancelled first we bail out cleanly.
 	if ps.sessionID == "" {
-		for {
-			if s.stopping() {
-				s.removePeerSession(ps.peerID, "closed")
+		s.sessMu.RLock()
+		hasControl := s.controlConn != nil
+		s.sessMu.RUnlock()
+		if !hasControl {
+			// No isolated control plane (e.g. datachannel in peer-routing mode):
+			// drive the handshake inline on this peer's smux session, mirroring
+			// the legacy path in waitHandshake/serveSingle.
+			if !s.acceptHandshake(s.baseCtx, ps.session) {
+				s.removePeerSession(ps.peerID, "handshake failed")
 				return
 			}
 			s.sessMu.RLock()
-			sid := s.sessionID
-			did := s.deviceID
+			ps.sessionID = s.sessionID
+			ps.deviceID = s.deviceID
 			s.sessMu.RUnlock()
-			if sid != "" {
-				ps.sessionID = sid
-				ps.deviceID = did
-				break
+		} else {
+			// Isolated control plane: spin-wait until acceptHandshake completes.
+			for {
+				if s.stopping() {
+					s.removePeerSession(ps.peerID, "closed")
+					return
+				}
+				s.sessMu.RLock()
+				sid := s.sessionID
+				did := s.deviceID
+				s.sessMu.RUnlock()
+				if sid != "" {
+					ps.sessionID = sid
+					ps.deviceID = did
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
 			}
-			time.Sleep(10 * time.Millisecond)
 		}
 	}
 	for {
