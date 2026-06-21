@@ -1831,6 +1831,23 @@ func (s *Session) resetPeerEpochs() {
 	s.peerEpochMu.Unlock()
 }
 
+// WaitForPeer blocks until at least one remote participant has sent an epoch
+// frame (confirming their bridge is open), or ctx is cancelled.
+// Implements engine.PeerReadySession.
+func (s *Session) WaitForPeer(ctx context.Context) error {
+	const pollInterval = 50 * time.Millisecond
+	for {
+		if s.peerEpoch.Load() != 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pollInterval):
+		}
+	}
+}
+
 // CanSend reports whether the session is ready to accept new data.
 func (s *Session) CanSend() bool {
 	if s.closed.Load() {

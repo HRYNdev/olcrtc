@@ -224,6 +224,12 @@ func (c *Client) bringUpLink(
 		return fmt.Errorf("failed to connect link: %w", err)
 	}
 
+	if waiter, ok := ln.(transport.PeerReadyTransport); ok {
+		if err := waiter.WaitForPeer(ctx); err != nil {
+			return fmt.Errorf("wait for peer: %w", err)
+		}
+	}
+
 	c.conn = muxconn.New(ln, c.cipher)
 	c.controlConn = muxconn.NewControl(ln, c.cipher)
 

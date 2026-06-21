@@ -129,6 +129,16 @@ func (p *streamTransport) CanSend() bool {
 	return p.session.CanSend()
 }
 
+// WaitForPeer blocks until the remote peer is confirmed ready, or ctx expires.
+// Implements transport.PeerReadyTransport.
+func (p *streamTransport) WaitForPeer(ctx context.Context) error {
+	waiter, ok := p.session.(engine.PeerReadySession)
+	if !ok {
+		return nil
+	}
+	return waiter.WaitForPeer(ctx)
+}
+
 // Features describes the current datachannel transport semantics.
 func (p *streamTransport) Features() transport.Features {
 	return transport.Features{
