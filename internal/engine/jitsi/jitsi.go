@@ -64,6 +64,10 @@ const (
 	// periodic XMPP ping IQ resets that idle timer end-to-end and works for
 	// the WebSocket transport too.
 	xmppKeepaliveInterval = 25 * time.Second
+	// xmppKeepaliveTimeout is the maximum time to wait for a pong reply.
+	// A half-open TCP connection lets Send() succeed while replies never
+	// arrive; waiting for the IQ result detects this and triggers reconnect.
+	xmppKeepaliveTimeout = 15 * time.Second
 	reconnectJoinTimeout  = 30 * time.Second
 )
 
@@ -842,11 +846,11 @@ func (s *Session) xmppKeepalive() {
 				`<iq type="get" to="%s" id="%s" xmlns="jabber:client"><ping xmlns="urn:xmpp:ping"/></iq>`,
 				conn.Host(), id,
 			)
-			if err := conn.Send(ping); err != nil {
+			if _, err := conn.SendIQWait(ping, id, xmppKeepaliveTimeout); err != nil {
 				if s.closed.Load() {
 					return
 				}
-				logger.Debugf("jitsi: xmpp keepalive send: %v", err)
+				logger.Debugf("jitsi: xmpp keepalive: %v", err)
 				// Avoid spamming the supervisor with identical
 				// requests during the reconnect; once a request
 				// is enqueued the channel is buffered to depth 1,
@@ -1090,6 +1094,7 @@ func (s *Session) sendLoop() {
 			if !ok {
 				return
 			}
+			logger.Debugf("jitsi: bridge send broadcast len=%d", len(data))
 			s.sendBridgeFrame("", data)
 		case frame, ok := <-s.peerSendQueue:
 			if !ok {
@@ -1151,17 +1156,22 @@ func (s *Session) recvLoop() {
 
 	jSess := s.jSess.Load()
 	if jSess == nil || (s.onData == nil && s.onPeerData == nil) || !s.bridgeReady.Load() {
+		logger.Debugf("jitsi: recvLoop early exit jSess=%v onData=%v onPeerData=%v bridgeReady=%v",
+			jSess != nil, s.onData != nil, s.onPeerData != nil, s.bridgeReady.Load())
 		return
 	}
 	msgs := jSess.BridgeMessages()
 	if msgs == nil {
+		logger.Debugf("jitsi: recvLoop: BridgeMessages() returned nil, exiting")
 		return
 	}
+	logger.Debugf("jitsi: recvLoop started")
 	for {
 		select {
 		case <-s.done:
 			return
 		case msg, ok := <-msgs:
+			logger.Debugf("jitsi: recvLoop got msg ok=%v class=%q from=%q", ok, msg.Class, msg.From)
 			if !s.deliverBridgeMessage(msg, ok) {
 				return
 			}
@@ -1179,6 +1189,7 @@ func (s *Session) deliverBridgeMessage(msg j.BridgeMessage, ok bool) bool {
 		}
 		return false
 	}
+	logger.Debugf("jitsi: bridge msg class=%q from=%q len=%d", msg.Class, msg.From, len(msg.RawJSON))
 	payload, valid := bridgePayload(msg)
 	if !valid {
 		return true
@@ -1262,10 +1273,16 @@ func (s *Session) acceptEpochFrame(payload []byte) ([]byte, bool) {
 			receiverEpoch, s.localEpoch.Load())
 		return nil, false
 	}
+	// Drop untargeted (broadcast) frames from unknown or third-party senders.
+	// Broadcasts from our latched peer are always accepted — the server may
+	// send welcome frames as broadcasts before it learns our localEpoch.
 	if s.requireTargetedPeer && s.onPeerData == nil && receiverEpoch != s.localEpoch.Load() {
-		logger.Debugf("jitsi: drop untargeted bridge frame senderEpoch=0x%08x localEpoch=0x%08x",
-			senderEpoch, s.localEpoch.Load())
-		return nil, false
+		knownPeerEpoch := s.peerEpoch.Load()
+		if knownPeerEpoch != 0 && senderEpoch != knownPeerEpoch {
+			logger.Debugf("jitsi: drop untargeted bridge frame senderEpoch=0x%08x localEpoch=0x%08x",
+				senderEpoch, s.localEpoch.Load())
+			return nil, false
+		}
 	}
 	// Update the peer-epoch latch and ALWAYS accept the frame.
 	//
