@@ -780,33 +780,6 @@ func (p *streamTransport) restartKCP(epochHdr [epochHdrLen]byte) {
 	p.kcpMu.Unlock()
 }
 
-func (p *streamTransport) restartControlKCP() {
-	p.drainControlOutbound()
-	p.controlKCPMu.Lock()
-	old := p.controlKCP
-	p.controlKCP = nil
-	p.controlKCPMu.Unlock()
-	if old != nil {
-		old.close()
-	}
-	controlCb := func(data []byte) {
-		p.controlOnDataMu.RLock()
-		cb := p.onControlData
-		p.controlOnDataMu.RUnlock()
-		if cb != nil {
-			cb(data)
-		}
-	}
-	chdr := p.controlEpochHeader()
-	rt, err := startKCP(p.controlOutbound, controlCb, chdr)
-	if err != nil {
-		return
-	}
-	p.controlKCPMu.Lock()
-	p.controlKCP = rt
-	p.controlKCPMu.Unlock()
-}
-
 // restartControlKCPWithHeader restarts the control KCP with a specific epoch header,
 // used to preserve the control epoch across carrier reconnects.
 func (p *streamTransport) restartControlKCPWithHeader(hdr [epochHdrLen]byte) {
