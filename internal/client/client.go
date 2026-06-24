@@ -227,7 +227,7 @@ func (c *Client) bringUpLink(
 	c.conn = muxconn.New(ln, c.cipher)
 	c.controlConn = muxconn.NewControl(ln, c.cipher)
 
-	sess, err := smux.Client(c.conn, smuxConfig(linkMaxPayload(ln)))
+	sess, err := smux.Client(c.conn, runtime.SmuxConfigFor(ln))
 	if err != nil {
 		return fmt.Errorf("smux client: %w", err)
 	}
@@ -517,7 +517,7 @@ func (c *Client) tryReopenSession(
 		controlSmuxConn = controlConn
 	}
 
-	sess, err := smux.Client(conn, smuxConfig(linkMaxPayload(c.ln)))
+	sess, err := smux.Client(conn, runtime.SmuxConfigFor(c.ln))
 	if err != nil {
 		logger.Warnf("smux re-init failed (attempt %d): %v", attempt, err)
 		return false
@@ -570,6 +570,14 @@ func (c *Client) startControlLoop(
 	c.sessMu.Unlock()
 
 	liveness := cfg.Liveness
+	// Relax the pong timeout only for transports with an isolated control
+	// plane (vp8channel): KCP batching + frame pacing can delay control
+	// packets under load. Conventional carriers (jitsi/datachannel) keep the
+	// conservative default so a dead link is detected promptly. A user-set
+	// timeout larger than the default is left untouched.
+	if runtime.IsControlPlane(c.ln) && liveness.Timeout <= control.DefaultTimeout {
+		liveness.Timeout = runtime.LivenessTimeout(c.ln)
+	}
 	onPong := liveness.OnPong
 	onMissedPong := liveness.OnMissedPong
 	onUnhealthy := liveness.OnUnhealthy
@@ -808,11 +816,11 @@ func (c *Client) sendConnectRequest(stream *smux.Stream, targetAddr string, targ
 	_ = stream.SetWriteDeadline(time.Time{})
 
 	ack := make([]byte, 1)
-	// In peer-routing mode the SFU may take up to ~30s to complete
-	// renegotiation and start forwarding data frames from the client to the
-	// server. Use a generous deadline so we do not give up before the server
-	// peer session is established.
-	_ = stream.SetReadDeadline(time.Now().Add(90 * time.Second))
+	// ControlPlane transports (vp8channel peer-routing) may take ~30s for the
+	// SFU to complete renegotiation and start forwarding data frames, so they
+	// get a generous deadline. Conventional carriers (jitsi/datachannel) use
+	// the conservative window so a stuck CONNECT fails fast.
+	_ = stream.SetReadDeadline(time.Now().Add(runtime.ConnectAckTimeout(c.ln)))
 	if _, err := io.ReadFull(stream, ack); err != nil || ack[0] != 0x00 {
 		return fmt.Errorf("sid=%d: %w (read_err=%w ack=%v)", stream.ID(), ErrRemoteNotReady, err, ack)
 	}

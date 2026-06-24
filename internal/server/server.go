@@ -921,6 +921,13 @@ func (s *Server) startControlLoop(ctx context.Context, sess *smux.Session, strea
 	s.sessMu.Unlock()
 
 	liveness := s.liveness
+	// Relax the pong timeout only for transports with an isolated control
+	// plane (vp8channel); conventional carriers keep the conservative default
+	// so dead links are detected and reconnected promptly. A user-set timeout
+	// larger than the default is left untouched.
+	if runtime.IsControlPlane(s.ln) && liveness.Timeout <= control.DefaultTimeout {
+		liveness.Timeout = runtime.LivenessTimeout(s.ln)
+	}
 	onPong := liveness.OnPong
 	onMissedPong := liveness.OnMissedPong
 	onUnhealthy := liveness.OnUnhealthy
