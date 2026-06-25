@@ -1094,7 +1094,6 @@ func (s *Session) sendLoop() {
 			if !ok {
 				return
 			}
-			logger.Debugf("jitsi: bridge send broadcast len=%d", len(data))
 			s.sendBridgeFrame("", data)
 		case frame, ok := <-s.peerSendQueue:
 			if !ok {
@@ -1171,7 +1170,6 @@ func (s *Session) recvLoop() {
 		case <-s.done:
 			return
 		case msg, ok := <-msgs:
-			logger.Debugf("jitsi: recvLoop got msg ok=%v class=%q from=%q", ok, msg.Class, msg.From)
 			if !s.deliverBridgeMessage(msg, ok) {
 				return
 			}
@@ -1189,7 +1187,6 @@ func (s *Session) deliverBridgeMessage(msg j.BridgeMessage, ok bool) bool {
 		}
 		return false
 	}
-	logger.Debugf("jitsi: bridge msg class=%q from=%q len=%d", msg.Class, msg.From, len(msg.RawJSON))
 	payload, valid := bridgePayload(msg)
 	if !valid {
 		return true
@@ -1273,12 +1270,17 @@ func (s *Session) acceptEpochFrame(payload []byte) ([]byte, bool) {
 			receiverEpoch, s.localEpoch.Load())
 		return nil, false
 	}
-	// Drop untargeted (broadcast) frames from unknown or third-party senders.
-	// Broadcasts from our latched peer are always accepted — the server may
-	// send welcome frames as broadcasts before it learns our localEpoch.
+	// Drop untargeted (broadcast) frames unless they come from the peer we
+	// have already latched onto. The server's first reply to a client is
+	// always targeted (it latches the client's localEpoch from the client's
+	// initial SYN frame before smux ever emits a reply), so a legitimate
+	// welcome carries receiverEpoch == localEpoch and never reaches this
+	// branch. Untargeted frames here are therefore either a third-party
+	// olcrtc instance broadcasting before our peer does, or post-latch
+	// broadcasts from our own peer (which we keep accepting).
 	if s.requireTargetedPeer && s.onPeerData == nil && receiverEpoch != s.localEpoch.Load() {
 		knownPeerEpoch := s.peerEpoch.Load()
-		if knownPeerEpoch != 0 && senderEpoch != knownPeerEpoch {
+		if knownPeerEpoch == 0 || senderEpoch != knownPeerEpoch {
 			logger.Debugf("jitsi: drop untargeted bridge frame senderEpoch=0x%08x localEpoch=0x%08x",
 				senderEpoch, s.localEpoch.Load())
 			return nil, false
@@ -1842,7 +1844,7 @@ func (s *Session) WaitForPeer(ctx context.Context) error {
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("wait for peer: %w", ctx.Err())
 		case <-time.After(pollInterval):
 		}
 	}

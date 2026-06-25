@@ -584,7 +584,7 @@ func (p *streamTransport) WaitForPeer(ctx context.Context) error {
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("wait for peer: %w", ctx.Err())
 		case <-time.After(pollInterval):
 		}
 	}

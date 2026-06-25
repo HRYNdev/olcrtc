@@ -861,41 +861,8 @@ func (s *Server) acceptHandshake(ctx context.Context, sess *smux.Session) bool {
 }
 
 func (s *Server) servePeer(ps *peerSession) {
-	if ps.sessionID == "" {
-		s.sessMu.RLock()
-		hasControl := s.controlConn != nil
-		s.sessMu.RUnlock()
-		if !hasControl {
-			// No isolated control plane (e.g. datachannel in peer-routing mode):
-			// drive the handshake inline on this peer's smux session, mirroring
-			// the legacy path in waitHandshake/serveSingle.
-			if !s.acceptHandshake(s.baseCtx, ps.session) {
-				s.removePeerSession(ps.peerID, "handshake failed")
-				return
-			}
-			s.sessMu.RLock()
-			ps.sessionID = s.sessionID
-			ps.deviceID = s.deviceID
-			s.sessMu.RUnlock()
-		} else {
-			// Isolated control plane: spin-wait until acceptHandshake completes.
-			for {
-				if s.stopping() {
-					s.removePeerSession(ps.peerID, "closed")
-					return
-				}
-				s.sessMu.RLock()
-				sid := s.sessionID
-				did := s.deviceID
-				s.sessMu.RUnlock()
-				if sid != "" {
-					ps.sessionID = sid
-					ps.deviceID = did
-					break
-				}
-				time.Sleep(10 * time.Millisecond)
-			}
-		}
+	if ps.sessionID == "" && !s.establishPeerSession(ps) {
+		return
 	}
 	for {
 		if s.stopping() {
@@ -915,6 +882,53 @@ func (s *Server) servePeer(ps *peerSession) {
 			defer s.wg.Done()
 			s.handleStream(context.Background(), stream, ps.sessionID)
 		}()
+	}
+}
+
+// establishPeerSession completes the handshake for a freshly accepted peer
+// session and populates ps.sessionID/deviceID. It returns false if the peer
+// should be dropped (handshake failed or the server is shutting down).
+func (s *Server) establishPeerSession(ps *peerSession) bool {
+	s.sessMu.RLock()
+	hasControl := s.controlConn != nil
+	s.sessMu.RUnlock()
+	if !hasControl {
+		// No isolated control plane (e.g. datachannel in peer-routing mode):
+		// drive the handshake inline on this peer's smux session, mirroring
+		// the legacy path in waitHandshake/serveSingle.
+		if !s.acceptHandshake(s.baseCtx, ps.session) {
+			s.removePeerSession(ps.peerID, "handshake failed")
+			return false
+		}
+		s.sessMu.RLock()
+		ps.sessionID = s.sessionID
+		ps.deviceID = s.deviceID
+		s.sessMu.RUnlock()
+		return true
+	}
+	// Isolated control plane: spin-wait until acceptHandshake completes.
+	return s.waitPeerHandshake(ps)
+}
+
+// waitPeerHandshake blocks until the isolated control plane has completed the
+// handshake and published a session ID, copying it onto ps. Returns false if
+// the server stops before the handshake lands.
+func (s *Server) waitPeerHandshake(ps *peerSession) bool {
+	for {
+		if s.stopping() {
+			s.removePeerSession(ps.peerID, "closed")
+			return false
+		}
+		s.sessMu.RLock()
+		sid := s.sessionID
+		did := s.deviceID
+		s.sessMu.RUnlock()
+		if sid != "" {
+			ps.sessionID = sid
+			ps.deviceID = did
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

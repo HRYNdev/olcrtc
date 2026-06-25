@@ -136,7 +136,10 @@ func (p *streamTransport) WaitForPeer(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
-	return waiter.WaitForPeer(ctx)
+	if err := waiter.WaitForPeer(ctx); err != nil {
+		return fmt.Errorf("wait for peer: %w", err)
+	}
+	return nil
 }
 
 // Features describes the current datachannel transport semantics.
