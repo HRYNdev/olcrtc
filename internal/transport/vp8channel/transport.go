@@ -111,6 +111,16 @@ type videoSession interface {
 type streamTransport struct {
 	stream        videoSession
 	track         *webrtc.TrackLocalStaticSample
+	// writeMu serializes all track.WriteSample calls. pion's WriteSample is
+	// not safe for concurrent use (see writeSampleLocked); the server writes
+	// bulk data from per-peer pumps while writerLoop writes control frames
+	// and keepalives, so both paths must funnel through this lock.
+	writeMu       sync.Mutex
+	// sampleWriter, when set, replaces the real track.WriteSample call.
+	// Tests inject a writer here to observe the exact byte stream that
+	// reaches the track and to assert that writeSampleLocked serializes
+	// concurrent callers. Always invoked under writeMu.
+	sampleWriter  func([]byte) bool
 	onData        func([]byte)
 	onPeerData    func(peerID string, data []byte)
 	// onControlData is called with every reassembled message from the
@@ -647,9 +657,30 @@ type writerState struct {
 }
 
 func (w *writerState) writeSample(data []byte) bool {
-	return w.p.track.WriteSample(media.Sample{
+	return w.p.writeSampleLocked(data)
+}
+
+// writeSampleLocked serializes every WriteSample call on the shared video
+// track behind a single mutex. pion's TrackLocalStaticSample.WriteSample is
+// NOT safe for concurrent use: it packetizes under its own lock but then
+// releases that lock before pushing the resulting RTP packets onto the wire.
+// Two concurrent callers therefore each reserve a contiguous block of RTP
+// sequence numbers and then race to emit their packets, interleaving them on
+// the wire. The receiver's VP8 reassembler enforces strict sequence
+// contiguity, so any interleaved frame is discarded - which is exactly the
+// server->client bulk-data stall in issue #95 (the server runs a per-peer
+// peerWriterPump for data plus writerLoop for control/keepalive, both hitting
+// this track at once). Funneling all writes through this mutex makes each
+// sample's packetize+send atomic and keeps sequence numbers monotonic.
+func (p *streamTransport) writeSampleLocked(data []byte) bool {
+	p.writeMu.Lock()
+	defer p.writeMu.Unlock()
+	if p.sampleWriter != nil {
+		return p.sampleWriter(data)
+	}
+	return p.track.WriteSample(media.Sample{
 		Data:     data,
-		Duration: w.p.frameInterval,
+		Duration: p.frameInterval,
 	}) == nil
 }
 
@@ -1066,10 +1097,7 @@ func (p *streamTransport) peerWriterPump(_ uint32, out chan []byte) {
 			if !ok {
 				return
 			}
-			_ = p.track.WriteSample(media.Sample{
-				Data:     frame,
-				Duration: p.frameInterval,
-			})
+			_ = p.writeSampleLocked(frame)
 		}
 	}
 }
