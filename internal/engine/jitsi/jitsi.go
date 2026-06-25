@@ -1270,17 +1270,26 @@ func (s *Session) acceptEpochFrame(payload []byte) ([]byte, bool) {
 			receiverEpoch, s.localEpoch.Load())
 		return nil, false
 	}
-	// Drop untargeted (broadcast) frames unless they come from the peer we
-	// have already latched onto. The server's first reply to a client is
-	// always targeted (it latches the client's localEpoch from the client's
-	// initial SYN frame before smux ever emits a reply), so a legitimate
-	// welcome carries receiverEpoch == localEpoch and never reaches this
-	// branch. Untargeted frames here are therefore either a third-party
-	// olcrtc instance broadcasting before our peer does, or post-latch
-	// broadcasts from our own peer (which we keep accepting).
+	// Untargeted (broadcast) frame handling. A broadcast carries
+	// receiverEpoch==0 because the sender does not yet know our localEpoch.
+	//
+	// We MUST accept a broadcast while we are still unlatched (peerEpoch==0):
+	// the client blocks in WaitForPeer until peerEpoch latches, and that latch
+	// can only come from the peer's first frame. On both initial connect and
+	// after a reconnect (which resets peerEpoch to 0 and re-announces via a
+	// broadcast Send(nil)), that first frame is a broadcast - the sender has
+	// not learned our epoch yet. Dropping it here wedges WaitForPeer for its
+	// whole timeout and the link never comes up ("ping works, no connection").
+	//
+	// Once we ARE latched (peerEpoch!=0) we only accept broadcasts from that
+	// same latched sender; a broadcast from a different senderEpoch is a
+	// third-party olcrtc instance or a stale ghost in a polluted room and is
+	// dropped. A genuine peer reconnect arrives as a fresh-epoch broadcast
+	// only after peerEpoch was reset to 0, so it bootstraps via the unlatched
+	// branch above.
 	if s.requireTargetedPeer && s.onPeerData == nil && receiverEpoch != s.localEpoch.Load() {
 		knownPeerEpoch := s.peerEpoch.Load()
-		if knownPeerEpoch == 0 || senderEpoch != knownPeerEpoch {
+		if knownPeerEpoch != 0 && senderEpoch != knownPeerEpoch {
 			logger.Debugf("jitsi: drop untargeted bridge frame senderEpoch=0x%08x localEpoch=0x%08x",
 				senderEpoch, s.localEpoch.Load())
 			return nil, false
