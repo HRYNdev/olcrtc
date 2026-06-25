@@ -770,6 +770,14 @@ func (p *streamTransport) writerLoop() {
 }
 
 func (p *streamTransport) batchSample(first []byte, maxBytes int) []byte {
+	return p.batchSampleFrom(p.outbound, first, maxBytes)
+}
+
+// batchSampleFrom coalesces up to batchSize KCP frames drained from src into a
+// single VP8 sample, bounded by maxBytes. The shared writerLoop drains the
+// single-peer outbound queue; per-peer pumps drain their own queue through the
+// same batching so the server->client path is paced identically to the client.
+func (p *streamTransport) batchSampleFrom(src <-chan []byte, first []byte, maxBytes int) []byte {
 	if maxBytes <= 0 || maxBytes > defaultMaxPayloadSize {
 		maxBytes = defaultMaxPayloadSize
 	}
@@ -784,7 +792,7 @@ func (p *streamTransport) batchSample(first []byte, maxBytes int) []byte {
 
 	for packets := 1; packets < p.batchSize; packets++ {
 		select {
-		case frame := <-p.outbound:
+		case frame := <-src:
 			if len(frame) <= epochHdrLen {
 				continue
 			}
@@ -1087,17 +1095,31 @@ func (p *streamTransport) getOrCreatePeerKCP(epoch uint32) *kcpRuntime {
 }
 
 // peerWriterPump drains a peer's outbound KCP queue and writes frames to the
-// shared video track. Stops when the channel is closed or transport shuts down.
+// shared video track. It paces the server->client path on the same frame
+// ticker and per-tick byte budget as writerLoop drives the client->server
+// path. Without this, the pump emitted every KCP frame the instant it was
+// queued: with KCP congestion control off (nc=1) and a BDP-sized window, that
+// overran the SFU's policer, drove burst loss, and collapsed throughput to
+// zero within ~20-40s (issue #95). Stops when the channel is closed or the
+// transport shuts down.
 func (p *streamTransport) peerWriterPump(_ uint32, out chan []byte) {
+	ticker := time.NewTicker(p.frameInterval)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-p.closeCh:
 			return
-		case frame, ok := <-out:
-			if !ok {
-				return
+		case <-ticker.C:
+			select {
+			case frame, ok := <-out:
+				if !ok {
+					return
+				}
+				sample := p.batchSampleFrom(out, frame, p.perTickBytes)
+				_ = p.writeSampleLocked(sample)
+			default:
 			}
-			_ = p.writeSampleLocked(frame)
 		}
 	}
 }
