@@ -885,6 +885,90 @@ func (p *streamTransport) drainTrack(track *webrtc.TrackRemote) {
 	}
 }
 
+// reorderWindow bounds how many out-of-order RTP packets the reorder buffer
+// holds while waiting for a gap to fill. Real SFUs reorder within a handful of
+// packets; once this many newer packets pile up behind a hole, the missing
+// sequence is treated as genuinely lost and we advance, so a truly dropped
+// packet cannot stall delivery indefinitely.
+const reorderWindow = 256
+
+// seqLess reports whether RTP sequence a precedes b using wrap-around aware
+// comparison (RFC 1982 serial arithmetic on uint16).
+func seqLess(a, b uint16) bool {
+	// bit15 of the wrap-around difference is the serial sign bit: set means a
+	// precedes b. Avoids a signed conversion gosec flags as overflow.
+	return (a-b)&0x8000 != 0
+}
+
+// reorderBuffer restores RTP sequence order before frame assembly. The SFU may
+// deliver packets out of order or drop them; feeding that stream straight into
+// the strict contiguity check in processRTPPacket made every reorder look like
+// loss and discarded whole frames (issue #95: ~80-90% of VP8 frames dropped on
+// a live SFU). Buffering by sequence number and draining in order means only
+// genuine loss produces a gap.
+type reorderBuffer struct {
+	pkts    map[uint16]*rtp.Packet
+	nextSeq uint16
+	started bool
+}
+
+func newReorderBuffer() *reorderBuffer {
+	return &reorderBuffer{pkts: make(map[uint16]*rtp.Packet, reorderWindow)}
+}
+
+// push adds pkt and returns any packets now deliverable in strict sequence
+// order. The caller reuses its read buffer across packets, so the payload is
+// copied before buffering.
+func (b *reorderBuffer) push(pkt *rtp.Packet) []*rtp.Packet {
+	if !b.started {
+		b.started = true
+		b.nextSeq = pkt.SequenceNumber
+	}
+	// Drop packets older than our current position: already delivered, or
+	// skipped past as lost.
+	if seqLess(pkt.SequenceNumber, b.nextSeq) {
+		return nil
+	}
+	cp := &rtp.Packet{Header: pkt.Header}
+	cp.Payload = append([]byte(nil), pkt.Payload...)
+	b.pkts[pkt.SequenceNumber] = cp
+
+	// Holding a full window behind a hole means the head sequence is
+	// genuinely lost: skip forward to the oldest buffered packet.
+	if len(b.pkts) > reorderWindow {
+		b.skipToOldest()
+	}
+	return b.drain()
+}
+
+// drain pops contiguous packets starting at nextSeq.
+func (b *reorderBuffer) drain() []*rtp.Packet {
+	var out []*rtp.Packet
+	for {
+		pkt, ok := b.pkts[b.nextSeq]
+		if !ok {
+			return out
+		}
+		out = append(out, pkt)
+		delete(b.pkts, b.nextSeq)
+		b.nextSeq++
+	}
+}
+
+// skipToOldest advances nextSeq to the lowest buffered sequence, abandoning a
+// lost packet so drain can make progress.
+func (b *reorderBuffer) skipToOldest() {
+	first := true
+	var oldest uint16
+	for seq := range b.pkts {
+		if first || seqLess(seq, oldest) {
+			oldest = seq
+			first = false
+		}
+	}
+	b.nextSeq = oldest
+}
+
 type vp8FrameState struct {
 	vp8Pkt      codecs.VP8Packet
 	frameBuf    []byte
@@ -941,6 +1025,7 @@ func (s *vp8FrameState) processRTPPacket(pkt *rtp.Packet) []byte {
 
 func (p *streamTransport) readVP8Track(track *webrtc.TrackRemote) {
 	var state vp8FrameState
+	reorder := newReorderBuffer()
 	buf := make([]byte, rtpBufSize)
 	var rtpCount, frameCount int
 
@@ -958,13 +1043,16 @@ func (p *streamTransport) readVP8Track(track *webrtc.TrackRemote) {
 			continue
 		}
 
-		frame := state.processRTPPacket(pkt)
-		if frame == nil {
-			continue
+		// Restore sequence order before assembly so SFU reordering is not
+		// mistaken for loss.
+		for _, ordered := range reorder.push(pkt) {
+			frame := state.processRTPPacket(ordered)
+			if frame == nil {
+				continue
+			}
+			frameCount++
+			p.handleIncomingFrame(frame)
 		}
-		frameCount++
-
-		p.handleIncomingFrame(frame)
 	}
 }
 
@@ -1106,11 +1194,28 @@ func (p *streamTransport) peerWriterPump(_ uint32, out chan []byte) {
 	ticker := time.NewTicker(p.frameInterval)
 	defer ticker.Stop()
 
+	// Inject a decodable VP8 keyframe on the same cadence writerLoop uses for
+	// the client->server path. The server's per-peer bulk path previously
+	// emitted only opaque KCP data frames, which never form a decodable VP8
+	// keyframe: the SFU's decoder times out (~40s without a keyframe) and stops
+	// forwarding the server's track to the subscriber. The client side was
+	// kept alive by writerLoop.forceKeepalive; the server side had no
+	// equivalent, so the server->client direction collapsed first while the
+	// client->server direction kept flowing (issue #95).
+	keyframeEvery := max(int((2*time.Second)/p.frameInterval), 1)
+	ticksSinceKeyframe := 0
+
 	for {
 		select {
 		case <-p.closeCh:
 			return
 		case <-ticker.C:
+			ticksSinceKeyframe++
+			if ticksSinceKeyframe >= keyframeEvery {
+				ticksSinceKeyframe = 0
+				hdr := p.epochHeader()
+				_ = p.writeSampleLocked(hdr[:])
+			}
 			select {
 			case frame, ok := <-out:
 				if !ok {
