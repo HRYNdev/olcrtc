@@ -577,6 +577,23 @@ func (p *streamTransport) WatchConnection(ctx context.Context) {
 	p.stream.WatchConnection(ctx)
 }
 
+// WaitForPeer blocks until the remote peer has been observed (first epoch
+// frame received), or ctx is cancelled.
+// Implements transport.PeerReadyTransport.
+func (p *streamTransport) WaitForPeer(ctx context.Context) error {
+	const pollInterval = 50 * time.Millisecond
+	for {
+		if p.peerEpoch.Load() != 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait for peer: %w", ctx.Err())
+		case <-time.After(pollInterval):
+		}
+	}
+}
+
 func (p *streamTransport) CanSend() bool {
 	if p.closed.Load() {
 		return false

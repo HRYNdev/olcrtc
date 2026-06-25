@@ -64,6 +64,10 @@ const (
 	// periodic XMPP ping IQ resets that idle timer end-to-end and works for
 	// the WebSocket transport too.
 	xmppKeepaliveInterval = 25 * time.Second
+	// xmppKeepaliveTimeout is the maximum time to wait for a pong reply.
+	// A half-open TCP connection lets Send() succeed while replies never
+	// arrive; waiting for the IQ result detects this and triggers reconnect.
+	xmppKeepaliveTimeout = 15 * time.Second
 	reconnectJoinTimeout  = 30 * time.Second
 )
 
@@ -842,11 +846,11 @@ func (s *Session) xmppKeepalive() {
 				`<iq type="get" to="%s" id="%s" xmlns="jabber:client"><ping xmlns="urn:xmpp:ping"/></iq>`,
 				conn.Host(), id,
 			)
-			if err := conn.Send(ping); err != nil {
+			if _, err := conn.SendIQWait(ping, id, xmppKeepaliveTimeout); err != nil {
 				if s.closed.Load() {
 					return
 				}
-				logger.Debugf("jitsi: xmpp keepalive send: %v", err)
+				logger.Debugf("jitsi: xmpp keepalive: %v", err)
 				// Avoid spamming the supervisor with identical
 				// requests during the reconnect; once a request
 				// is enqueued the channel is buffered to depth 1,
@@ -1151,12 +1155,16 @@ func (s *Session) recvLoop() {
 
 	jSess := s.jSess.Load()
 	if jSess == nil || (s.onData == nil && s.onPeerData == nil) || !s.bridgeReady.Load() {
+		logger.Debugf("jitsi: recvLoop early exit jSess=%v onData=%v onPeerData=%v bridgeReady=%v",
+			jSess != nil, s.onData != nil, s.onPeerData != nil, s.bridgeReady.Load())
 		return
 	}
 	msgs := jSess.BridgeMessages()
 	if msgs == nil {
+		logger.Debugf("jitsi: recvLoop: BridgeMessages() returned nil, exiting")
 		return
 	}
+	logger.Debugf("jitsi: recvLoop started")
 	for {
 		select {
 		case <-s.done:
@@ -1262,10 +1270,21 @@ func (s *Session) acceptEpochFrame(payload []byte) ([]byte, bool) {
 			receiverEpoch, s.localEpoch.Load())
 		return nil, false
 	}
+	// Drop untargeted (broadcast) frames unless they come from the peer we
+	// have already latched onto. The server's first reply to a client is
+	// always targeted (it latches the client's localEpoch from the client's
+	// initial SYN frame before smux ever emits a reply), so a legitimate
+	// welcome carries receiverEpoch == localEpoch and never reaches this
+	// branch. Untargeted frames here are therefore either a third-party
+	// olcrtc instance broadcasting before our peer does, or post-latch
+	// broadcasts from our own peer (which we keep accepting).
 	if s.requireTargetedPeer && s.onPeerData == nil && receiverEpoch != s.localEpoch.Load() {
-		logger.Debugf("jitsi: drop untargeted bridge frame senderEpoch=0x%08x localEpoch=0x%08x",
-			senderEpoch, s.localEpoch.Load())
-		return nil, false
+		knownPeerEpoch := s.peerEpoch.Load()
+		if knownPeerEpoch == 0 || senderEpoch != knownPeerEpoch {
+			logger.Debugf("jitsi: drop untargeted bridge frame senderEpoch=0x%08x localEpoch=0x%08x",
+				senderEpoch, s.localEpoch.Load())
+			return nil, false
+		}
 	}
 	// Update the peer-epoch latch and ALWAYS accept the frame.
 	//
@@ -1812,6 +1831,23 @@ func (s *Session) resetPeerEpochs() {
 	s.peerEpochMu.Lock()
 	clear(s.peerEpochs)
 	s.peerEpochMu.Unlock()
+}
+
+// WaitForPeer blocks until at least one remote participant has sent an epoch
+// frame (confirming their bridge is open), or ctx is cancelled.
+// Implements engine.PeerReadySession.
+func (s *Session) WaitForPeer(ctx context.Context) error {
+	const pollInterval = 50 * time.Millisecond
+	for {
+		if s.peerEpoch.Load() != 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait for peer: %w", ctx.Err())
+		case <-time.After(pollInterval):
+		}
+	}
 }
 
 // CanSend reports whether the session is ready to accept new data.
