@@ -72,6 +72,13 @@ type Server struct {
 	// over it so bulk data writes never block control ping/pong.
 	controlConn    *muxconn.Conn
 	session        *smux.Session
+	// controlSess is the smux session that carries the handshake/control
+	// stream. For control-plane transports the handshake + liveness loop run
+	// on this session, which is distinct from the data session (and in
+	// peer-routing mode the data session is nil). reinstallSession compares
+	// the dying session against this so a control-session reinstall is not
+	// silently discarded by the s.session guard (issue #95).
+	controlSess    *smux.Session
 	controlStrm    *smux.Stream
 	controlStop    context.CancelFunc
 	sessMu         sync.RWMutex
@@ -349,6 +356,7 @@ func (s *Server) installSession() {
 	// For transports without a control plane, serveSingle drives the
 	// handshake in its own loop.
 	controlConn := muxconn.NewControl(s.ln, s.cipher)
+	var ctrlSess *smux.Session
 	if controlConn != nil {
 		controlSess, cerr := smux.Server(controlConn, controlSmuxConfig(linkMaxPayload(s.ln)))
 		if cerr != nil {
@@ -357,12 +365,14 @@ func (s *Server) installSession() {
 			controlConn = nil
 		} else {
 			// Isolated control plane: handshake runs on the control session.
+			ctrlSess = controlSess
 			go s.acceptHandshake(s.baseCtx, controlSess)
 		}
 	}
 	s.sessMu.Lock()
 	s.conn = conn
 	s.controlConn = controlConn
+	s.controlSess = ctrlSess
 	s.session = sess
 	s.sessMu.Unlock()
 }
@@ -384,6 +394,7 @@ func (s *Server) installControlSession() {
 	}
 	s.sessMu.Lock()
 	s.controlConn = controlConn
+	s.controlSess = controlSess
 	s.sessMu.Unlock()
 	go s.acceptHandshake(s.baseCtx, controlSess)
 }
@@ -472,8 +483,15 @@ func (s *Server) buildReplacementSession() *replacementSession {
 // reinstall already won the race.
 func (s *Server) swapSession(dead *smux.Session, r *replacementSession) bool {
 	s.sessMu.Lock()
-	if s.session != dead {
-		// Someone else already reinstalled - discard our build.
+	// The dying session is either the data session (legacy/datachannel path)
+	// or the control session (control-plane transports, where s.session may be
+	// nil in peer-routing mode). Discard our build only when another reinstall
+	// already swapped in a fresh session - i.e. dead matches neither current
+	// session. A nil dead (carrier-triggered reconnect) always proceeds.
+	// Without matching against controlSess a control-session reinstall was
+	// silently dropped, so acceptHandshake was never re-armed and every later
+	// reconnect hung forever in waitPeerHandshake (issue #95).
+	if dead != nil && dead != s.session && dead != s.controlSess {
 		s.sessMu.Unlock()
 		_ = r.sess.Close()
 		_ = r.conn.Close()
@@ -484,12 +502,14 @@ func (s *Server) swapSession(dead *smux.Session, r *replacementSession) bool {
 		return false
 	}
 	oldSess := s.session
+	oldCtrlSess := s.controlSess
 	oldControl := s.controlStrm
 	oldControlStop := s.controlStop
 	oldSID := s.sessionID
 	s.session = r.sess
 	s.conn = r.conn
 	s.controlConn = r.controlConn
+	s.controlSess = r.controlSess
 	s.controlStrm = nil
 	s.controlStop = nil
 	s.sessionID = ""
@@ -501,6 +521,9 @@ func (s *Server) swapSession(dead *smux.Session, r *replacementSession) bool {
 	}
 	if oldSess != nil {
 		_ = oldSess.Close()
+	}
+	if oldCtrlSess != nil && oldCtrlSess != oldSess {
+		_ = oldCtrlSess.Close()
 	}
 	if oldControl != nil {
 		_ = oldControl.Close()
@@ -524,6 +547,7 @@ func (s *Server) closeSession() {
 	s.session = nil
 	s.conn = nil
 	s.controlConn = nil
+	s.controlSess = nil
 	s.controlStrm = nil
 	s.controlStop = nil
 	oldSID := s.sessionID
