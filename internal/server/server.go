@@ -478,27 +478,38 @@ func (s *Server) buildReplacementSession() *replacementSession {
 	return r
 }
 
+// staleReinstall reports whether a pre-built replacement must be discarded
+// because another reinstall already swapped in a fresh session - i.e. dead
+// matches neither the live data session nor the live control session. A nil
+// dead (carrier-triggered reconnect) always proceeds. The dying session may be
+// the data session (legacy/datachannel path) or the control session
+// (control-plane transports, where s.session is nil in peer-routing mode).
+// Matching against controlSess is what keeps a control-session reinstall from
+// being silently dropped; without it acceptHandshake was never re-armed and
+// every later reconnect hung forever in waitPeerHandshake (issue #95).
+func (s *Server) staleReinstall(dead *smux.Session) bool {
+	return dead != nil && dead != s.session && dead != s.controlSess
+}
+
+// discardReplacement tears down a replacement session that lost the reinstall
+// race.
+func discardReplacement(r *replacementSession) {
+	_ = r.sess.Close()
+	_ = r.conn.Close()
+	if r.controlConn != nil {
+		_ = r.controlSess.Close()
+		_ = r.controlConn.Close()
+	}
+}
+
 // swapSession atomically replaces the live session with the pre-built one and
 // tears down the old one. Returns false (discarding the new build) when another
 // reinstall already won the race.
 func (s *Server) swapSession(dead *smux.Session, r *replacementSession) bool {
 	s.sessMu.Lock()
-	// The dying session is either the data session (legacy/datachannel path)
-	// or the control session (control-plane transports, where s.session may be
-	// nil in peer-routing mode). Discard our build only when another reinstall
-	// already swapped in a fresh session - i.e. dead matches neither current
-	// session. A nil dead (carrier-triggered reconnect) always proceeds.
-	// Without matching against controlSess a control-session reinstall was
-	// silently dropped, so acceptHandshake was never re-armed and every later
-	// reconnect hung forever in waitPeerHandshake (issue #95).
-	if dead != nil && dead != s.session && dead != s.controlSess {
+	if s.staleReinstall(dead) {
 		s.sessMu.Unlock()
-		_ = r.sess.Close()
-		_ = r.conn.Close()
-		if r.controlConn != nil {
-			_ = r.controlSess.Close()
-			_ = r.controlConn.Close()
-		}
+		discardReplacement(r)
 		return false
 	}
 	oldSess := s.session
