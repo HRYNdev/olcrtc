@@ -15,13 +15,18 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
+// defaultSTUNURL is the bootstrap STUN server used before the SFU
+// advertises its own ICE servers via serverHello. Yandex Telemost
+// hands back the real STUN/TURN set in rtcConfiguration.
+const defaultSTUNURL = "stun:stun.rtc.yandex.net:3478"
+
 // Connect starts the WebRTC connection process.
 func (s *Session) Connect(ctx context.Context) error {
 	s.closed.Store(false)
 	s.resetMediaState()
 
 	config := webrtc.Configuration{
-		ICEServers:   []webrtc.ICEServer{{URLs: []string{"stun:stun.rtc.yandex.net:3478"}}},
+		ICEServers:   []webrtc.ICEServer{{URLs: []string{defaultSTUNURL}}},
 		SDPSemantics: webrtc.SDPSemanticsUnifiedPlan,
 	}
 
