@@ -71,6 +71,21 @@ type PeerTransport interface {
 	SupportsPeerRouting() bool
 }
 
+// PeerControlPlane is implemented by transports that support per-peer isolated
+// control planes. Each peer identified by peerID gets its own KCP session so
+// that multiple clients can handshake and maintain liveness independently.
+// The server uses this to create per-peer smux control sessions.
+type PeerControlPlane interface {
+	// ControlSendTo sends a control frame to a specific peer.
+	ControlSendTo(peerID string, data []byte) error
+	// SetControlOnPeerData registers the callback invoked when a control frame
+	// arrives for any peer. peerID is the hex data-epoch string.
+	SetControlOnPeerData(cb func(peerID string, data []byte))
+	// ControlPeerCanSend reports whether the control plane for a specific peer
+	// is ready to send.
+	ControlPeerCanSend(peerID string) bool
+}
+
 // PeerReadyTransport is implemented by transports whose carrier can signal
 // when a remote peer has appeared. WaitForPeer blocks until the remote side
 // is confirmed ready (first epoch frame received), or ctx is cancelled.

@@ -18,46 +18,46 @@ import (
 
 var errVP8UnitBoom = errors.New("boom")
 
-// TestControlEpochStableAcrossDataEpochRotation is the regression guard for
-// issue #95: the control-plane epoch must NOT change when the data epoch is
-// rotated on reconnect. The SFU echoes our own frames back, and the loopback
-// filter in handleControlFrame discards a frame whose epoch equals
-// controlEpochValue(). Before the fix, controlEpochValue() was derived live
-// from localEpoch|controlEpochFlag; once rotateEpochHeader() moved localEpoch
-// on the first reconnect, controlEpochValue() no longer matched the epoch
-// stamped on our outstanding control frames, so the server fed its own echoed
-// ping/pong frames back into its control KCP, corrupting liveness and tearing
-// down a healthy session (~10s after the first carrier rebuild). The control
-// epoch is now latched once and must stay constant across rotations.
-func TestControlEpochStableAcrossDataEpochRotation(t *testing.T) {
+// TestControlEpochTracksDataEpoch guards the issue #95 multi-client invariant:
+// the control-plane epoch is derived live from the data epoch as
+// localEpoch|controlEpochFlag. This lets the server correlate a client's data
+// and control planes by arithmetic (controlEpoch &^ controlEpochFlag ==
+// dataEpoch), which is what keys the per-peer control sessions. The two planes
+// rotate together on reconnect; the control epoch always carries the high bit
+// and always shares the current data epoch's low bits.
+func TestControlEpochTracksDataEpoch(t *testing.T) {
 	tr := &streamTransport{
 		bindingToken: bindingToken("room-95"),
 		localEpoch:   randomEpoch(),
 	}
 
-	before := tr.controlEpochValue()
-	if before&controlEpochFlag == 0 {
-		t.Fatalf("control epoch 0x%08x missing control flag", before)
-	}
-
-	// Rotate the data epoch several times, as repeated reconnects would.
-	for i := range 5 {
-		tr.rotateEpochHeader()
-		if got := tr.controlEpochValue(); got != before {
-			t.Fatalf("control epoch changed after data rotation %d: got 0x%08x want 0x%08x",
-				i+1, got, before)
+	check := func(stage string) {
+		data := tr.localEpochValue()
+		ctrl := tr.controlEpochValue()
+		if ctrl&controlEpochFlag == 0 {
+			t.Fatalf("%s: control epoch 0x%08x missing control flag", stage, ctrl)
+		}
+		if ctrl != data|controlEpochFlag {
+			t.Fatalf("%s: control epoch 0x%08x != data 0x%08x | flag", stage, ctrl, data)
+		}
+		if ctrl&^controlEpochFlag != data {
+			t.Fatalf("%s: control epoch does not correlate to data epoch 0x%08x", stage, data)
+		}
+		hdr := tr.controlEpochHeader()
+		_, hdrEpoch, _, ok := parseEpochHeader(hdr[:])
+		if !ok {
+			t.Fatalf("%s: control epoch header failed to parse", stage)
+		}
+		if hdrEpoch != ctrl {
+			t.Fatalf("%s: control wire epoch 0x%08x != controlEpochValue 0x%08x", stage, hdrEpoch, ctrl)
 		}
 	}
 
-	// The epoch on the control wire header must equal the value the loopback
-	// filter compares against; otherwise we stop discarding our own echoes.
-	hdr := tr.controlEpochHeader()
-	_, hdrEpoch, ok := parseEpochHeader(hdr[:])
-	if !ok {
-		t.Fatal("control epoch header failed to parse")
-	}
-	if hdrEpoch != before {
-		t.Fatalf("control wire epoch 0x%08x != controlEpochValue 0x%08x", hdrEpoch, before)
+	check("initial")
+	// Both planes rotate together across reconnects.
+	for range 5 {
+		tr.rotateEpochHeader()
+		check("after rotation")
 	}
 }
 
@@ -185,9 +185,10 @@ func TestNewConnectSendCallbacksFeaturesAndClose(t *testing.T) {
 	peerEpoch := uint32(0x200)
 	firstFrame := make([]byte, epochHdrLen+4)
 	copy(firstFrame, vp8Keepalive)
-	binary.BigEndian.PutUint32(firstFrame[tokenOff:epochOff], tr.bindingToken)
-	binary.BigEndian.PutUint32(firstFrame[epochOff:crcOff], peerEpoch)
-	binary.BigEndian.PutUint32(firstFrame[crcOff:epochHdrLen], epochCRC(tr.bindingToken, peerEpoch))
+	binary.BigEndian.PutUint32(firstFrame[tokenOff:srcOff], tr.bindingToken)
+	binary.BigEndian.PutUint32(firstFrame[srcOff:dstOff], peerEpoch)
+	binary.BigEndian.PutUint32(firstFrame[dstOff:crcOff], 0)
+	binary.BigEndian.PutUint32(firstFrame[crcOff:epochHdrLen], epochCRC(tr.bindingToken, peerEpoch, 0))
 	copy(firstFrame[epochHdrLen:], []byte("data"))
 	tr.handleIncomingFrame(firstFrame)
 	if tr.kcp == nil {
@@ -243,9 +244,10 @@ func TestEpochHeaderTokenAndOutboundCapacity(t *testing.T) {
 
 	hdr := tr.epochHeader()
 	if !bytes.Equal(hdr[:tokenOff], vp8Keepalive) ||
-		binary.BigEndian.Uint32(hdr[tokenOff:epochOff]) != tr.bindingToken ||
-		binary.BigEndian.Uint32(hdr[epochOff:crcOff]) != tr.localEpoch ||
-		binary.BigEndian.Uint32(hdr[crcOff:epochHdrLen]) != epochCRC(tr.bindingToken, tr.localEpoch) {
+		binary.BigEndian.Uint32(hdr[tokenOff:srcOff]) != tr.bindingToken ||
+		binary.BigEndian.Uint32(hdr[srcOff:dstOff]) != tr.localEpoch ||
+		binary.BigEndian.Uint32(hdr[dstOff:crcOff]) != 0 ||
+		binary.BigEndian.Uint32(hdr[crcOff:epochHdrLen]) != epochCRC(tr.bindingToken, tr.localEpoch, 0) {
 		t.Fatalf("epochHeader() = %x", hdr)
 	}
 	if bindingToken("") == 0 || randomEpoch() == 0 {
@@ -388,9 +390,10 @@ func TestHandleIncomingFrameEpochFilteringAndReconnect(t *testing.T) {
 	mkFrame := func(token, epoch uint32, payload []byte) []byte {
 		frame := make([]byte, epochHdrLen+len(payload))
 		copy(frame, vp8Keepalive)
-		binary.BigEndian.PutUint32(frame[tokenOff:epochOff], token)
-		binary.BigEndian.PutUint32(frame[epochOff:crcOff], epoch)
-		binary.BigEndian.PutUint32(frame[crcOff:epochHdrLen], epochCRC(token, epoch))
+		binary.BigEndian.PutUint32(frame[tokenOff:srcOff], token)
+		binary.BigEndian.PutUint32(frame[srcOff:dstOff], epoch)
+		binary.BigEndian.PutUint32(frame[dstOff:crcOff], 0)
+		binary.BigEndian.PutUint32(frame[crcOff:epochHdrLen], epochCRC(token, epoch, 0))
 		copy(frame[epochHdrLen:], payload)
 		return frame
 	}

@@ -30,12 +30,24 @@ type kcpConn struct {
 
 	// epochHdr is prepended to every outgoing KCP packet so that the peer
 	// can detect a session restart on our side (see transport.go for the
-	// layout). Stable for the lifetime of this kcpConn.
+	// layout). The src/token portion is stable for the lifetime of this
+	// kcpConn; the dst portion can be re-pointed via setHeader once the
+	// remote peer's epoch is learned, so downlink/uplink can be addressed
+	// to a specific participant instead of broadcast. Guarded by hdrMu.
+	hdrMu    sync.RWMutex
 	epochHdr [epochHdrLen]byte
 
 	mu        sync.Mutex
 	rDeadline time.Time
 	wDeadline time.Time
+}
+
+// setHeader re-points the outgoing frame header (used to update the dst epoch
+// after the peer is latched). Safe for concurrent use with WriteTo.
+func (c *kcpConn) setHeader(hdr [epochHdrLen]byte) {
+	c.hdrMu.Lock()
+	c.epochHdr = hdr
+	c.hdrMu.Unlock()
 }
 
 func newKCPConn(out chan<- []byte, inboundCap int, epochHdr [epochHdrLen]byte) *kcpConn {
@@ -91,7 +103,9 @@ func (c *kcpConn) ReadFrom(p []byte) (int, net.Addr, error) {
 
 func (c *kcpConn) WriteTo(p []byte, _ net.Addr) (int, error) {
 	buf := make([]byte, epochHdrLen+len(p))
+	c.hdrMu.RLock()
 	copy(buf, c.epochHdr[:])
+	c.hdrMu.RUnlock()
 	copy(buf[epochHdrLen:], p)
 
 	c.mu.Lock()

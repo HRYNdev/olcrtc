@@ -136,6 +136,12 @@ func (r *kcpRuntime) deliver(payload []byte) {
 	r.conn.deliver(payload)
 }
 
+// setHeader re-points the outgoing frame header so subsequent KCP packets are
+// addressed to a specific destination epoch (see kcpConn.setHeader).
+func (r *kcpRuntime) setHeader(hdr [epochHdrLen]byte) {
+	r.conn.setHeader(hdr)
+}
+
 // send queues an application message for reliable delivery. The length
 // prefix + payload pair is written under a mutex so that interleaved
 // concurrent senders cannot tear the framing.
