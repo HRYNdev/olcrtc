@@ -18,6 +18,49 @@ import (
 
 var errVP8UnitBoom = errors.New("boom")
 
+// TestControlEpochStableAcrossDataEpochRotation is the regression guard for
+// issue #95: the control-plane epoch must NOT change when the data epoch is
+// rotated on reconnect. The SFU echoes our own frames back, and the loopback
+// filter in handleControlFrame discards a frame whose epoch equals
+// controlEpochValue(). Before the fix, controlEpochValue() was derived live
+// from localEpoch|controlEpochFlag; once rotateEpochHeader() moved localEpoch
+// on the first reconnect, controlEpochValue() no longer matched the epoch
+// stamped on our outstanding control frames, so the server fed its own echoed
+// ping/pong frames back into its control KCP, corrupting liveness and tearing
+// down a healthy session (~10s after the first carrier rebuild). The control
+// epoch is now latched once and must stay constant across rotations.
+func TestControlEpochStableAcrossDataEpochRotation(t *testing.T) {
+	tr := &streamTransport{
+		bindingToken: bindingToken("room-95"),
+		localEpoch:   randomEpoch(),
+	}
+
+	before := tr.controlEpochValue()
+	if before&controlEpochFlag == 0 {
+		t.Fatalf("control epoch 0x%08x missing control flag", before)
+	}
+
+	// Rotate the data epoch several times, as repeated reconnects would.
+	for i := range 5 {
+		tr.rotateEpochHeader()
+		if got := tr.controlEpochValue(); got != before {
+			t.Fatalf("control epoch changed after data rotation %d: got 0x%08x want 0x%08x",
+				i+1, got, before)
+		}
+	}
+
+	// The epoch on the control wire header must equal the value the loopback
+	// filter compares against; otherwise we stop discarding our own echoes.
+	hdr := tr.controlEpochHeader()
+	_, hdrEpoch, ok := parseEpochHeader(hdr[:])
+	if !ok {
+		t.Fatal("control epoch header failed to parse")
+	}
+	if hdrEpoch != before {
+		t.Fatalf("control wire epoch 0x%08x != controlEpochValue 0x%08x", hdrEpoch, before)
+	}
+}
+
 func TestWriterCadenceStaysAtFrameInterval(t *testing.T) {
 	tr := &streamTransport{
 		frameInterval: time.Second / 60,
@@ -55,8 +98,8 @@ func (s *fakeVideoStream) SetReconnectCallback(cb func())    { s.reconnect = cb 
 func (s *fakeVideoStream) SetShouldReconnect(fn func() bool) { s.should = fn }
 func (s *fakeVideoStream) SetEndedCallback(cb func(string))  { s.ended = cb }
 func (s *fakeVideoStream) WatchConnection(context.Context)   { s.watched = true }
-func (s *fakeVideoStream) CanSend() bool           { return s.canSend }
-func (s *fakeVideoStream) SubscriberCanSend() bool { return s.canSend }
+func (s *fakeVideoStream) CanSend() bool                     { return s.canSend }
+func (s *fakeVideoStream) SubscriberCanSend() bool           { return s.canSend }
 func (s *fakeVideoStream) AddTrack(webrtc.TrackLocal) error  { s.trackAdded = true; return nil }
 func (s *fakeVideoStream) Reconnect(string)                  {}
 func (s *fakeVideoStream) SetTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver)) {
@@ -93,7 +136,7 @@ func (s *fakeEngineSession) WatchConnection(ctx context.Context) {
 	s.stream.WatchConnection(ctx)
 }
 func (s *fakeEngineSession) CanSend() bool                           { return s.stream.CanSend() }
-func (s *fakeEngineSession) SubscriberCanSend() bool                  { return s.stream.SubscriberCanSend() }
+func (s *fakeEngineSession) SubscriberCanSend() bool                 { return s.stream.SubscriberCanSend() }
 func (s *fakeEngineSession) GetSendQueue() chan []byte               { return nil }
 func (s *fakeEngineSession) GetBufferedAmount() uint64               { return 0 }
 func (s *fakeEngineSession) Reconnect(string)                        {}

@@ -37,7 +37,7 @@ const (
 	// to a couple of send windows so KCP's flush never blocks (a blocked
 	// WriteTo would stall KCP's update loop and delay ACKs); the paced writer
 	// keeps it drained so this depth is headroom, not standing latency.
-	outboundQueueSize        = 1536
+	outboundQueueSize = 1536
 	// controlOutboundQueueSize is the queue for the control-plane KCP.
 	// Control messages are tiny (ping/pong JSON frames), so a small queue
 	// suffices. We keep it separate from bulk data to guarantee forward
@@ -109,20 +109,20 @@ type videoSession interface {
 }
 
 type streamTransport struct {
-	stream        videoSession
-	track         *webrtc.TrackLocalStaticSample
+	stream videoSession
+	track  *webrtc.TrackLocalStaticSample
 	// writeMu serializes all track.WriteSample calls. pion's WriteSample is
 	// not safe for concurrent use (see writeSampleLocked); the server writes
 	// bulk data from per-peer pumps while writerLoop writes control frames
 	// and keepalives, so both paths must funnel through this lock.
-	writeMu       sync.Mutex
+	writeMu sync.Mutex
 	// sampleWriter, when set, replaces the real track.WriteSample call.
 	// Tests inject a writer here to observe the exact byte stream that
 	// reaches the track and to assert that writeSampleLocked serializes
 	// concurrent callers. Always invoked under writeMu.
-	sampleWriter  func([]byte) bool
-	onData        func([]byte)
-	onPeerData    func(peerID string, data []byte)
+	sampleWriter func([]byte) bool
+	onData       func([]byte)
+	onPeerData   func(peerID string, data []byte)
 	// onControlData is called with every reassembled message from the
 	// control-plane KCP session.
 	onControlData func([]byte)
@@ -131,16 +131,16 @@ type streamTransport struct {
 	// Frames here are drained with priority before bulk data frames so that
 	// handshake / liveness messages never wait behind large data writes.
 	controlOutbound chan []byte
-	closeCh       chan struct{}
-	writerDone    chan struct{}
-	closed        atomic.Bool
-	writerUp      atomic.Bool
-	writerOnce    sync.Once
-	kcpOnce       sync.Once
-	controlKCPOnce sync.Once
-	frameInterval time.Duration
-	batchSize     int
-	perTickBytes  int
+	closeCh         chan struct{}
+	writerDone      chan struct{}
+	closed          atomic.Bool
+	writerUp        atomic.Bool
+	writerOnce      sync.Once
+	kcpOnce         sync.Once
+	controlKCPOnce  sync.Once
+	frameInterval   time.Duration
+	batchSize       int
+	perTickBytes    int
 
 	// localEpoch is stamped into every outgoing VP8 frame. Explicit
 	// upper-layer resets rotate it so the peer can reset its KCP state too.
@@ -148,17 +148,27 @@ type streamTransport struct {
 	bindingToken uint32
 	epochMu      sync.RWMutex
 	localEpoch   uint32
+	// controlEpoch is the epoch stamped on every outgoing control-plane
+	// frame. It is set once when the control KCP first starts and is NEVER
+	// rotated, so it stays stable across reconnects (ping/pong routing must
+	// survive a carrier rebuild). It is tracked explicitly rather than
+	// derived from localEpoch|controlEpochFlag because localEpoch IS rotated
+	// on reconnect: deriving it would make controlEpochValue() diverge from
+	// the epoch actually on the wire, so the loopback filter would stop
+	// recognizing our own SFU-echoed control frames and feed them back into
+	// our own control KCP, corrupting the ping/pong stream (issue #95).
+	controlEpoch atomic.Uint32
 	peerEpoch    atomic.Uint32
 
-	kcp           *kcpRuntime
-	kcpMu         sync.RWMutex
+	kcp   *kcpRuntime
+	kcpMu sync.RWMutex
 	// controlKCP is the isolated KCP session for the control plane.
-	controlKCP    *kcpRuntime
-	controlKCPMu  sync.RWMutex
+	controlKCP      *kcpRuntime
+	controlKCPMu    sync.RWMutex
 	controlOnDataMu sync.RWMutex // guards onControlData reads/writes
-	reconnectMu   sync.Mutex
-	reconnectFn   func()
-	peerConfirmed atomic.Bool
+	reconnectMu     sync.Mutex
+	reconnectFn     func()
+	peerConfirmed   atomic.Bool
 
 	// Multi-peer support: when onPeerData is set, each remote epoch gets
 	// its own KCP runtime and data is routed via onPeerData(peerID, ...).
@@ -247,21 +257,21 @@ func newStreamTransport(
 	}
 
 	tr := &streamTransport{
-		stream:            stream,
-		track:             track,
-		onData:            cfg.OnData,
-		onPeerData:        cfg.OnPeerData,
-		outbound:          make(chan []byte, outboundQueueSize),
-		controlOutbound:   make(chan []byte, controlOutboundQueueSize),
-		closeCh:           make(chan struct{}),
-		writerDone:        make(chan struct{}),
-		frameInterval:     time.Second / time.Duration(fps),
-		batchSize:         batchSize,
-		perTickBytes:      perTickBytes,
-		bindingToken:      bindingToken(cfg.RoomURL),
-		localEpoch:        randomEpoch(),
-		peers:             make(map[uint32]*kcpRuntime),
-		peerOut:           make(map[uint32]chan []byte),
+		stream:          stream,
+		track:           track,
+		onData:          cfg.OnData,
+		onPeerData:      cfg.OnPeerData,
+		outbound:        make(chan []byte, outboundQueueSize),
+		controlOutbound: make(chan []byte, controlOutboundQueueSize),
+		closeCh:         make(chan struct{}),
+		writerDone:      make(chan struct{}),
+		frameInterval:   time.Second / time.Duration(fps),
+		batchSize:       batchSize,
+		perTickBytes:    perTickBytes,
+		bindingToken:    bindingToken(cfg.RoomURL),
+		localEpoch:      randomEpoch(),
+		peers:           make(map[uint32]*kcpRuntime),
+		peerOut:         make(map[uint32]chan []byte),
 	}
 
 	// In single-peer mode, confirm the peer epoch on first successful KCP
@@ -350,11 +360,27 @@ func (p *streamTransport) epochHeader() [epochHdrLen]byte {
 	return buildEpochHeader(p.bindingToken, epoch)
 }
 
-// controlEpochValue returns the current control-plane epoch (data epoch | controlEpochFlag).
+// controlEpochValue returns the current control-plane epoch. The control
+// epoch is latched once (on first use) from the initial local epoch with the
+// high bit set, and never rotates afterwards: ping/pong routing must survive
+// carrier reconnects, and the loopback filter relies on this value matching
+// the epoch stamped on our own outgoing control frames. Deriving it from the
+// live localEpoch (which IS rotated on reconnect) would break that invariant
+// (issue #95).
 func (p *streamTransport) controlEpochValue() uint32 {
+	if v := p.controlEpoch.Load(); v != 0 {
+		return v
+	}
 	p.epochMu.RLock()
-	defer p.epochMu.RUnlock()
-	return p.localEpoch | controlEpochFlag
+	base := p.localEpoch
+	p.epochMu.RUnlock()
+	v := base | controlEpochFlag
+	// Latch the first computed value; if another goroutine raced us, adopt
+	// the stored winner so every caller agrees on one stable control epoch.
+	if p.controlEpoch.CompareAndSwap(0, v) {
+		return v
+	}
+	return p.controlEpoch.Load()
 }
 
 // controlEpochHeader builds the epoch header for the control-plane track.
