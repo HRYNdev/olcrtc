@@ -9,7 +9,7 @@
 
 # Быстрый старт
 
-> **Важно:** Обязательно проверяйте, есть ли сервис видеозвонков у вас в белых списках. Если его там нет - используйте другой.
+> **Важно:** Обязательно проверяйте, есть ли сервис видеозвонков у вас в белых списках, работает ли он и так далее, если нет - используйте другой.
 
 Этот способ запускает `olcrtc` как обычный нативный бинарник. Нужны Go 1.26+, mage, git и curl.
 
@@ -61,12 +61,16 @@ openssl rand -hex 32
 
 Создай `server.yaml`:
 
+> **Важно:** Обязательно проверяйте, есть ли сервис видеозвонков у вас в белых списках, работает ли он и так далее, если нет - используйте другой.
+
 ```yaml
 mode: srv
 auth:
   provider: jitsi
 room:
-  id: "https://meet.small-dm.ru/myroom"
+  
+  id: "https://meet.small-dm.ru/REPLACE_ME_WITH_ROOM_ID" # или же https://meet.small-dm.ru/ROOM  или  https://meet1.arbitr.ru/ROOM  или  https://meet.handyweb.org/ROOM и т.д.
+
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:
@@ -85,12 +89,14 @@ data: data
 
 Создай `client.yaml` на клиентской машине. `auth.provider`, `room.id`, `crypto.key` и `net.transport` должны совпадать с сервером.
 
+> **Важно:** Обязательно проверяйте, есть ли сервис видеозвонков у вас в белых списках, работает ли он и так далее, если нет - используйте другой.
+
 ```yaml
 mode: cnc
 auth:
   provider: jitsi
 room:
-  id: "https://meet.small-dm.ru/myroom"
+  id: "https://meet.small-dm.ru/REPLACE_ME_WITH_ROOM_ID" # или же https://meet.small-dm.ru/ROOM  или  https://meet1.arbitr.ru/ROOM  или  https://meet.handyweb.org/ROOM и т.д.
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:
