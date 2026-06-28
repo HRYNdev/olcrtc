@@ -811,14 +811,16 @@ func (s *Server) getPeerSession(peerID string) *peerSession {
 		ps.session = sess
 		s.sessMu.Unlock()
 	} else {
-		// No PeerControlPlane: create the peerSession now with the
-		// singleton sessionID (legacy path).
+		// No PeerControlPlane: create the peerSession with an empty
+		// sessionID (legacy path). servePeer uses an empty sessionID as
+		// the "needs handshake" flag; establishPeerSession fills in
+		// sessionID/deviceID after acceptHandshake succeeds. Seeding them
+		// from the singleton here would make a reconnecting peer reuse
+		// stale state and skip its handshake.
 		ps = &peerSession{
-			peerID:    peerID,
-			conn:      conn,
-			session:   sess,
-			sessionID: s.sessionID,
-			deviceID:  s.deviceID,
+			peerID:  peerID,
+			conn:    conn,
+			session: sess,
 		}
 		s.peerSessions[peerID] = ps
 		s.sessMu.Unlock()
