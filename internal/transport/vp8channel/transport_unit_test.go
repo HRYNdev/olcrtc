@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -493,6 +494,129 @@ func TestReorderBufferRestoresOrderAndSurvivesLoss(t *testing.T) {
 	_ = b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 50}})
 	if out := b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 49}}); out != nil {
 		t.Fatalf("stale packet delivered = %v, want nil", seqList(out))
+	}
+}
+
+// mkPeerFrame builds a data-plane frame from epoch on the given transport's
+// binding token, broadcast (dst=0), carrying payload.
+func mkPeerFrame(token, epoch uint32, payload []byte) []byte {
+	frame := make([]byte, epochHdrLen+len(payload))
+	copy(frame, vp8Keepalive)
+	binary.BigEndian.PutUint32(frame[tokenOff:srcOff], token)
+	binary.BigEndian.PutUint32(frame[srcOff:dstOff], epoch)
+	binary.BigEndian.PutUint32(frame[dstOff:crcOff], 0)
+	binary.BigEndian.PutUint32(frame[crcOff:epochHdrLen], epochCRC(token, epoch, 0))
+	copy(frame[epochHdrLen:], payload)
+	return frame
+}
+
+// TestPeerRestartTriggersReconnectAfterGrace guards issue #105: when the
+// latched peer goes silent past peerRestartGrace and a frame from a fresh epoch
+// arrives, the transport fires the carrier reconnect callback so the client
+// re-handshakes against the restarted server instead of stalling for the full
+// control-liveness window.
+func TestPeerRestartTriggersReconnectAfterGrace(t *testing.T) {
+	reconnected := make(chan struct{}, 1)
+	tr := &streamTransport{
+		stream:           &fakeVideoStream{canSend: true},
+		outbound:         make(chan []byte, 16),
+		closeCh:          make(chan struct{}),
+		writerDone:       make(chan struct{}),
+		bindingToken:     bindingToken("client"),
+		localEpoch:       0x100,
+		peerRestartGrace: 20 * time.Millisecond,
+		reconnectFn: func() {
+			select {
+			case reconnected <- struct{}{}:
+			default:
+			}
+		},
+	}
+	defer func() { _ = tr.Close() }()
+
+	// Latch the original server epoch.
+	tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x200, []byte("hello")))
+	if tr.peerEpoch.Load() != 0x200 {
+		t.Fatalf("peer epoch = 0x%08x, want 0x200", tr.peerEpoch.Load())
+	}
+
+	// A different epoch arriving inside the grace window must NOT reconnect.
+	tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x300, []byte("early")))
+	select {
+	case <-reconnected:
+		t.Fatal("reconnect fired inside grace window")
+	case <-time.After(10 * time.Millisecond):
+	}
+
+	// After the latched peer has been silent past the grace window, a frame
+	// from the new epoch is read as a restart and fires the callback.
+	time.Sleep(25 * time.Millisecond)
+	tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x300, []byte("restart")))
+	select {
+	case <-reconnected:
+	case <-time.After(time.Second):
+		t.Fatal("reconnect did not fire after grace window")
+	}
+	if !tr.peerRestarting.Load() {
+		t.Fatal("peerRestarting flag not set after restart detection")
+	}
+}
+
+// TestPeerRestartFiresOnlyOnce ensures repeated frames from the new epoch do
+// not fire a reconnect storm before the latch is reset.
+func TestPeerRestartFiresOnlyOnce(t *testing.T) {
+	var fires atomic.Uint32
+	tr := &streamTransport{
+		stream:           &fakeVideoStream{canSend: true},
+		outbound:         make(chan []byte, 16),
+		closeCh:          make(chan struct{}),
+		writerDone:       make(chan struct{}),
+		bindingToken:     bindingToken("client"),
+		localEpoch:       0x100,
+		peerRestartGrace: 10 * time.Millisecond,
+		reconnectFn:      func() { fires.Add(1) },
+	}
+	defer func() { _ = tr.Close() }()
+
+	tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x200, []byte("hello")))
+	time.Sleep(15 * time.Millisecond)
+	for range 5 {
+		tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x300, []byte("restart")))
+	}
+	// Give any goroutines time to run.
+	time.Sleep(50 * time.Millisecond)
+	if got := fires.Load(); got != 1 {
+		t.Fatalf("reconnect fired %d times, want exactly 1", got)
+	}
+}
+
+// TestLivePeerKeepsLatchFresh confirms a peer that keeps sending frames within
+// the grace window never trips the restart watchdog, even if a stray frame from
+// another epoch shows up (unrelated room participant).
+func TestLivePeerKeepsLatchFresh(t *testing.T) {
+	var fires atomic.Uint32
+	tr := &streamTransport{
+		stream:           &fakeVideoStream{canSend: true},
+		outbound:         make(chan []byte, 16),
+		closeCh:          make(chan struct{}),
+		writerDone:       make(chan struct{}),
+		bindingToken:     bindingToken("client"),
+		localEpoch:       0x100,
+		peerRestartGrace: 40 * time.Millisecond,
+		reconnectFn:      func() { fires.Add(1) },
+	}
+	defer func() { _ = tr.Close() }()
+
+	tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x200, nil))
+	// Keep the latched peer alive with frequent keepalives while a foreign
+	// epoch repeatedly shows up. The latch stays fresh, so no restart fires.
+	for range 8 {
+		tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x200, nil))
+		tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x999, []byte("noise")))
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := fires.Load(); got != 0 {
+		t.Fatalf("reconnect fired %d times for a live peer, want 0", got)
 	}
 }
 

@@ -46,6 +46,12 @@ const (
 	inboundQueueSize         = 4096
 	canSendHighWatermark     = 90 // percent
 	keepaliveIdlePeriod      = 100 * time.Millisecond
+	// defaultPeerRestartGrace is how long the latched peer must be silent
+	// before a frame from a different epoch is read as a peer restart. The
+	// server emits a decodable keepalive every ~2s, so a few missed beats is
+	// a confident "peer is gone and a fresh one took its place" signal while
+	// staying clear of normal SFU jitter. See issue #105.
+	defaultPeerRestartGrace = 6 * time.Second
 )
 
 var (
@@ -158,6 +164,19 @@ type streamTransport struct {
 	epochMu      sync.RWMutex
 	localEpoch   uint32
 	peerEpoch    atomic.Uint32
+
+	// lastPeerFrameNano stamps the wall-clock time of the most recent frame
+	// from the latched peer epoch. peerRestarting guards against firing the
+	// reconnect callback more than once per restart. peerRestartGrace is how
+	// long the latched peer must be silent before a frame from a different
+	// epoch is treated as a restarted peer rather than unrelated room noise.
+	// A restarted server rejoins the SFU with a fresh epoch and broadcasts
+	// decodable keepalives on it; spotting that lets the client re-handshake
+	// in seconds instead of waiting out the relaxed control-liveness window
+	// (~70s). See issue #105.
+	lastPeerFrameNano atomic.Int64
+	peerRestarting    atomic.Bool
+	peerRestartGrace  time.Duration
 
 	kcp   *kcpRuntime
 	kcpMu sync.RWMutex
@@ -278,22 +297,23 @@ func newStreamTransport(
 	}
 
 	tr := &streamTransport{
-		stream:          stream,
-		track:           track,
-		onData:          cfg.OnData,
-		onPeerData:      cfg.OnPeerData,
-		outbound:        make(chan []byte, outboundQueueSize),
-		controlOutbound: make(chan []byte, controlOutboundQueueSize),
-		closeCh:         make(chan struct{}),
-		writerDone:      make(chan struct{}),
-		frameInterval:   time.Second / time.Duration(fps),
-		batchSize:       batchSize,
-		perTickBytes:    perTickBytes,
-		bindingToken:    bindingToken(cfg.RoomURL),
-		localEpoch:      randomEpoch(),
-		peers:           make(map[uint32]*kcpRuntime),
-		peerOut:         make(map[uint32]chan []byte),
-		ctrlPeers:       make(map[uint32]*peerControlKCP),
+		stream:           stream,
+		track:            track,
+		onData:           cfg.OnData,
+		onPeerData:       cfg.OnPeerData,
+		outbound:         make(chan []byte, outboundQueueSize),
+		controlOutbound:  make(chan []byte, controlOutboundQueueSize),
+		closeCh:          make(chan struct{}),
+		writerDone:       make(chan struct{}),
+		frameInterval:    time.Second / time.Duration(fps),
+		batchSize:        batchSize,
+		perTickBytes:     perTickBytes,
+		bindingToken:     bindingToken(cfg.RoomURL),
+		localEpoch:       randomEpoch(),
+		peers:            make(map[uint32]*kcpRuntime),
+		peerOut:          make(map[uint32]chan []byte),
+		ctrlPeers:        make(map[uint32]*peerControlKCP),
+		peerRestartGrace: defaultPeerRestartGrace,
 	}
 
 	// In single-peer mode, confirm the peer epoch on first successful KCP
@@ -1110,6 +1130,10 @@ func (p *streamTransport) readVP8Track(track *webrtc.TrackRemote) {
 func (p *streamTransport) handleFirstPeer(peerEpoch uint32) {
 	p.peerEpoch.Store(peerEpoch)
 	p.peerConfirmed.Store(true)
+	// A fresh peer is latched: arm the restart watchdog and clear any pending
+	// restart flag so a later silence can re-trigger detection (issue #105).
+	p.lastPeerFrameNano.Store(time.Now().UnixNano())
+	p.peerRestarting.Store(false)
 	// Re-point our data KCP at the server so subsequent uplink frames are
 	// addressed (dst=serverEpoch) instead of broadcast. The SFU forwards
 	// every frame to every participant, so without a dst the server cannot
@@ -1175,11 +1199,19 @@ func (p *streamTransport) handleIncomingFrame(frame []byte) {
 
 // handleSinglePeerData delivers a data frame in single-peer (client) mode. It
 // latches the first peer epoch seen and ignores frames from any other epoch.
+// When the latched peer has gone silent past peerRestartGrace and a frame from
+// a different epoch arrives, that is read as a server restart (the server
+// rejoins the SFU with a fresh epoch) and triggers a fast carrier reconnect
+// instead of waiting out the relaxed control-liveness window (issue #105).
 func (p *streamTransport) handleSinglePeerData(src uint32, kcpPayload []byte) {
-	if !p.peerConfirmed.Load() {
+	switch {
+	case !p.peerConfirmed.Load():
 		p.handleFirstPeer(src)
-	} else if src != p.peerEpoch.Load() {
+	case src != p.peerEpoch.Load():
+		p.maybePeerRestart(src)
 		return
+	default:
+		p.lastPeerFrameNano.Store(time.Now().UnixNano())
 	}
 
 	if len(kcpPayload) == 0 {
@@ -1190,6 +1222,36 @@ func (p *streamTransport) handleSinglePeerData(src uint32, kcpPayload []byte) {
 	p.kcpMu.RUnlock()
 	if rt != nil {
 		deliverKCPPayload(rt, kcpPayload)
+	}
+}
+
+// maybePeerRestart reads a frame from a non-latched epoch as a peer restart
+// once the latched peer has been silent longer than peerRestartGrace. A live
+// peer keeps the latch fresh by emitting a keepalive every ~2s, so a different
+// epoch arriving after a silence gap means the old peer is gone and a fresh one
+// (a restarted server) has taken its place. We fire the carrier reconnect
+// callback exactly once per restart; the client side then resets its peer latch
+// and re-handshakes against the new epoch, recovering in seconds instead of
+// waiting out the relaxed control-liveness window (issue #105).
+func (p *streamTransport) maybePeerRestart(src uint32) {
+	if p.peerRestartGrace <= 0 {
+		return
+	}
+	last := p.lastPeerFrameNano.Load()
+	if last == 0 || time.Since(time.Unix(0, last)) < p.peerRestartGrace {
+		return
+	}
+	if !p.peerRestarting.CompareAndSwap(false, true) {
+		return // a restart is already being handled
+	}
+	logger.Infof("vp8channel: peer restart detected old=0x%08x new=0x%08x - reconnecting",
+		p.peerEpoch.Load(), src)
+
+	p.reconnectMu.Lock()
+	cb := p.reconnectFn
+	p.reconnectMu.Unlock()
+	if cb != nil {
+		go cb()
 	}
 }
 
