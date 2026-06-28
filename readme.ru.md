@@ -61,19 +61,19 @@ openssl rand -hex 32
 curl --socks5-hostname 127.0.0.1:8808 https://icanhazip.com
 ```
 
-Полные инструкции и примеры конфигов - в [docs/fast.md](docs/fast.md) и [docs/configuration.md](docs/configuration.md).
+Полные инструкции и примеры конфигов - в [docs/fast.md](docs/fast.ru.md) и [docs/configuration.md](docs/configuration.ru.md).
 
 ## Документация
 
 | Документ | Содержание |
 |---|---|
-| [about.md](docs/about.md) | архитектура, провайдеры, транспорты, публичный API |
-| [fast.md](docs/fast.md) | быстрый старт для новичков |
-| [manual.md](docs/manual.md) | ручная сборка |
-| [configuration.md](docs/configuration.md) | настройка YAML |
-| [settings.md](docs/settings.md) | матрица совместимости |
-| [uri.md](docs/uri.md) | формат URI клиента |
-| [sub.md](docs/sub.md) | формат подписки |
+| [about.md](docs/about.ru.md) | архитектура, провайдеры, транспорты, публичный API |
+| [fast.md](docs/fast.ru.md) | быстрый старт для новичков |
+| [manual.md](docs/manual.ru.md) | ручная сборка |
+| [configuration.md](docs/configuration.ru.md) | настройка YAML |
+| [settings.md](docs/settings.ru.md) | матрица совместимости |
+| [uri.md](docs/uri.ru.md) | формат URI клиента |
+| [sub.md](docs/sub.ru.md) | формат подписки |
 
 ## Сборка
 
