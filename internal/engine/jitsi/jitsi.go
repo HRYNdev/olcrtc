@@ -842,9 +842,15 @@ func (s *Session) xmppKeepalive() {
 				continue
 			}
 			id := conn.NextID()
+			// Target the XMPP domain (from the bound JID), not the web
+			// host. On instances where the public web host differs from
+			// the XMPP virtualhost (e.g. host meet.mamba.group vs domain
+			// meet.jitsi) Prosody treats the web host as a remote domain
+			// and rejects the ping with not-allowed, leaving keepalive
+			// effectively dead.
 			ping := fmt.Sprintf(
 				`<iq type="get" to="%s" id="%s" xmlns="jabber:client"><ping xmlns="urn:xmpp:ping"/></iq>`,
-				conn.Host(), id,
+				xmppDomain(conn.JID(), conn.Host()), id,
 			)
 			if _, err := conn.SendIQWait(ping, id, xmppKeepaliveTimeout); err != nil {
 				if s.closed.Load() {
@@ -864,6 +870,24 @@ func (s *Session) xmppKeepalive() {
 			lastReconnectRequestErr = ""
 		}
 	}
+}
+
+// xmppDomain extracts the XMPP domain from a bound JID of the form
+// "node@domain/resource" (e.g. "uuid@meet.jitsi/res" -> "meet.jitsi"). It
+// returns fallback when jid has no domain part, so a malformed or empty JID
+// degrades to the previous web-host target instead of an empty to-address.
+func xmppDomain(jid, fallback string) string {
+	_, rest, ok := strings.Cut(jid, "@")
+	if !ok || rest == "" {
+		return fallback
+	}
+	if domain, _, found := strings.Cut(rest, "/"); found {
+		rest = domain
+	}
+	if rest == "" {
+		return fallback
+	}
+	return rest
 }
 
 // trickleDrainLoop reads the XMPP stanza channel and feeds any
