@@ -5,15 +5,17 @@
 ![License](https://img.shields.io/badge/license-WTFPL-0D1117?style=flat-square&logo=open-source-initiative&logoColor=green&labelColor=0D1117)
 ![Golang](https://img.shields.io/badge/-Golang-0D1117?style=flat-square&logo=go&logoColor=00A7D0)
 
+[RU](fast.ru.md) / **EN**
+
 </div>
 
-# Быстрый старт
+# Quick start
 
-> **Важно:** Обязательно проверяйте, есть ли сервис видеозвонков у вас в белых списках, работает ли он и так далее, если нет - используйте другой.
+> **Important:** always check that the video call service you need is on the allow lists, that it works in your network, and so on. If not, use another one.
 
-Этот способ запускает `olcrtc` как обычный нативный бинарник. Нужны Go 1.26+, mage, git и curl.
+This method runs `olcrtc` as an ordinary native binary. You need Go 1.26+, mage, git and curl.
 
-## Установить зависимости
+## Install dependencies
 
 ```sh
 apt install git curl        # Debian / Ubuntu / Mint
@@ -21,7 +23,7 @@ pacman -S git curl          # Arch / CachyOS / Manjaro
 dnf install git curl        # Fedora / RHEL / CentOS
 ```
 
-Установи Go 1.26+ и mage:
+Install Go 1.26+ and mage:
 
 ```sh
 go install github.com/magefile/mage@latest
@@ -29,13 +31,13 @@ echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-Если на машине меньше 4 ГБ RAM, включи swap перед сборкой:
+If the machine has less than 4 GB RAM, enable swap before building:
 
 ```sh
 sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 ```
 
-## Собрать
+## Build
 
 ```sh
 git clone https://github.com/openlibrecommunity/olcrtc --recurse-submodules
@@ -43,25 +45,25 @@ cd olcrtc
 mage build
 ```
 
-Бинарник появится в `build/`, например:
+The binary lands in `build/`, for example:
 
 ```sh
 ./build/olcrtc-linux-amd64
 ```
 
-## Сгенерировать ключ
+## Generate a key
 
-Ключ должен совпадать на сервере и клиенте.
+The key must match on the server and the client.
 
 ```sh
 openssl rand -hex 32
 ```
 
-## Запустить сервер
+## Run the server
 
-Создай `server.yaml`:
+Create `server.yaml`:
 
-> **Важно:** Обязательно проверяйте, есть ли сервис видеозвонков у вас в белых списках, работает ли он и так далее, если нет - используйте другой.
+> **Important:** always check that the video call service you need is on the allow lists, that it works in your network, and so on. If not, use another one.
 
 ```yaml
 mode: srv
@@ -69,7 +71,7 @@ auth:
   provider: jitsi
 room:
   
-  id: "https://meet.small-dm.ru/REPLACE_ME_WITH_ROOM_ID" # или же https://meet.small-dm.ru/ROOM  или  https://meet1.arbitr.ru/ROOM  или  https://meet.handyweb.org/ROOM и т.д.
+  id: "https://meet.small-dm.ru/REPLACE_ME_WITH_ROOM_ID" # or https://meet.small-dm.ru/ROOM  or  https://meet1.arbitr.ru/ROOM  or  https://meet.handyweb.org/ROOM etc.
 
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
@@ -79,24 +81,24 @@ net:
 data: data
 ```
 
-Запусти:
+Run it:
 
 ```sh
 ./build/olcrtc-linux-amd64 server.yaml
 ```
 
-## Запустить клиент
+## Run the client
 
-Создай `client.yaml` на клиентской машине. `auth.provider`, `room.id`, `crypto.key` и `net.transport` должны совпадать с сервером.
+Create `client.yaml` on the client machine. `auth.provider`, `room.id`, `crypto.key` and `net.transport` must match the server.
 
-> **Важно:** Обязательно проверяйте, есть ли сервис видеозвонков у вас в белых списках, работает ли он и так далее, если нет - используйте другой.
+> **Important:** always check that the video call service you need is on the allow lists, that it works in your network, and so on. If not, use another one.
 
 ```yaml
 mode: cnc
 auth:
   provider: jitsi
 room:
-  id: "https://meet.small-dm.ru/REPLACE_ME_WITH_ROOM_ID" # или же https://meet.small-dm.ru/ROOM  или  https://meet1.arbitr.ru/ROOM  или  https://meet.handyweb.org/ROOM и т.д.
+  id: "https://meet.small-dm.ru/REPLACE_ME_WITH_ROOM_ID" # or https://meet.small-dm.ru/ROOM  or  https://meet1.arbitr.ru/ROOM  or  https://meet.handyweb.org/ROOM etc.
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:
@@ -108,45 +110,45 @@ socks:
 data: data
 ```
 
-Запусти:
+Run it:
 
 ```sh
 ./build/olcrtc-linux-amd64 client.yaml
 ```
 
-После запуска SOCKS5 будет слушать на `127.0.0.1:8808`.
+After startup SOCKS5 listens on `127.0.0.1:8808`.
 
-## Проверить
+## Verify
 
 ```sh
 curl --socks5-hostname 127.0.0.1:8808 https://icanhazip.com
 ```
 
-Должен вернуться IP сервера.
+It should return the server IP.
 
-## Управление
+## Control
 
-Остановка ручного запуска - `Ctrl+C`.
+Stop a manual run with `Ctrl+C`.
 
-Если процесс запущен в фоне:
+If the process runs in the background:
 
 ```sh
 pgrep -af olcrtc
 kill <pid>
 ```
 
-Обновление:
+Update:
 
 ```sh
 git pull --recurse-submodules
 mage build
 ```
 
-Перезапусти сервер и клиент с теми же YAML-конфигами.
+Restart the server and the client with the same YAML configs.
 
-## Несколько инстансов
+## Multiple instances
 
-Можно запустить несколько серверов или клиентов на одной машине: создай отдельный YAML для каждого инстанса. Для клиентов используй разные SOCKS5-порты:
+You can run several servers or clients on one machine: create a separate YAML for each instance. For clients use different SOCKS5 ports:
 
 ```yaml
 socks:
@@ -154,4 +156,4 @@ socks:
   port: 8809
 ```
 
-Все настройки и матрица совместимости: [settings.md](settings.md). Подробная ручная сборка: [manual.md](manual.md).
+All settings and the compatibility matrix: [settings.md](settings.md). Detailed manual build: [manual.md](manual.md).
