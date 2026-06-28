@@ -32,6 +32,8 @@ import (
 
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
+	"github.com/openlibrecommunity/olcrtc/internal/protect"
+	"github.com/pion/ice/v4"
 	pioninterceptor "github.com/pion/interceptor"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
@@ -68,7 +70,7 @@ const (
 	// A half-open TCP connection lets Send() succeed while replies never
 	// arrive; waiting for the IQ result detects this and triggers reconnect.
 	xmppKeepaliveTimeout = 15 * time.Second
-	reconnectJoinTimeout  = 30 * time.Second
+	reconnectJoinTimeout = 30 * time.Second
 )
 
 // bridgeMagic tags every EndpointMessage produced by this engine. JVB broadcasts
@@ -480,6 +482,17 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 	settings := webrtc.SettingEngine{}
 	settings.LoggerFactory = logger.NewPionLoggerFactory()
 
+	// When a socket protector is set, route Pion sockets through ProtectedNet.
+	// Do not fall back to the default network path if setup fails.
+	if protect.Protector != nil {
+		pnet, perr := protect.NewProtectedNet()
+		if perr != nil {
+			return fmt.Errorf("protected net: %w", perr)
+		}
+		settings.SetNet(pnet)
+		settings.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+	}
+
 	// pion auto-registers a default interceptor chain (sender reports,
 	// receiver reports, NACK, etc.) when none is supplied. Several of
 	// those probe the DTLS transport on a tick - until DTLS comes up
@@ -757,7 +770,6 @@ func randomTrackSuffix() string {
 	}
 	return base64.RawURLEncoding.EncodeToString(b[:])
 }
-
 
 // updates its endpoint lastActivity timestamp. Without this, JVB expires the
 // endpoint after its inactivity timeout (~30-60s) when the ICE/DTLS path is
