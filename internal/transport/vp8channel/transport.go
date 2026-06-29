@@ -155,14 +155,7 @@ type streamTransport struct {
 	controlKCPOnce  sync.Once
 	frameInterval   time.Duration
 	batchSize       int
-	// Adaptive pacer bounds (bytes/sec). Each writer goroutine builds its own
-	// ratePacer from these and probes the live wire rate from KCP's SRTT, so
-	// the operating point auto-tracks each SFU's policer knee. startRate is
-	// the conservative point a fresh session begins probing from; maxRate is
-	// the operator ceiling (vp8.max_bytes_per_sec) or the built-in cap.
-	startRate int
-	minRate   int
-	maxRate   int
+	perTickBytes    int
 
 	// localEpoch is stamped into every outgoing VP8 frame. Explicit
 	// upper-layer resets rotate it so the peer can reset its KCP state too.
@@ -291,13 +284,16 @@ func newStreamTransport(
 	if batchSize <= 0 {
 		batchSize = defaultBatchSize
 	}
-	// maxRate caps how high the adaptive pacer may probe. An explicit
-	// vp8.max_bytes_per_sec becomes that ceiling; otherwise the built-in cap
-	// applies. The pacer auto-discovers the real operating point under it from
-	// KCP's SRTT, so no value here needs hand-tuning to a specific SFU.
-	maxRate := opts.MaxBytesPerSec
-	if maxRate <= 0 {
-		maxRate = defaultMaxBytesPerSec
+	byteRate := opts.MaxBytesPerSec
+	if byteRate <= 0 {
+		byteRate = defaultMaxBytesPerSec
+	}
+	// Bytes we may emit per frame tick to hold the wire under byteRate. The
+	// ticker already paces at fps, so a per-tick cap bounds the rate without
+	// any token bookkeeping. Floor at one epoch header so keepalives fit.
+	perTickBytes := byteRate / fps
+	if perTickBytes < epochHdrLen {
+		perTickBytes = epochHdrLen
 	}
 
 	tr := &streamTransport{
@@ -311,9 +307,7 @@ func newStreamTransport(
 		writerDone:      make(chan struct{}),
 		frameInterval:   time.Second / time.Duration(fps),
 		batchSize:       batchSize,
-		startRate:       defaultStartRate,
-		minRate:         defaultMinProbeRate,
-		maxRate:         maxRate,
+		perTickBytes:    perTickBytes,
 		bindingToken:    bindingToken(cfg.RoomURL),
 		localEpoch:      randomEpoch(),
 		peers:            make(map[uint32]*kcpRuntime),
@@ -339,24 +333,6 @@ func newStreamTransport(
 	}
 
 	return tr
-}
-
-// fps recovers the frame rate from the configured frame interval. The pacer
-// divides the per-second rate by this to get a per-tick byte budget.
-func (p *streamTransport) fps() int {
-	if p.frameInterval <= 0 {
-		return defaultFPS
-	}
-	return max(int(time.Second/p.frameInterval), 1)
-}
-
-// dataSRTT reports the smoothed RTT (ms) of the single-peer data KCP session,
-// or 0 when no session or sample exists yet.
-func (p *streamTransport) dataSRTT() int32 {
-	p.kcpMu.RLock()
-	rt := p.kcp
-	p.kcpMu.RUnlock()
-	return rt.srtt()
 }
 
 func (p *streamTransport) Connect(ctx context.Context) error {
@@ -743,31 +719,12 @@ func (p *streamTransport) Features() transport.Features {
 type writerState struct {
 	p                   *streamTransport
 	keepaliveEvery      int
-	forceKeepaliveEvery int
 	idleTicks           int
+	forceKeepaliveEvery int
 	ticksSinceKeepalive int
-	// pacer adapts the per-tick byte budget from the live path delay so the
-	// wire rate tracks the SFU's policer knee without operator tuning.
-	pacer *ratePacer
-	// srttFn reports the smoothed RTT (ms) of the KCP session this writer
-	// feeds, so the pacer can read congestion from the right plane.
-	srttFn func() int32
 	// pendingControl holds a control frame that failed WriteSample and must be
 	// retried on the next tick before consuming more frames.
 	pendingControl []byte
-}
-
-// perTick folds the current path delay into the pacer and returns the byte
-// budget for this tick. A nil pacer (defensive) falls back to the start rate.
-func (w *writerState) perTick() int {
-	if w.pacer == nil {
-		return epochHdrLen
-	}
-	var srtt int32
-	if w.srttFn != nil {
-		srtt = w.srttFn()
-	}
-	return w.pacer.observe(srtt)
 }
 
 func (w *writerState) writeSample(data []byte) bool {
@@ -841,7 +798,7 @@ func (w *writerState) drainControl() bool {
 func (w *writerState) drainData() {
 	select {
 	case frame := <-w.p.outbound:
-		sample := w.p.batchSample(frame, w.perTick())
+		sample := w.p.batchSample(frame, w.p.perTickBytes)
 		w.idleTicks = 0
 		_ = w.writeSample(sample)
 	default:
@@ -864,8 +821,6 @@ func (p *streamTransport) writerLoop() {
 		p:                   p,
 		keepaliveEvery:      max(int(keepaliveIdlePeriod/p.frameInterval), 1),
 		forceKeepaliveEvery: max(int((2*time.Second)/p.frameInterval), 1),
-		pacer:               newRatePacer(p.fps(), p.startRate, p.minRate, p.maxRate),
-		srttFn:              p.dataSRTT,
 	}
 
 	for {
@@ -1393,7 +1348,7 @@ func (p *streamTransport) getOrCreatePeerKCP(epoch uint32) *kcpRuntime {
 	logger.Infof("vp8channel: peer session created epoch=0x%08x", epoch)
 
 	// Pump outbound frames from this peer's queue into the writer.
-	go p.peerWriterPump(rt, out)
+	go p.peerWriterPump(epoch, out)
 
 	return rt
 }
@@ -1406,14 +1361,9 @@ func (p *streamTransport) getOrCreatePeerKCP(epoch uint32) *kcpRuntime {
 // overran the SFU's policer, drove burst loss, and collapsed throughput to
 // zero within ~20-40s (issue #95). Stops when the channel is closed or the
 // transport shuts down.
-func (p *streamTransport) peerWriterPump(rt *kcpRuntime, out chan []byte) {
+func (p *streamTransport) peerWriterPump(_ uint32, out chan []byte) {
 	ticker := time.NewTicker(p.frameInterval)
 	defer ticker.Stop()
-
-	// Each downlink peer paces independently: its own ratePacer reads that
-	// peer's KCP SRTT and tracks its path's policer knee without affecting
-	// the others or the client->server path.
-	pacer := newRatePacer(p.fps(), p.startRate, p.minRate, p.maxRate)
 
 	// Inject a decodable VP8 keyframe on the same cadence writerLoop uses for
 	// the client->server path. The server's per-peer bulk path previously
@@ -1442,7 +1392,7 @@ func (p *streamTransport) peerWriterPump(rt *kcpRuntime, out chan []byte) {
 				if !ok {
 					return
 				}
-				sample := p.batchSampleFrom(out, frame, pacer.observe(rt.srtt()))
+				sample := p.batchSampleFrom(out, frame, p.perTickBytes)
 				_ = p.writeSampleLocked(sample)
 			default:
 			}

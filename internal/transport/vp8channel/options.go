@@ -9,34 +9,14 @@ import (
 const (
 	defaultFPS       = 30
 	defaultBatchSize = 64
-	// defaultMaxBytesPerSec is the upper bound the adaptive pacer may probe up
-	// to when no explicit ceiling is configured. The pacer (see pacer.go)
-	// auto-discovers each SFU's real policer knee at runtime from KCP's
-	// smoothed RTT, so this is just a sanity cap, not a hand-tuned operating
-	// point. 1 MiB/s matches the throughput target from issue #107 without
-	// letting a misbehaving path probe unbounded.
+	// defaultMaxBytesPerSec paces the wire byte-rate fed to the video track.
+	// The earlier ~42s collapse at 1.2 MiB/s was the SFU dropping a track with
+	// no decodable keyframe, not a raw rate ceiling; that keyframe starvation
+	// is fixed separately (forceKeepalive, issue #95), so the pacer can run at
+	// the 1 MB/s target from issue #107 instead of the old 400 KB/s stability
+	// compromise. The policer knee still differs per SFU, so operators can tune
+	// this via Options.MaxBytesPerSec (vp8.max_bytes_per_sec in YAML).
 	defaultMaxBytesPerSec = 1_000_000
-
-	// defaultMinProbeRate floors the adaptive rate so a congested path can
-	// always make forward progress and recover once delay drops. ~120 KB/s
-	// stays below the worst observed Telemost knee while keeping the control
-	// plane and keepalives flowing.
-	defaultMinProbeRate = 120_000
-
-	// defaultStartRate is where the pacer begins probing from on a fresh
-	// session: the old conservative 400 KB/s floor, so behaviour on a healthy
-	// path only ever ramps up from the previously shipped operating point.
-	defaultStartRate = 400_000
-
-	// Adaptive pacer tuning. Delay marks are derived from the measured path
-	// baseline plus a fixed slack so a low-RTT LAN and a high-RTT WAN both get
-	// a sane congestion threshold.
-	rateProbeSlackMs      = 8  // extra ms below which we probe the rate up
-	rateCongestionSlackMs = 25 // extra ms above which we back the rate off
-	rateProbeStepBytes    = 50_000
-	rateBackoffNum        = 4 // multiplicative decrease: rate *= 4/5
-	rateBackoffDen        = 5
-	baseRTTDriftDiv       = 64 // baseline rises by 1/64 of the gap per sample
 )
 
 // Options tunes the vp8channel transport. Zero values fall back to documented defaults.

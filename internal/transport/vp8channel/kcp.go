@@ -164,16 +164,6 @@ func (r *kcpRuntime) send(msg []byte) error {
 	return nil
 }
 
-// srtt reports KCP's smoothed round-trip estimate in milliseconds, or 0 when
-// no sample exists yet. The adaptive pacer reads this to detect the policer
-// queueing that precedes a throughput collapse.
-func (r *kcpRuntime) srtt() int32 {
-	if r == nil || r.sess == nil {
-		return 0
-	}
-	return r.sess.GetSRTT()
-}
-
 func (r *kcpRuntime) close() {
 	r.closeOnce.Do(func() {
 		_ = r.sess.Close()

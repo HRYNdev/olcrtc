@@ -152,11 +152,9 @@ No extra fields - everything is default.
 |-----------|----------|:------------:|
 | `vp8.fps` | VP8 stream FPS | `30` |
 | `vp8.batch_size` | Frames per tick | `64` |
-| `vp8.max_bytes_per_sec` | Wire byte-rate probe ceiling, bytes/sec | `1000000` |
+| `vp8.max_bytes_per_sec` | Wire byte-rate ceiling, bytes/sec | `1000000` |
 
-The wire rate is paced by a delay-based adaptive controller that auto-discovers each SFU's policer knee at runtime. The policer queues before it drops, so the path RTT inflates ahead of the throughput collapse; the pacer probes the rate up while RTT stays near the path baseline and backs off once it inflates, settling just under the knee on its own. There is nothing to hand-measure per service.
-
-`vp8.max_bytes_per_sec` only caps how high the controller may probe (default 1000000, ~1 MB/s). Lower it to hard-limit a path; `0` keeps the built-in cap. A fresh session starts probing from 400 KB/s (the previous conservative default), so a healthy path only ramps up from the old operating point.
+`vp8.max_bytes_per_sec` caps the byte-rate the pacer feeds to the video track. The default 1000000 (1 MB/s) matches the issue #107 throughput target. The per-SFU policer knee still varies, so if a service stalls at this rate, lower it until stable; on a healthy path you can raise it. `0` keeps the default.
 
 ---
 
