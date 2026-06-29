@@ -161,6 +161,9 @@ type VideoConfig struct {
 type VP8Config struct {
 	FPS       int
 	BatchSize int
+	// MaxBytesPerSec caps the wire byte-rate. Zero falls back to the
+	// transport default.
+	MaxBytesPerSec int
 }
 
 // SEIConfig holds tunables for the seichannel transport.

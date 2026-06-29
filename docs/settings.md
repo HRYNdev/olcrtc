@@ -152,6 +152,9 @@ No extra fields - everything is default.
 |-----------|----------|:------------:|
 | `vp8.fps` | VP8 stream FPS | `30` |
 | `vp8.batch_size` | Frames per tick | `64` |
+| `vp8.max_bytes_per_sec` | Wire byte-rate ceiling, bytes/sec | `400000` |
+
+`vp8.max_bytes_per_sec` caps the byte-rate the pacer feeds to the video track. The default 400000 (400 KB/s) is a conservative ceiling tuned under the Telemost SFU policer knee: above it the SFU starts throttling forwarding and the stream stalls. Other services have a different knee, so raise this once you have measured your own stable maximum with real runs (bump it up until stalls start, then step back). `0` keeps the default.
 
 ---
 
