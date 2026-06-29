@@ -152,9 +152,6 @@ No extra fields - everything is default.
 |-----------|----------|:------------:|
 | `vp8.fps` | VP8 stream FPS | `30` |
 | `vp8.batch_size` | Frames per tick | `64` |
-| `vp8.max_bytes_per_sec` | Wire byte-rate ceiling, bytes/sec | `1000000` |
-
-`vp8.max_bytes_per_sec` caps the byte-rate the pacer feeds to the video track. The default 1000000 (1 MB/s) matches the issue #107 throughput target. The per-SFU policer knee still varies, so if a service stalls at this rate, lower it until stable; on a healthy path you can raise it. `0` keeps the default.
 
 ---
 

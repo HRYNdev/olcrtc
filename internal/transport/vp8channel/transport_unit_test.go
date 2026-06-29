@@ -614,36 +614,6 @@ func TestReorderBufferRestoresOrderAndSurvivesLoss(t *testing.T) {
 	}
 }
 
-// TestMaxBytesPerSecPacing verifies the operator-tunable wire rate cap flows
-// into the per-tick byte budget that paces the writer. The default uses the
-// built-in 1 MB/s target; an explicit value lets operators dial in their own
-// SFU's stable maximum. See issue #107.
-func TestMaxBytesPerSecPacing(t *testing.T) {
-	cases := []struct {
-		name        string
-		maxBytes    int
-		fps         int
-		wantPerTick int
-	}{
-		{name: "default floor", maxBytes: 0, fps: 30, wantPerTick: defaultMaxBytesPerSec / 30},
-		{name: "explicit raise", maxBytes: 1_000_000, fps: 40, wantPerTick: 1_000_000 / 40},
-		{name: "clamped to header", maxBytes: 1, fps: 30, wantPerTick: epochHdrLen},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			tr := newStreamTransport(
-				&engineVideoSession{},
-				nil,
-				transport.Config{},
-				Options{FPS: c.fps, BatchSize: 1, MaxBytesPerSec: c.maxBytes},
-			)
-			if tr.perTickBytes != c.wantPerTick {
-				t.Fatalf("perTickBytes = %d, want %d", tr.perTickBytes, c.wantPerTick)
-			}
-		})
-	}
-}
-
 func TestSeqLessWrapAround(t *testing.T) {
 	cases := []struct {
 		a, b uint16

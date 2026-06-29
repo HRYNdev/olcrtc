@@ -155,7 +155,6 @@ type streamTransport struct {
 	controlKCPOnce  sync.Once
 	frameInterval   time.Duration
 	batchSize       int
-	perTickBytes    int
 
 	// localEpoch is stamped into every outgoing VP8 frame. Explicit
 	// upper-layer resets rotate it so the peer can reset its KCP state too.
@@ -284,18 +283,6 @@ func newStreamTransport(
 	if batchSize <= 0 {
 		batchSize = defaultBatchSize
 	}
-	byteRate := opts.MaxBytesPerSec
-	if byteRate <= 0 {
-		byteRate = defaultMaxBytesPerSec
-	}
-	// Bytes we may emit per frame tick to hold the wire under byteRate. The
-	// ticker already paces at fps, so a per-tick cap bounds the rate without
-	// any token bookkeeping. Floor at one epoch header so keepalives fit.
-	perTickBytes := byteRate / fps
-	if perTickBytes < epochHdrLen {
-		perTickBytes = epochHdrLen
-	}
-
 	tr := &streamTransport{
 		stream:          stream,
 		track:           track,
@@ -307,7 +294,6 @@ func newStreamTransport(
 		writerDone:      make(chan struct{}),
 		frameInterval:   time.Second / time.Duration(fps),
 		batchSize:       batchSize,
-		perTickBytes:    perTickBytes,
 		bindingToken:    bindingToken(cfg.RoomURL),
 		localEpoch:      randomEpoch(),
 		peers:            make(map[uint32]*kcpRuntime),
@@ -798,7 +784,7 @@ func (w *writerState) drainControl() bool {
 func (w *writerState) drainData() {
 	select {
 	case frame := <-w.p.outbound:
-		sample := w.p.batchSample(frame, w.p.perTickBytes)
+		sample := w.p.batchSample(frame)
 		w.idleTicks = 0
 		_ = w.writeSample(sample)
 	default:
@@ -840,18 +826,16 @@ func (p *streamTransport) writerLoop() {
 	}
 }
 
-func (p *streamTransport) batchSample(first []byte, maxBytes int) []byte {
-	return p.batchSampleFrom(p.outbound, first, maxBytes)
+func (p *streamTransport) batchSample(first []byte) []byte {
+	return p.batchSampleFrom(p.outbound, first)
 }
 
 // batchSampleFrom coalesces up to batchSize KCP frames drained from src into a
-// single VP8 sample, bounded by maxBytes. The shared writerLoop drains the
-// single-peer outbound queue; per-peer pumps drain their own queue through the
-// same batching so the server->client path is paced identically to the client.
-func (p *streamTransport) batchSampleFrom(src <-chan []byte, first []byte, maxBytes int) []byte {
-	if maxBytes <= 0 || maxBytes > defaultMaxPayloadSize {
-		maxBytes = defaultMaxPayloadSize
-	}
+// single VP8 sample, bounded by defaultMaxPayloadSize. The shared writerLoop
+// drains the single-peer outbound queue; per-peer pumps drain their own queue
+// through the same batching so the server->client path is built identically to
+// the client.
+func (p *streamTransport) batchSampleFrom(src <-chan []byte, first []byte) []byte {
 	if len(first) <= epochHdrLen || p.batchSize <= 1 {
 		return first
 	}
@@ -868,7 +852,7 @@ func (p *streamTransport) batchSampleFrom(src <-chan []byte, first []byte, maxBy
 				continue
 			}
 			payload := frame[epochHdrLen:]
-			if len(sample)+2+len(payload) > maxBytes {
+			if len(sample)+2+len(payload) > defaultMaxPayloadSize {
 				return sample
 			}
 			sample = appendBatchPacket(sample, payload)
@@ -1354,13 +1338,12 @@ func (p *streamTransport) getOrCreatePeerKCP(epoch uint32) *kcpRuntime {
 }
 
 // peerWriterPump drains a peer's outbound KCP queue and writes frames to the
-// shared video track. It paces the server->client path on the same frame
-// ticker and per-tick byte budget as writerLoop drives the client->server
-// path. Without this, the pump emitted every KCP frame the instant it was
-// queued: with KCP congestion control off (nc=1) and a BDP-sized window, that
-// overran the SFU's policer, drove burst loss, and collapsed throughput to
-// zero within ~20-40s (issue #95). Stops when the channel is closed or the
-// transport shuts down.
+// shared video track on the same frame ticker writerLoop uses for the
+// client->server path, batching queued frames into one VP8 sample per tick.
+// Draining on the ticker (rather than emitting each frame the instant it is
+// queued) keeps the per-peer writes interleaved with the keyframe injection
+// below and lets batchSampleFrom coalesce segments into full samples. Stops
+// when the channel is closed or the transport shuts down.
 func (p *streamTransport) peerWriterPump(_ uint32, out chan []byte) {
 	ticker := time.NewTicker(p.frameInterval)
 	defer ticker.Stop()
@@ -1392,7 +1375,7 @@ func (p *streamTransport) peerWriterPump(_ uint32, out chan []byte) {
 				if !ok {
 					return
 				}
-				sample := p.batchSampleFrom(out, frame, p.perTickBytes)
+				sample := p.batchSampleFrom(out, frame)
 				_ = p.writeSampleLocked(sample)
 			default:
 			}
