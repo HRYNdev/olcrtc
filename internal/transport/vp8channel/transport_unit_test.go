@@ -614,21 +614,19 @@ func TestReorderBufferRestoresOrderAndSurvivesLoss(t *testing.T) {
 	}
 }
 
-// TestMaxBytesPerSecPacing verifies the operator-tunable wire rate cap flows
-// into the per-tick byte budget that paces the writer. The default keeps the
-// conservative built-in ceiling; an explicit value lets operators dial in
-// their own SFU's stable maximum instead of being pinned at the floor. See
-// issue #107.
-func TestMaxBytesPerSecPacing(t *testing.T) {
+// TestMaxBytesPerSecCeiling verifies vp8.max_bytes_per_sec becomes the upper
+// bound the adaptive pacer may probe up to, while zero falls back to the
+// built-in cap. The pacer auto-discovers the real operating point under that
+// ceiling from KCP's SRTT, so the option is a safety bound, not a hand-tuned
+// rate. See issue #107.
+func TestMaxBytesPerSecCeiling(t *testing.T) {
 	cases := []struct {
 		name        string
 		maxBytes    int
-		fps         int
-		wantPerTick int
+		wantMaxRate int
 	}{
-		{name: "default floor", maxBytes: 0, fps: 30, wantPerTick: defaultMaxBytesPerSec / 30},
-		{name: "explicit raise", maxBytes: 1_000_000, fps: 40, wantPerTick: 1_000_000 / 40},
-		{name: "clamped to header", maxBytes: 1, fps: 30, wantPerTick: epochHdrLen},
+		{name: "default cap", maxBytes: 0, wantMaxRate: defaultMaxBytesPerSec},
+		{name: "explicit ceiling", maxBytes: 2_000_000, wantMaxRate: 2_000_000},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -636,10 +634,13 @@ func TestMaxBytesPerSecPacing(t *testing.T) {
 				&engineVideoSession{},
 				nil,
 				transport.Config{},
-				Options{FPS: c.fps, BatchSize: 1, MaxBytesPerSec: c.maxBytes},
+				Options{FPS: 30, BatchSize: 1, MaxBytesPerSec: c.maxBytes},
 			)
-			if tr.perTickBytes != c.wantPerTick {
-				t.Fatalf("perTickBytes = %d, want %d", tr.perTickBytes, c.wantPerTick)
+			if tr.maxRate != c.wantMaxRate {
+				t.Fatalf("maxRate = %d, want %d", tr.maxRate, c.wantMaxRate)
+			}
+			if tr.startRate != defaultStartRate {
+				t.Fatalf("startRate = %d, want %d", tr.startRate, defaultStartRate)
 			}
 		})
 	}
