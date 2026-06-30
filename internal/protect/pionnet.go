@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: WTFPL
-//
+
 // ProtectedNet wraps Pion's network adapter. It applies Protector to each
 // socket fd and hides tunnel-style interfaces from candidate gathering. Callers
 // install it only when Protector is set, so default builds keep Pion's standard
 // network stack.
+
 package protect
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -26,9 +28,7 @@ var tunInterfacePrefixes = []string{"tun", "ppp", "pptp"}
 // ErrUnexpectedConnType is returned when a protected listen/dial yields an
 // unexpected concrete type. The caller closes that connection instead of using
 // an unprotected fallback.
-//
-//nolint:gochecknoglobals // sentinel error
-var ErrUnexpectedConnType = fmt.Errorf("protect: unexpected connection type")
+var ErrUnexpectedConnType = errors.New("protect: unexpected connection type")
 
 // ProtectedNet wraps Pion's standard net.
 type ProtectedNet struct {
@@ -80,6 +80,7 @@ func isTunInterface(name string) bool {
 	return false
 }
 
+// ListenPacket listens for packets on a protected socket.
 func (n *ProtectedNet) ListenPacket(network, address string) (net.PacketConn, error) {
 	lc := net.ListenConfig{Control: controlFunc}
 	conn, err := lc.ListenPacket(context.Background(), network, address)
@@ -89,6 +90,7 @@ func (n *ProtectedNet) ListenPacket(network, address string) (net.PacketConn, er
 	return conn, nil
 }
 
+// ListenUDP listens for UDP packets on a protected socket.
 func (n *ProtectedNet) ListenUDP(network string, locAddr *net.UDPAddr) (transport.UDPConn, error) {
 	lc := net.ListenConfig{Control: controlFunc}
 	address := udpAddrString(locAddr)
@@ -104,6 +106,7 @@ func (n *ProtectedNet) ListenUDP(network string, locAddr *net.UDPAddr) (transpor
 	return uc, nil
 }
 
+// Dial connects to the address on a protected socket.
 func (n *ProtectedNet) Dial(network, address string) (net.Conn, error) {
 	d := net.Dialer{Control: controlFunc}
 	conn, err := d.Dial(network, address)
@@ -113,6 +116,7 @@ func (n *ProtectedNet) Dial(network, address string) (net.Conn, error) {
 	return conn, nil
 }
 
+// DialUDP connects to a UDP address on a protected socket.
 func (n *ProtectedNet) DialUDP(network string, laddr, raddr *net.UDPAddr) (transport.UDPConn, error) {
 	d := net.Dialer{Control: controlFunc}
 	if laddr != nil {
@@ -131,6 +135,7 @@ func (n *ProtectedNet) DialUDP(network string, laddr, raddr *net.UDPAddr) (trans
 	return uc, nil
 }
 
+// DialTCP connects to a TCP address on a protected socket.
 func (n *ProtectedNet) DialTCP(network string, laddr, raddr *net.TCPAddr) (transport.TCPConn, error) {
 	d := net.Dialer{Control: controlFunc}
 	if laddr != nil {
@@ -149,6 +154,7 @@ func (n *ProtectedNet) DialTCP(network string, laddr, raddr *net.TCPAddr) (trans
 	return tc, nil
 }
 
+// ListenTCP listens for TCP connections on a protected socket.
 func (n *ProtectedNet) ListenTCP(network string, laddr *net.TCPAddr) (transport.TCPListener, error) {
 	lc := net.ListenConfig{Control: controlFunc}
 	address := tcpAddrString(laddr)
@@ -225,8 +231,13 @@ type protectedTCPListener struct {
 	*net.TCPListener
 }
 
+// AcceptTCP accepts the next TCP connection on the protected listener.
 func (l protectedTCPListener) AcceptTCP() (transport.TCPConn, error) {
-	return l.TCPListener.AcceptTCP()
+	conn, err := l.TCPListener.AcceptTCP()
+	if err != nil {
+		return nil, fmt.Errorf("accept tcp: %w", err)
+	}
+	return conn, nil
 }
 
 func udpAddrString(a *net.UDPAddr) string {

@@ -64,8 +64,6 @@ func TestInterfaceByNameRejectsTun(t *testing.T) {
 }
 
 // TestControlFuncFailClosed verifies that Protector can reject a socket.
-//
-//nolint:tparallel // mutates package-level Protector
 func TestControlFuncFailClosed(t *testing.T) {
 	old := Protector
 	t.Cleanup(func() { Protector = old })
@@ -80,8 +78,6 @@ func TestControlFuncFailClosed(t *testing.T) {
 }
 
 // TestControlFuncProtects verifies that Protector receives a real fd.
-//
-//nolint:tparallel // mutates package-level Protector
 func TestControlFuncProtects(t *testing.T) {
 	old := Protector
 	t.Cleanup(func() { Protector = old })
@@ -99,7 +95,7 @@ func TestControlFuncProtects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListenPacket: %v", err)
 	}
-	defer pc.Close()
+	defer func() { _ = pc.Close() }()
 	if calls == 0 {
 		t.Error("protector was not invoked")
 	}
@@ -107,8 +103,6 @@ func TestControlFuncProtects(t *testing.T) {
 
 // TestCreateDialerProtectsAndChains verifies that CreateDialer copies the
 // caller's Dialer and keeps the caller's Control hook.
-//
-//nolint:tparallel // mutates package-level Protector
 func TestCreateDialerProtectsAndChains(t *testing.T) {
 	old := Protector
 	t.Cleanup(func() { Protector = old })
@@ -122,11 +116,11 @@ func TestCreateDialerProtectsAndChains(t *testing.T) {
 	}
 
 	// Dial a local TCP listener.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go func() {
 		if c, aerr := ln.Accept(); aerr == nil {
 			_ = c.Close()
@@ -165,8 +159,6 @@ func TestCreateDialerProtectsAndChains(t *testing.T) {
 
 // TestCreateDialerProtectsAndChainsControlContext verifies that CreateDialer
 // keeps the caller's ControlContext hook.
-//
-//nolint:tparallel // mutates package-level Protector
 func TestCreateDialerProtectsAndChainsControlContext(t *testing.T) {
 	old := Protector
 	t.Cleanup(func() { Protector = old })
@@ -179,11 +171,11 @@ func TestCreateDialerProtectsAndChainsControlContext(t *testing.T) {
 		t.Fatalf("NewProtectedNet: %v", err)
 	}
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go func() {
 		if c, aerr := ln.Accept(); aerr == nil {
 			_ = c.Close()

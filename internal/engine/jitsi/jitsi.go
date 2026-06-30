@@ -470,6 +470,24 @@ func (s *Session) videoTrackHandler() func(*webrtc.TrackRemote, *webrtc.RTPRecei
 	return s.onVideoTrack
 }
 
+// newSettingEngine builds the pion SettingEngine for a conference PC. When a
+// socket protector is set, it routes Pion sockets through ProtectedNet and
+// disables mDNS. It fails closed instead of falling back to the default path.
+func newSettingEngine() (webrtc.SettingEngine, error) {
+	settings := webrtc.SettingEngine{}
+	settings.LoggerFactory = logger.NewPionLoggerFactory()
+	if protect.Protector == nil {
+		return settings, nil
+	}
+	pnet, err := protect.NewProtectedNet()
+	if err != nil {
+		return settings, fmt.Errorf("protected net: %w", err)
+	}
+	settings.SetNet(pnet)
+	settings.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+	return settings, nil
+}
+
 // negotiatePC builds the pion PeerConnection, applies Jicofo's offer,
 // answers it and registers all the per-side wiring (DTLS state, ICE
 // callbacks, transceiver direction). It's branchy on purpose - Jingle
@@ -479,18 +497,9 @@ func (s *Session) videoTrackHandler() func(*webrtc.TrackRemote, *webrtc.RTPRecei
 //
 //nolint:cyclop // sequential Jingle negotiation steps; refactoring would hide ordering
 func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge bool) error {
-	settings := webrtc.SettingEngine{}
-	settings.LoggerFactory = logger.NewPionLoggerFactory()
-
-	// When a socket protector is set, route Pion sockets through ProtectedNet.
-	// Do not fall back to the default network path if setup fails.
-	if protect.Protector != nil {
-		pnet, perr := protect.NewProtectedNet()
-		if perr != nil {
-			return fmt.Errorf("protected net: %w", perr)
-		}
-		settings.SetNet(pnet)
-		settings.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+	settings, err := newSettingEngine()
+	if err != nil {
+		return err
 	}
 
 	// pion auto-registers a default interceptor chain (sender reports,
