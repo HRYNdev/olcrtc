@@ -115,9 +115,13 @@ type Config struct {
 	RoomURL string
 	// Engine, URL, Token are forwarded to carrier.Config for the "none" auth
 	// carrier (direct engine access without a service-specific auth flow).
-	Engine     string
-	URL        string
-	Token      string
+	Engine string
+	URL    string
+	Token  string
+	// AuthToken is an optional pre-issued account token forwarded to the auth
+	// provider (e.g. a WB Stream account token). Empty uses the provider's
+	// default guest flow.
+	AuthToken  string
 	ChannelID  string
 	DeviceID   string
 	Name       string

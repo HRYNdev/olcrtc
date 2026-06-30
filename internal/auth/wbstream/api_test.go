@@ -113,6 +113,40 @@ func TestWBStreamIssue(t *testing.T) {
 	}
 }
 
+func TestWBStreamIssueUsesSuppliedToken(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /auth/api/v1/auth/user/guest-register", func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("guest-register must not be called when a token is supplied")
+	})
+	mux.HandleFunc("POST /api-room/api/v1/room/{id}/join", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+testAccessToken {
+			t.Fatalf("join Authorization = %q", got)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("GET /api-room-manager/v2/room/{id}/connection-details",
+		func(w http.ResponseWriter, r *http.Request) {
+			if got := r.Header.Get("Authorization"); got != "Bearer "+testAccessToken {
+				t.Fatalf("connection-details Authorization = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(tokenResponse{RoomToken: testToken})
+		})
+
+	withWBAPIServer(t, mux)
+
+	creds, err := Provider{}.Issue(context.Background(), auth.Config{
+		RoomURL: testRoomID,
+		Name:    testPeerName,
+		Token:   testAccessToken,
+	})
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	if creds.Token != testToken {
+		t.Fatalf("creds.Token = %q", creds.Token)
+	}
+}
+
 func TestWBStreamIssueRequiresRoom(t *testing.T) {
 	p := Provider{}
 	for _, roomURL := range []string{"", "any"} {
