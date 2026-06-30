@@ -30,7 +30,7 @@
 
 **Telemost:** только vp8channel стабильно проходит. DataChannel удалён из Telemost. seichannel не поддерживается. videochannel - медленно.
 
-**WBStream:** все транспорты кроме datachannel работают. DataChannel в обычном guest flow без выдавания модератора не работает - WB Stream выдаёт токены с `canPublishData=false`, и DC не маршрутизирует данные.
+**WBStream:** все транспорты кроме datachannel работают. DataChannel в обычном guest flow без выдавания модератора не работает - WB Stream выдаёт токены с `canPublishData=false`, и DC не маршрутизирует данные. Чтобы использовать `datachannel` поверх `wbstream`, задай `auth.token` с токеном аккаунта/модератора (`canPublishData=true`); см. `auth.token` в необязательных полях ниже.
 
 **Jitsi:** datachannel стабильно проходит - реализован поверх colibri-ws bridge channel и шлёт байты через `EndpointMessage{raw}` broadcast. Подходит для self-hosted и публичных Jitsi Meet инстансов без аутентификации (`https://meet.small-dm.ru/...`, `https://meet1.arbitr.ru/...`, `https://meet.handyweb.org/...`, `https://meet.jit.si/...` и т.п.). Проверьте в браузере, какой из серверов доступен в вашей сети. Видео-транспорты (vp8channel, seichannel, videochannel) экспонируют sendable VideoTrack через pion PeerConnection после Jingle session-accept, но Jicofo требует дополнительных протокольных шагов (LastN, ReceiverVideoConstraints, source-add) для маршрутизации видео - поэтому они помечены `~` .
 
@@ -61,6 +61,7 @@
 | YAML поле | Описание |
 |-----------|----------|
 | `debug` | `true` для подробных логов соединений |
+| `auth.token` | Заранее выданный токен аккаунта для `wbstream`. Если задан, сессия подключается под этим аккаунтом, а не анонимным гостем; пустое значение использует guest flow. В guest flow полученный токен один раз пишется в лог, чтобы его можно было вставить в это поле и сохранить ту же личность. Практическое следствие для `datachannel`: guest-токен несёт `canPublishData=false`, поэтому SCTP data channel поднимается, но байты не возит (туннель установлен и молчит); токен аккаунта с правами модератора несёт `canPublishData=true` и возит данные нормально. Значит `datachannel` поверх `wbstream` требует `auth.token` с правами на публикацию; в guest flow используй `vp8channel`, `seichannel` или `videochannel`. Как выдать модератора: открой список участников, потом три точки рядом с записью клиента/сервера, потом кнопку `Модератор` (нужно с обеих сторон) |
 | `profiles` | Список профилей failover для `srv`/`cnc` |
 | `failover.retry_delay` | Пауза перед следующим профилем, например `2s` |
 | `failover.max_cycles` | Сколько полных проходов по профилям сделать; `0` = бесконечно |
@@ -196,6 +197,23 @@ transport. Используй одинаковые traffic-настройки н
 ### wbstream + datachannel (не работает в обычном guest flow)
 
 WB Stream DataChannel **не работает** в обычном guest flow - WB Stream выдаёт токены с `canPublishData=false`, и DC не маршрутизирует данные. Этот режим помечен как expected fail в E2E тестах. Для обычного использования выбирай `vp8channel`, `seichannel` или `videochannel`.
+
+Чтобы `datachannel` заработал, нужен токен аккаунта/модератора в `auth.token` (`canPublishData=true`) с обеих сторон. Как выдать модератора в UI WB Stream: открой список участников
+
+![список участников](asset/wbstream-moderator/participants.png)
+
+нажми три точки рядом с записью клиента/сервера
+
+![меню записи](asset/wbstream-moderator/menu.png)
+
+потом нажми кнопку `Модератор`
+
+![кнопка модератора](asset/wbstream-moderator/moderator-button.png)
+
+> На будущее: когда подключаемся с ghost/account токеном, у которого уже
+> есть права модератора, клиента можно было бы авто-повышать до модератора,
+> чтобы `datachannel` работал без ручной выдачи. Пока не реализовано;
+> модератор всё ещё нужно выдавать вручную с обеих сторон.
 
 ```yaml
 # room ID нужно создать вручную через https://stream.wb.ru

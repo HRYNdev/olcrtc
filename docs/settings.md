@@ -30,7 +30,7 @@
 
 **Telemost:** only vp8channel passes stably. DataChannel was removed from Telemost. seichannel is not supported. videochannel is slow.
 
-**WBStream:** all transports except datachannel work. DataChannel does not work in the normal guest flow without being granted moderator - WB Stream issues tokens with `canPublishData=false`, and DC does not route data.
+**WBStream:** all transports except datachannel work. DataChannel does not work in the normal guest flow without being granted moderator - WB Stream issues tokens with `canPublishData=false`, and DC does not route data. To use `datachannel` over `wbstream`, set `auth.token` to an account/moderator token (`canPublishData=true`); see `auth.token` in the optional fields below.
 
 **Jitsi:** datachannel passes stably - it is implemented on top of the colibri-ws bridge channel and sends bytes via an `EndpointMessage{raw}` broadcast. It fits self-hosted and public Jitsi Meet instances without authentication (`https://meet.small-dm.ru/...`, `https://meet1.arbitr.ru/...`, `https://meet.handyweb.org/...`, `https://meet.jit.si/...`, etc.). Check in a browser which of the servers is reachable in your network. Video transports (vp8channel, seichannel, videochannel) expose a sendable VideoTrack through the pion PeerConnection after the Jingle session-accept, but Jicofo requires additional protocol steps (LastN, ReceiverVideoConstraints, source-add) to route video - that is why they are marked `~`.
 
@@ -61,6 +61,7 @@ Speed in descending order: `datachannel` > `vp8channel` > `seichannel` > `videoc
 | YAML field | Description |
 |-----------|----------|
 | `debug` | `true` for verbose connection logs |
+| `auth.token` | Pre-issued account token for `wbstream`. When set, the session joins as that account instead of an anonymous guest; empty uses the guest flow. In the guest flow the obtained token is logged once so it can be copied back into this field to keep the same identity. Practical effect for `datachannel`: a guest token carries `canPublishData=false`, so the SCTP data channel opens but routes no bytes (the tunnel is up and silent); an account token with moderator rights carries `canPublishData=true` and routes data normally. So `datachannel` over `wbstream` requires an `auth.token` with publish rights; on the guest flow use `vp8channel`, `seichannel` or `videochannel` instead. To grant moderator: open the participants list, then the three dots next to the client/server entry, then the `Moderator` button (needed on both sides) |
 | `profiles` | List of failover profiles for `srv`/`cnc` |
 | `failover.retry_delay` | Pause before the next profile, e.g. `2s` |
 | `failover.max_cycles` | How many full passes over the profiles to make; `0` = unlimited |
@@ -195,6 +196,23 @@ For codec `tile` exactly `1080x1080` is required.
 ### wbstream + datachannel (does not work in the normal guest flow)
 
 WB Stream DataChannel **does not work** in the normal guest flow - WB Stream issues tokens with `canPublishData=false`, and DC does not route data. This mode is marked as expected fail in E2E tests. For normal use pick `vp8channel`, `seichannel` or `videochannel`.
+
+To make `datachannel` work you need an account/moderator token in `auth.token` (`canPublishData=true`) on both sides. To grant moderator in the WB Stream UI: open the participants list
+
+![participants list](asset/wbstream-moderator/participants.png)
+
+click the three dots next to the client/server entry
+
+![entry menu](asset/wbstream-moderator/menu.png)
+
+then press the `Moderator` button
+
+![moderator button](asset/wbstream-moderator/moderator-button.png)
+
+> Future work: when joining with a ghost/account token that already holds
+> moderator rights, the client could be auto-promoted to moderator so
+> `datachannel` works without manual promotion. Not implemented yet;
+> moderator is still required on both sides manually.
 
 ```yaml
 # the room ID must be created manually via https://stream.wb.ru
