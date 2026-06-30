@@ -61,7 +61,7 @@ Speed in descending order: `datachannel` > `vp8channel` > `seichannel` > `videoc
 | YAML field | Description |
 |-----------|----------|
 | `debug` | `true` for verbose connection logs |
-| `auth.token` | Pre-issued account token for `wbstream`. When set, the session joins as that account instead of an anonymous guest; empty uses the guest flow |
+| `auth.token` | Pre-issued account token for `wbstream`. When set, the session joins as that account instead of an anonymous guest; empty uses the guest flow. In the guest flow the obtained token is logged once so it can be copied back into this field to keep the same identity |
 | `profiles` | List of failover profiles for `srv`/`cnc` |
 | `failover.retry_delay` | Pause before the next profile, e.g. `2s` |
 | `failover.max_cycles` | How many full passes over the profiles to make; `0` = unlimited |

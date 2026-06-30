@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/openlibrecommunity/olcrtc/internal/auth"
+	"github.com/openlibrecommunity/olcrtc/internal/logger"
 )
 
 // Provider produces LiveKit credentials for the WB Stream service.
@@ -34,6 +35,7 @@ func (Provider) Issue(ctx context.Context, cfg auth.Config) (auth.Credentials, e
 			return auth.Credentials{}, fmt.Errorf("register guest: %w", err)
 		}
 		accessToken = guest
+		logger.Infof("wbstream: obtained guest access token, reuse it via auth.token to keep this identity: %s", accessToken)
 	}
 
 	roomID := cfg.RoomURL
