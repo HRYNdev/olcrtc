@@ -32,6 +32,8 @@ import (
 
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
+	"github.com/openlibrecommunity/olcrtc/internal/protect"
+	"github.com/pion/ice/v4"
 	pioninterceptor "github.com/pion/interceptor"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
@@ -68,7 +70,7 @@ const (
 	// A half-open TCP connection lets Send() succeed while replies never
 	// arrive; waiting for the IQ result detects this and triggers reconnect.
 	xmppKeepaliveTimeout = 15 * time.Second
-	reconnectJoinTimeout  = 30 * time.Second
+	reconnectJoinTimeout = 30 * time.Second
 )
 
 // bridgeMagic tags every EndpointMessage produced by this engine. JVB broadcasts
@@ -468,6 +470,24 @@ func (s *Session) videoTrackHandler() func(*webrtc.TrackRemote, *webrtc.RTPRecei
 	return s.onVideoTrack
 }
 
+// newSettingEngine builds the pion SettingEngine for a conference PC. When a
+// socket protector is set, it routes Pion sockets through ProtectedNet and
+// disables mDNS. It fails closed instead of falling back to the default path.
+func newSettingEngine() (webrtc.SettingEngine, error) {
+	settings := webrtc.SettingEngine{}
+	settings.LoggerFactory = logger.NewPionLoggerFactory()
+	if protect.Protector == nil {
+		return settings, nil
+	}
+	pnet, err := protect.NewProtectedNet()
+	if err != nil {
+		return settings, fmt.Errorf("protected net: %w", err)
+	}
+	settings.SetNet(pnet)
+	settings.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+	return settings, nil
+}
+
 // negotiatePC builds the pion PeerConnection, applies Jicofo's offer,
 // answers it and registers all the per-side wiring (DTLS state, ICE
 // callbacks, transceiver direction). It's branchy on purpose - Jingle
@@ -477,8 +497,10 @@ func (s *Session) videoTrackHandler() func(*webrtc.TrackRemote, *webrtc.RTPRecei
 //
 //nolint:cyclop // sequential Jingle negotiation steps; refactoring would hide ordering
 func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge bool) error {
-	settings := webrtc.SettingEngine{}
-	settings.LoggerFactory = logger.NewPionLoggerFactory()
+	settings, err := newSettingEngine()
+	if err != nil {
+		return err
+	}
 
 	// pion auto-registers a default interceptor chain (sender reports,
 	// receiver reports, NACK, etc.) when none is supplied. Several of
@@ -757,7 +779,6 @@ func randomTrackSuffix() string {
 	}
 	return base64.RawURLEncoding.EncodeToString(b[:])
 }
-
 
 // updates its endpoint lastActivity timestamp. Without this, JVB expires the
 // endpoint after its inactivity timeout (~30-60s) when the ICE/DTLS path is
