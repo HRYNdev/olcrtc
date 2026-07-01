@@ -33,35 +33,22 @@ app -> SOCKS5 -> olcrtc cnc -> WebRTC/SFU сервис -> olcrtc srv -> инте
 
 ## Быстрый старт
 
-Нужны Go 1.26+ и mage.
-
-```sh
-go install github.com/magefile/mage@latest
-git clone https://github.com/openlibrecommunity/olcrtc --recurse-submodules
-cd olcrtc
-mage build
-```
-
 Сгенерируй общий ключ (одинаковый на сервере и клиенте):
 
 ```sh
 openssl rand -hex 32
 ```
 
-Запусти сервер и клиент с YAML-конфигами:
+Нужны Podman и git.
 
 ```sh
-./build/olcrtc-linux-amd64 server.yaml
-./build/olcrtc-linux-amd64 client.yaml
+git clone https://github.com/openlibrecommunity/olcrtc --recurse-submodules
+cd olcrtc
+./scripts/srv.sh
 ```
 
-Клиент поднимает локальный SOCKS5 на `127.0.0.1:8808`. Проверка:
 
-```sh
-curl --socks5-hostname 127.0.0.1:8808 https://icanhazip.com
-```
-
-Полные инструкции и примеры конфигов - в [docs/fast.md](docs/fast.ru.md) и [docs/configuration.md](docs/configuration.ru.md).
+Полные инструкции в [docs/fast.md](docs/fast.ru.md) и [docs/manual.md](docs/manual.ru.md).
 
 ## Документация
 

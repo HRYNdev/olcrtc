@@ -33,35 +33,21 @@ Recommended start: `jitsi + datachannel`.
 
 ## Quick start
 
-You need Go 1.26+ and mage.
-
-```sh
-go install github.com/magefile/mage@latest
-git clone https://github.com/openlibrecommunity/olcrtc --recurse-submodules
-cd olcrtc
-mage build
-```
-
 Generate a shared key (the same on server and client):
 
 ```sh
 openssl rand -hex 32
 ```
 
-Run the server and the client with YAML configs:
+You need Podman and git.
 
 ```sh
-./build/olcrtc-linux-amd64 server.yaml
-./build/olcrtc-linux-amd64 client.yaml
+git clone https://github.com/openlibrecommunity/olcrtc --recurse-submodules
+cd olcrtc
+./scripts/srv.sh
 ```
 
-The client starts a local SOCKS5 on `127.0.0.1:8808`. Check:
-
-```sh
-curl --socks5-hostname 127.0.0.1:8808 https://icanhazip.com
-```
-
-Full instructions and config examples are in [docs/fast.md](docs/fast.md) and [docs/configuration.md](docs/configuration.md).
+Full instructions are in [docs/fast.md](docs/fast.md) and [docs/manual.md](docs/manual.md).
 
 ## Documentation
 
