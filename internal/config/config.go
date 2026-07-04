@@ -46,6 +46,7 @@ type File struct {
 	Liveness  Liveness  `yaml:"liveness"`
 	Lifecycle Lifecycle `yaml:"lifecycle"`
 	Traffic   Traffic   `yaml:"traffic"`
+	UDP       UDP       `yaml:"udp"`
 	Gen       Gen       `yaml:"gen"`
 	Profiles  []Profile `yaml:"profiles"`
 	Failover  Failover  `yaml:"failover"`
@@ -68,6 +69,7 @@ type Profile struct {
 	Liveness  Liveness  `yaml:"liveness"`
 	Lifecycle Lifecycle `yaml:"lifecycle"`
 	Traffic   Traffic   `yaml:"traffic"`
+	UDP       UDP       `yaml:"udp"`
 }
 
 // Failover controls ordered profile failover.
@@ -164,6 +166,12 @@ type Traffic struct {
 	MaxPayloadSize int    `yaml:"max_payload_size"`
 	MinDelay       string `yaml:"min_delay"`
 	MaxDelay       string `yaml:"max_delay"`
+}
+
+// UDP controls the lossy SOCKS5 UDP ASSOCIATE relay.
+type UDP struct {
+	Disabled bool `yaml:"disabled"`
+	MaxFlows int  `yaml:"max_flows"`
 }
 
 // Gen controls room-generation mode.
@@ -290,6 +298,8 @@ func Apply(dst session.Config, f File) session.Config {
 	dst.TrafficMaxPayloadSize = pickInt(dst.TrafficMaxPayloadSize, f.Traffic.MaxPayloadSize)
 	dst.TrafficMinDelay = pickString(dst.TrafficMinDelay, f.Traffic.MinDelay)
 	dst.TrafficMaxDelay = pickString(dst.TrafficMaxDelay, f.Traffic.MaxDelay)
+	dst.UDPDisabled = dst.UDPDisabled || f.UDP.Disabled
+	dst.UDPMaxFlows = pickInt(dst.UDPMaxFlows, f.UDP.MaxFlows)
 	dst.Amount = pickInt(dst.Amount, f.Gen.Amount)
 	return dst
 }
@@ -338,6 +348,8 @@ func ApplyProfile(base session.Config, p Profile) session.Config {
 	dst.TrafficMaxPayloadSize = overlayInt(dst.TrafficMaxPayloadSize, p.Traffic.MaxPayloadSize)
 	dst.TrafficMinDelay = overlayString(dst.TrafficMinDelay, p.Traffic.MinDelay)
 	dst.TrafficMaxDelay = overlayString(dst.TrafficMaxDelay, p.Traffic.MaxDelay)
+	dst.UDPDisabled = dst.UDPDisabled || p.UDP.Disabled
+	dst.UDPMaxFlows = overlayInt(dst.UDPMaxFlows, p.UDP.MaxFlows)
 	return dst
 }
 

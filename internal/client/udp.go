@@ -18,6 +18,7 @@ const (
 	udpReadBufferSize    = 64 * 1024
 	udpFlowIdleTimeout   = 2 * time.Minute
 	udpFlowSweepInterval = 30 * time.Second
+	defaultMaxUDPFlows   = 1024
 )
 
 var (
@@ -30,10 +31,15 @@ var (
 	errSocksUDPMissingDomainSize = errors.New("missing domain length")
 	errSocksUDPShortDomain       = errors.New("short domain")
 	errSocksUDPShortIPv6         = errors.New("short ipv6 address")
+	errTooManyUDPFlows           = errors.New("too many udp flows")
 )
 
 //nolint:cyclop // SOCKS5 UDP associate lifecycle has several protocol failure exits.
 func (c *Client) handleUDPAssociate(ctx context.Context, tcpConn net.Conn) {
+	if c.udpDisabled {
+		_, _ = tcpConn.Write(replyHostUnreachable())
+		return
+	}
 	dg, ok := c.ln.(transport.DatagramTransport)
 	if !ok {
 		_, _ = tcpConn.Write(replyHostUnreachable())
@@ -113,7 +119,11 @@ func (c *Client) forwardLocalUDP(
 		logger.Debugf("drop malformed socks udp packet: %v", err)
 		return
 	}
-	flowID := c.udpFlowID(udpConn, src, target)
+	flowID, ok := c.udpFlowID(udpConn, src, target)
+	if !ok {
+		logger.Debugf("drop udp packet: %v", errTooManyUDPFlows)
+		return
+	}
 	frame := udpwire.Frame{
 		Type:     udpwire.FrameTypePacket,
 		FlowID:   flowID,
@@ -139,6 +149,9 @@ func (c *Client) forwardLocalUDP(
 }
 
 func (c *Client) onDatagram(ciphertext []byte) {
+	if c.udpDisabled {
+		return
+	}
 	wire, err := c.cipher.Decrypt(ciphertext)
 	if err != nil {
 		logger.Debugf("drop udp datagram decrypt failed: %v", err)
@@ -171,7 +184,7 @@ func (c *Client) onDatagram(ciphertext []byte) {
 	_, _ = flow.conn.WriteToUDP(packet, flow.clientAddr)
 }
 
-func (c *Client) udpFlowID(conn *net.UDPConn, src *net.UDPAddr, target udpwire.Endpoint) uint64 {
+func (c *Client) udpFlowID(conn *net.UDPConn, src *net.UDPAddr, target udpwire.Endpoint) (uint64, bool) {
 	c.udpMu.Lock()
 	defer c.udpMu.Unlock()
 	now := time.Now()
@@ -179,14 +192,17 @@ func (c *Client) udpFlowID(conn *net.UDPConn, src *net.UDPAddr, target udpwire.E
 		if flow.conn == conn && flow.clientAddr.String() == src.String() && flow.target == target {
 			flow.lastSeen = now
 			c.udpFlows[id] = flow
-			return id
+			return id, true
 		}
+	}
+	if len(c.udpFlows) >= normalizeMaxUDPFlows(c.maxUDPFlows) {
+		return 0, false
 	}
 	for {
 		id := randomUDPFlowID()
 		if _, exists := c.udpFlows[id]; !exists {
 			c.udpFlows[id] = clientUDPFlow{conn: conn, clientAddr: src, target: target, lastSeen: now}
-			return id
+			return id, true
 		}
 	}
 }
@@ -231,6 +247,9 @@ func (c *Client) removeIdleUDPFlowsForConn(conn *net.UDPConn, now time.Time) {
 }
 
 func (c *Client) sendUDPFlowCloses(flowIDs []uint64) {
+	if c.udpDisabled {
+		return
+	}
 	dg, ok := c.ln.(transport.DatagramTransport)
 	if !ok || !dg.DatagramCanSend() {
 		return
@@ -266,6 +285,13 @@ func (c *Client) waitSessionReady(ctx context.Context) bool {
 		case <-c.readyChannel():
 		}
 	}
+}
+
+func normalizeMaxUDPFlows(maxFlows int) int {
+	if maxFlows <= 0 {
+		return defaultMaxUDPFlows
+	}
+	return maxFlows
 }
 
 func waitDatagramReady(ctx context.Context, dg transport.DatagramTransport) bool {

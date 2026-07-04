@@ -79,6 +79,8 @@ type Client struct {
 	sessionReady chan struct{}
 	udpMu        sync.Mutex
 	udpFlows     map[uint64]clientUDPFlow
+	udpDisabled  bool
+	maxUDPFlows  int
 }
 
 // HealthFunc is called when the client control health snapshot changes.
@@ -102,6 +104,8 @@ type Config struct {
 	AuthToken        string
 	Liveness         control.Config
 	Traffic          transport.TrafficConfig
+	UDPDisabled      bool
+	UDPMaxFlows      int
 
 	// DeviceID overrides the persistent client-side device identifier. Leave
 	// empty to derive one from DeviceIDPath (or generate a random one if both
@@ -150,6 +154,8 @@ func RunWithReady(ctx context.Context, cfg Config, onReady func()) error {
 		health:       runtime.NewHealthTracker(cfg.OnHealth),
 		sessionReady: make(chan struct{}),
 		udpFlows:     make(map[uint64]clientUDPFlow),
+		udpDisabled:  cfg.UDPDisabled,
+		maxUDPFlows:  normalizeMaxUDPFlows(cfg.UDPMaxFlows),
 	}
 
 	// shutdown is registered BEFORE bringUpLink so we always close any

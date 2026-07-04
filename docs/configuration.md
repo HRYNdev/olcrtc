@@ -72,6 +72,8 @@ Ready-made examples:
 | `lifecycle.max_session_duration` | planned session rebuild, e.g. `6h`; empty = disabled |
 | `traffic.max_payload_size` | limit of the encrypted wire-message; `0` = transport limit |
 | `traffic.min_delay` / `traffic.max_delay` | optional send pacing, e.g. `5ms` / `30ms` |
+| `udp.disabled` | disables SOCKS5 UDP ASSOCIATE relay; default `false` |
+| `udp.max_flows` | max live UDP flow mappings per process; `0` = default `1024` |
 | `gen.amount` | `gen` mode: how many rooms to create |
 | `profiles[]` | list of failover profiles for `srv`/`cnc` |
 | `failover.retry_delay` | pause before the next profile, e.g. `2s` |

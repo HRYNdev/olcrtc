@@ -50,6 +50,9 @@ traffic:
   max_payload_size: 4096
   min_delay: 5ms
   max_delay: 30ms
+udp:
+  disabled: true
+  max_flows: 77
 gen:
   amount: 3
 debug: true
@@ -105,6 +108,8 @@ func requireAppliedConfig(t *testing.T, got session.Config) {
 		TrafficMaxPayloadSize: 4096,
 		TrafficMinDelay:       "5ms",
 		TrafficMaxDelay:       "30ms",
+		UDPDisabled:           true,
+		UDPMaxFlows:           77,
 		Amount:                3,
 	}
 	if got != want {
@@ -159,6 +164,8 @@ traffic:
   max_payload_size: 8192
   min_delay: 10ms
   max_delay: 40ms
+udp:
+  max_flows: 100
 profiles:
   - name: wb-vp8
     auth:
@@ -176,6 +183,9 @@ profiles:
     traffic:
       max_payload_size: 4096
       max_delay: 20ms
+    udp:
+      disabled: true
+      max_flows: 10
   - name: jitsi-dc
     auth:
       provider: jitsi
@@ -211,7 +221,8 @@ failover:
 	if first.KeyHex != "shared-key" || first.DNSServer != testDNSServer || first.VP8.FPS != 30 ||
 		first.LivenessInterval != "1s" || first.LivenessTimeout != "2s" || first.LivenessFailures != 5 ||
 		first.MaxSessionDuration != "30m" || first.TrafficMaxPayloadSize != 4096 ||
-		first.TrafficMinDelay != "10ms" || first.TrafficMaxDelay != "20ms" {
+		first.TrafficMinDelay != "10ms" || first.TrafficMaxDelay != "20ms" ||
+		!first.UDPDisabled || first.UDPMaxFlows != 10 {
 		t.Fatalf("first inherited/overlaid fields = %+v", first)
 	}
 	second := ApplyProfile(base, f.Profiles[1])
@@ -221,7 +232,8 @@ failover:
 	}
 	if second.LivenessInterval != "5s" || second.LivenessTimeout != "2s" || second.LivenessFailures != 5 ||
 		second.MaxSessionDuration != "6h" || second.TrafficMaxPayloadSize != 8192 ||
-		second.TrafficMinDelay != "10ms" || second.TrafficMaxDelay != "40ms" {
+		second.TrafficMinDelay != "10ms" || second.TrafficMaxDelay != "40ms" ||
+		second.UDPDisabled || second.UDPMaxFlows != 100 {
 		t.Fatalf("second lifecycle/liveness fields = %+v", second)
 	}
 }

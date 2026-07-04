@@ -102,6 +102,8 @@ type Server struct {
 	liveness                     control.Config
 	health                       *runtime.HealthTracker
 	unsafeAllowPrivateUDPTargets bool
+	udpDisabled                  bool
+	maxUDPFlows                  int
 	done                         chan struct{}
 	doneOnce                     sync.Once
 	udpMu                        sync.Mutex
@@ -155,6 +157,8 @@ type Config struct {
 	AuthToken        string
 	Liveness         control.Config
 	Traffic          transport.TrafficConfig
+	UDPDisabled      bool
+	UDPMaxFlows      int
 	// UnsafeAllowPrivateUDPTargets permits UDP relay targets in loopback,
 	// private, link-local and multicast ranges. Leave false outside local
 	// tests/dev setups; enabling it can expose local-network SSRF.
@@ -214,6 +218,8 @@ func Run(ctx context.Context, cfg Config) error {
 		liveness:                     cfg.Liveness,
 		health:                       runtime.NewHealthTracker(cfg.OnHealth),
 		unsafeAllowPrivateUDPTargets: cfg.UnsafeAllowPrivateUDPTargets,
+		udpDisabled:                  cfg.UDPDisabled,
+		maxUDPFlows:                  normalizeMaxUDPFlows(cfg.UDPMaxFlows),
 		peerSessions:                 make(map[string]*peerSession),
 		peerStats:                    make(map[string]peerStat),
 		udpFlows:                     make(map[serverUDPKey]*serverUDPFlow),

@@ -56,3 +56,62 @@ func TestRemoveIdleUDPFlowsForConn(t *testing.T) {
 		t.Fatal("idle flow for another conn was removed")
 	}
 }
+
+func TestUDPFlowIDReusesExistingWhenAtLimit(t *testing.T) {
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("listen udp: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	src := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10001}
+	target := udpwire.Endpoint{Host: "1.1.1.1", Port: 53}
+	c := &Client{
+		maxUDPFlows: 1,
+		udpFlows: map[uint64]clientUDPFlow{
+			7: {
+				conn:       conn,
+				clientAddr: src,
+				target:     target,
+				lastSeen:   time.Now().Add(-time.Second),
+			},
+		},
+	}
+
+	id, ok := c.udpFlowID(conn, src, target)
+	if !ok {
+		t.Fatal("udpFlowID rejected existing flow at limit")
+	}
+	if id != 7 {
+		t.Fatalf("udpFlowID = %d, want 7", id)
+	}
+}
+
+func TestUDPFlowIDRejectsNewFlowAtLimit(t *testing.T) {
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("listen udp: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	c := &Client{
+		maxUDPFlows: 1,
+		udpFlows: map[uint64]clientUDPFlow{
+			7: {
+				conn:       conn,
+				clientAddr: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10001},
+				target:     udpwire.Endpoint{Host: "1.1.1.1", Port: 53},
+				lastSeen:   time.Now(),
+			},
+		},
+	}
+
+	_, ok := c.udpFlowID(
+		conn,
+		&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10002},
+		udpwire.Endpoint{Host: "8.8.8.8", Port: 53},
+	)
+	if ok {
+		t.Fatal("udpFlowID accepted new flow at limit")
+	}
+}

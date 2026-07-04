@@ -19,11 +19,13 @@ import (
 const (
 	udpRelayBufferSize = 64 * 1024
 	udpFlowIdleTimeout = 2 * time.Minute
+	defaultMaxUDPFlows = 1024
 )
 
 var (
 	errBlockedUDPTarget = errors.New("blocked udp target")
 	errNoUDPRecords     = errors.New("resolve udp target: no A records")
+	errTooManyUDPFlows  = errors.New("too many udp flows")
 )
 
 type serverUDPKey struct {
@@ -50,6 +52,9 @@ func (s *Server) onPeerDatagram(peerID string, ciphertext []byte) {
 }
 
 func (s *Server) handleDatagram(peerID string, ciphertext []byte) {
+	if s.udpDisabled {
+		return
+	}
 	wire, err := s.cipher.Decrypt(ciphertext)
 	if err != nil {
 		logger.Debugf("drop udp datagram decrypt failed: %v", err)
@@ -99,6 +104,10 @@ func (s *Server) getOrCreateUDPFlow(
 		s.udpMu.Unlock()
 		return flow, nil
 	}
+	if len(s.udpFlows) >= normalizeMaxUDPFlows(s.maxUDPFlows) {
+		s.udpMu.Unlock()
+		return nil, errTooManyUDPFlows
+	}
 	s.udpMu.Unlock()
 
 	dialHost, err := s.resolveUDPTarget(endpoint)
@@ -127,6 +136,11 @@ func (s *Server) getOrCreateUDPFlow(
 		s.udpMu.Unlock()
 		_ = conn.Close()
 		return existing, nil
+	}
+	if len(s.udpFlows) >= normalizeMaxUDPFlows(s.maxUDPFlows) {
+		s.udpMu.Unlock()
+		_ = conn.Close()
+		return nil, errTooManyUDPFlows
 	}
 	s.udpFlows[key] = flow
 	s.udpMu.Unlock()
@@ -233,6 +247,13 @@ func (s *Server) finishUDPFlow(flow *serverUDPFlow) {
 		addr := net.JoinHostPort(flow.endpoint.Host, strconv.Itoa(int(flow.endpoint.Port)))
 		s.onTraffic(flow.sessionID, addr, bytesIn, bytesOut)
 	})
+}
+
+func normalizeMaxUDPFlows(maxFlows int) int {
+	if maxFlows <= 0 {
+		return defaultMaxUDPFlows
+	}
+	return maxFlows
 }
 
 func (s *Server) udpSessionID(peerID string) string {
