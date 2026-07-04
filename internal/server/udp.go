@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
@@ -15,7 +16,10 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/udpwire"
 )
 
-const udpRelayBufferSize = 64 * 1024
+const (
+	udpRelayBufferSize = 64 * 1024
+	udpFlowIdleTimeout = 2 * time.Minute
+)
 
 var (
 	errBlockedUDPTarget = errors.New("blocked udp target")
@@ -32,6 +36,8 @@ type serverUDPFlow struct {
 	conn      net.Conn
 	endpoint  udpwire.Endpoint
 	sessionID string
+	bytesIn   atomic.Uint64
+	bytesOut  atomic.Uint64
 	closeOnce sync.Once
 }
 
@@ -71,7 +77,12 @@ func (s *Server) handleDatagram(peerID string, ciphertext []byte) {
 			frame.Endpoint.Host, frame.Endpoint.Port, err)
 		return
 	}
-	if _, err := flow.conn.Write(frame.Payload); err != nil {
+	n, err := flow.conn.Write(frame.Payload)
+	if n > 0 {
+		flow.bytesIn.Add(uint64(n))
+		flow.touch(time.Now())
+	}
+	if err != nil {
 		logger.Debugf("udp relay write failed target=%s:%d err=%v",
 			frame.Endpoint.Host, frame.Endpoint.Port, err)
 		s.closeUDPFlow(key)
@@ -110,6 +121,7 @@ func (s *Server) getOrCreateUDPFlow(
 		endpoint:  endpoint,
 		sessionID: sessionID,
 	}
+	flow.touch(time.Now())
 	s.udpMu.Lock()
 	if existing := s.udpFlows[key]; existing != nil {
 		s.udpMu.Unlock()
@@ -128,7 +140,13 @@ func (s *Server) readUDPFlow(flow *serverUDPFlow) {
 	for {
 		n, err := flow.conn.Read(buf)
 		if err != nil {
-			if !errors.Is(err, net.ErrClosed) {
+			var netErr net.Error
+			switch {
+			case errors.Is(err, net.ErrClosed):
+			case errors.As(err, &netErr) && netErr.Timeout():
+				logger.Debugf("udp relay idle timeout target=%s:%d",
+					flow.endpoint.Host, flow.endpoint.Port)
+			default:
 				logger.Debugf("udp relay read ended target=%s:%d err=%v",
 					flow.endpoint.Host, flow.endpoint.Port, err)
 			}
@@ -138,6 +156,8 @@ func (s *Server) readUDPFlow(flow *serverUDPFlow) {
 		if n <= 0 {
 			continue
 		}
+		flow.bytesOut.Add(uint64(n))
+		flow.touch(time.Now())
 		frame := udpwire.Frame{
 			Type:     udpwire.FrameTypePacket,
 			FlowID:   flow.key.flowID,
@@ -146,6 +166,10 @@ func (s *Server) readUDPFlow(flow *serverUDPFlow) {
 		}
 		s.sendUDPFrame(flow.key.peerID, frame)
 	}
+}
+
+func (flow *serverUDPFlow) touch(now time.Time) {
+	_ = flow.conn.SetReadDeadline(now.Add(udpFlowIdleTimeout))
 }
 
 func (s *Server) sendUDPFrame(peerID string, frame udpwire.Frame) {
@@ -182,7 +206,7 @@ func (s *Server) closeUDPFlow(key serverUDPKey) {
 	delete(s.udpFlows, key)
 	s.udpMu.Unlock()
 	if flow != nil {
-		flow.closeOnce.Do(func() { _ = flow.conn.Close() })
+		s.finishUDPFlow(flow)
 	}
 }
 
@@ -193,9 +217,22 @@ func (s *Server) closeAllUDPFlows() {
 	s.udpMu.Unlock()
 	for _, flow := range flows {
 		if flow != nil {
-			flow.closeOnce.Do(func() { _ = flow.conn.Close() })
+			s.finishUDPFlow(flow)
 		}
 	}
+}
+
+func (s *Server) finishUDPFlow(flow *serverUDPFlow) {
+	flow.closeOnce.Do(func() {
+		_ = flow.conn.Close()
+		bytesIn := flow.bytesIn.Load()
+		bytesOut := flow.bytesOut.Load()
+		if flow.sessionID == "" || (bytesIn == 0 && bytesOut == 0) || s.onTraffic == nil {
+			return
+		}
+		addr := net.JoinHostPort(flow.endpoint.Host, strconv.Itoa(int(flow.endpoint.Port)))
+		s.onTraffic(flow.sessionID, addr, bytesIn, bytesOut)
+	})
 }
 
 func (s *Server) udpSessionID(peerID string) string {

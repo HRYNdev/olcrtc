@@ -60,6 +60,14 @@ var (
 	errServerExitedBeforeClientStart = errors.New("server exited cleanly before client start")
 	errClientExitedBeforeReady       = errors.New("client exited cleanly before ready")
 	errServerExitedBeforeClientReady = errors.New("server exited cleanly before client ready")
+
+	errTestJitsiWebSocketTimeout = errors.New(
+		`failed to connect link: jitsi join muc: xmpp dial: failed to WebSocket dial: ` +
+			`Get "https://meet.example/xmpp-websocket": dial tcp 10.40.2.9:443: i/o timeout`,
+	)
+	errTestProviderDNSFailure        = errors.New("failed to create transport: open engine session: no such host")
+	errTestDataPlaneTimeout          = errors.New("read echo response: i/o timeout")
+	errTestProviderUnexpectedFailure = errors.New("failed to connect link: unexpected SOCKS5 reply")
 )
 
 var (
@@ -750,6 +758,81 @@ func logUnstableOutcome(t *testing.T, label, carrierName, transportName string, 
 		return
 	}
 	t.Logf("%s FAIL %s/%s: %v", label, carrierName, transportName, err)
+}
+
+func isTransientRealProviderUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	providerConnectMarkers := []string{
+		"failed to create transport",
+		"failed to connect link",
+		"open engine session",
+		"jitsi join muc",
+		"xmpp dial",
+		"websocket dial",
+		"get token",
+	}
+	if !containsAny(msg, providerConnectMarkers) {
+		return false
+	}
+	transientMarkers := []string{
+		"i/o timeout",
+		"context deadline exceeded",
+		"connection refused",
+		"connection reset by peer",
+		"network is unreachable",
+		"no such host",
+		"temporary failure in name resolution",
+		"tls handshake timeout",
+	}
+	return containsAny(msg, transientMarkers)
+}
+
+func containsAny(s string, needles []string) bool {
+	for _, needle := range needles {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestIsTransientRealProviderUnavailable(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "jitsi websocket timeout",
+			err:  errTestJitsiWebSocketTimeout,
+			want: true,
+		},
+		{
+			name: "provider dns failure",
+			err:  errTestProviderDNSFailure,
+			want: true,
+		},
+		{
+			name: "data plane timeout after tunnel start",
+			err:  errTestDataPlaneTimeout,
+			want: false,
+		},
+		{
+			name: "protocol failure",
+			err:  errTestProviderUnexpectedFailure,
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isTransientRealProviderUnavailable(tt.err); got != tt.want {
+				t.Fatalf("isTransientRealProviderUnavailable() = %t, want %t", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestRealE2ECaseExpectation(t *testing.T) {
@@ -1533,21 +1616,37 @@ func TestRealProviderTransportMatrix(t *testing.T) {
 						authFailed = true
 						t.Skipf("skip %s real e2e: auth failed: %v", carrierName, err)
 					}
-					switch {
-					case err == nil && expectation == realE2EExpectPass:
-						t.Logf("%s %s/%s", label, carrierName, transportName)
-					case err == nil && expectation == realE2EExpectFail:
-						t.Fatalf("UNEXPECTED SUCCESS %s/%s", carrierName, transportName)
-					case err != nil && expectation == realE2EExpectPass:
-						t.Fatalf("EXPECTED SUCCESS %s/%s failed: %v", carrierName, transportName, err)
-					case err != nil && expectation == realE2EExpectFail:
-						t.Logf("%s %s/%s: %v", label, carrierName, transportName, err)
-					case expectation == realE2EExpectUnstable:
-						logUnstableOutcome(t, label, carrierName, transportName, err)
+					if err != nil && isTransientRealProviderUnavailable(err) {
+						t.Skipf("skip %s/%s real e2e: transient provider unavailable: %v",
+							carrierName, transportName, err)
 					}
+					handleRealE2ECaseResult(t, label, carrierName, transportName, expectation, err)
 				})
 			}
 		})
+	}
+}
+
+func handleRealE2ECaseResult(
+	t *testing.T,
+	label string,
+	carrierName string,
+	transportName string,
+	expectation realE2EExpectation,
+	err error,
+) {
+	t.Helper()
+	switch {
+	case err == nil && expectation == realE2EExpectPass:
+		t.Logf("%s %s/%s", label, carrierName, transportName)
+	case err == nil && expectation == realE2EExpectFail:
+		t.Fatalf("UNEXPECTED SUCCESS %s/%s", carrierName, transportName)
+	case err != nil && expectation == realE2EExpectPass:
+		t.Fatalf("EXPECTED SUCCESS %s/%s failed: %v", carrierName, transportName, err)
+	case err != nil && expectation == realE2EExpectFail:
+		t.Logf("%s %s/%s: %v", label, carrierName, transportName, err)
+	case expectation == realE2EExpectUnstable:
+		logUnstableOutcome(t, label, carrierName, transportName, err)
 	}
 }
 

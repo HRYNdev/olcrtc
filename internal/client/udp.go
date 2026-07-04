@@ -14,7 +14,11 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/udpwire"
 )
 
-const udpReadBufferSize = 64 * 1024
+const (
+	udpReadBufferSize    = 64 * 1024
+	udpFlowIdleTimeout   = 2 * time.Minute
+	udpFlowSweepInterval = 30 * time.Second
+)
 
 var (
 	errSocksUDPShortPacket       = errors.New("short packet")
@@ -50,6 +54,9 @@ func (c *Client) handleUDPAssociate(ctx context.Context, tcpConn net.Conn) {
 		c.removeUDPFlowsForConn(udpConn)
 		_ = udpConn.Close()
 	}()
+	assocCtx, cancelAssoc := context.WithCancel(ctx)
+	defer cancelAssoc()
+	go c.sweepUDPFlows(assocCtx, udpConn)
 
 	addr := udpConn.LocalAddr().(*net.UDPAddr) //nolint:forcetypeassert // net.ListenUDP returns UDPAddr
 	if _, err := tcpConn.Write(replySuccessUDP(addr)); err != nil {
@@ -148,6 +155,10 @@ func (c *Client) onDatagram(ciphertext []byte) {
 
 	c.udpMu.Lock()
 	flow, ok := c.udpFlows[frame.FlowID]
+	if ok {
+		flow.lastSeen = time.Now()
+		c.udpFlows[frame.FlowID] = flow
+	}
 	c.udpMu.Unlock()
 	if !ok {
 		return
@@ -163,15 +174,18 @@ func (c *Client) onDatagram(ciphertext []byte) {
 func (c *Client) udpFlowID(conn *net.UDPConn, src *net.UDPAddr, target udpwire.Endpoint) uint64 {
 	c.udpMu.Lock()
 	defer c.udpMu.Unlock()
+	now := time.Now()
 	for id, flow := range c.udpFlows {
 		if flow.conn == conn && flow.clientAddr.String() == src.String() && flow.target == target {
+			flow.lastSeen = now
+			c.udpFlows[id] = flow
 			return id
 		}
 	}
 	for {
 		id := randomUDPFlowID()
 		if _, exists := c.udpFlows[id]; !exists {
-			c.udpFlows[id] = clientUDPFlow{conn: conn, clientAddr: src, target: target}
+			c.udpFlows[id] = clientUDPFlow{conn: conn, clientAddr: src, target: target, lastSeen: now}
 			return id
 		}
 	}
@@ -180,14 +194,40 @@ func (c *Client) udpFlowID(conn *net.UDPConn, src *net.UDPAddr, target udpwire.E
 func (c *Client) removeUDPFlowsForConn(conn *net.UDPConn) {
 	var closed []uint64
 	c.udpMu.Lock()
-	defer c.udpMu.Unlock()
 	for id, flow := range c.udpFlows {
 		if flow.conn == conn {
 			delete(c.udpFlows, id)
 			closed = append(closed, id)
 		}
 	}
-	go c.sendUDPFlowCloses(closed)
+	c.udpMu.Unlock()
+	c.sendUDPFlowCloses(closed)
+}
+
+func (c *Client) sweepUDPFlows(ctx context.Context, conn *net.UDPConn) {
+	ticker := time.NewTicker(udpFlowSweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			c.removeIdleUDPFlowsForConn(conn, now)
+		}
+	}
+}
+
+func (c *Client) removeIdleUDPFlowsForConn(conn *net.UDPConn, now time.Time) {
+	var closed []uint64
+	c.udpMu.Lock()
+	for id, flow := range c.udpFlows {
+		if flow.conn == conn && now.Sub(flow.lastSeen) >= udpFlowIdleTimeout {
+			delete(c.udpFlows, id)
+			closed = append(closed, id)
+		}
+	}
+	c.udpMu.Unlock()
+	c.sendUDPFlowCloses(closed)
 }
 
 func (c *Client) sendUDPFlowCloses(flowIDs []uint64) {

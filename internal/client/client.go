@@ -1038,4 +1038,5 @@ type clientUDPFlow struct {
 	conn       *net.UDPConn
 	clientAddr *net.UDPAddr
 	target     udpwire.Endpoint
+	lastSeen   time.Time
 }
