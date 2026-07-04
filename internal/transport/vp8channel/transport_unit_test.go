@@ -201,7 +201,8 @@ func TestNewConnectSendCallbacksFeaturesAndClose(t *testing.T) {
 	if !tr.CanSend() {
 		t.Fatal("CanSend() = false, want true")
 	}
-	if features := tr.Features(); !features.Reliable || !features.Ordered || !features.MessageOriented || features.MaxPayloadSize == 0 { //nolint:lll // long test description
+	if features := tr.Features(); !features.Reliable || !features.Ordered ||
+		!features.MessageOriented || !features.Datagram || features.MaxPayloadSize == 0 {
 		t.Fatalf("Features() = %+v", features)
 	}
 	if err := tr.Send([]byte("payload")); err != nil {
@@ -213,6 +214,173 @@ func TestNewConnectSendCallbacksFeaturesAndClose(t *testing.T) {
 	}
 	if err := tr.Send([]byte("closed")); !errors.Is(err, ErrTransportClosed) {
 		t.Fatalf("Send(closed) error = %v, want %v", err, ErrTransportClosed)
+	}
+}
+
+func TestDatagramEnqueueBroadcast(t *testing.T) {
+	tr := &streamTransport{
+		stream:           &fakeVideoStream{canSend: true},
+		datagramOutbound: make(chan []byte, 10),
+		bindingToken:     bindingToken("client"),
+		localEpoch:       0x100,
+	}
+
+	if !tr.DatagramCanSend() {
+		t.Fatal("DatagramCanSend() = false, want true")
+	}
+	if err := tr.SendDatagram([]byte("broadcast")); err != nil {
+		t.Fatalf("SendDatagram() error = %v", err)
+	}
+	assertQueuedDatagram(t, tr, 0, "broadcast")
+}
+
+func TestDatagramEnqueueLatchedPeer(t *testing.T) {
+	tr := &streamTransport{
+		stream:           &fakeVideoStream{canSend: true},
+		datagramOutbound: make(chan []byte, 10),
+		bindingToken:     bindingToken("client"),
+		localEpoch:       0x100,
+	}
+	tr.peerEpoch.Store(0x200)
+	if err := tr.SendDatagram([]byte("latched")); err != nil {
+		t.Fatalf("SendDatagram(latched) error = %v", err)
+	}
+	assertQueuedDatagram(t, tr, 0x200, "latched")
+}
+
+func TestDatagramEnqueueDirectPeer(t *testing.T) {
+	tr := &streamTransport{
+		stream:           &fakeVideoStream{canSend: true},
+		datagramOutbound: make(chan []byte, 10),
+		bindingToken:     bindingToken("client"),
+		localEpoch:       0x100,
+	}
+	if err := tr.SendDatagramTo("00000300", []byte("direct")); err != nil {
+		t.Fatalf("SendDatagramTo() error = %v", err)
+	}
+	assertQueuedDatagram(t, tr, 0x300, "direct")
+}
+
+func assertQueuedDatagram(t *testing.T, tr *streamTransport, wantDst uint32, wantPayload string) {
+	t.Helper()
+	frame := <-tr.datagramOutbound
+	token, src, dst, ok := parseEpochHeader(frame)
+	if !ok || token != tr.bindingToken || src != tr.localEpoch || dst != wantDst {
+		t.Fatalf("datagram header token=0x%x src=0x%x dst=0x%x ok=%v want dst=0x%x",
+			token, src, dst, ok, wantDst)
+	}
+	payload, ok := splitDatagramPayload(frame[epochHdrLen:])
+	if !ok || string(payload) != wantPayload {
+		t.Fatalf("datagram payload=%q ok=%v want %q", payload, ok, wantPayload)
+	}
+}
+
+func TestDatagramBackpressureAndClosedState(t *testing.T) {
+	tr := &streamTransport{
+		stream:           &fakeVideoStream{canSend: true},
+		datagramOutbound: make(chan []byte, 10),
+		bindingToken:     bindingToken("client"),
+		localEpoch:       0x100,
+	}
+	for len(tr.datagramOutbound) < cap(tr.datagramOutbound)*canSendHighWatermark/100 {
+		tr.datagramOutbound <- []byte("queued")
+	}
+	if tr.DatagramCanSend() {
+		t.Fatal("DatagramCanSend() = true at high watermark")
+	}
+	tr.closed.Store(true)
+	if err := tr.SendDatagram([]byte("closed")); !errors.Is(err, ErrTransportClosed) {
+		t.Fatalf("SendDatagram(closed) error = %v, want %v", err, ErrTransportClosed)
+	}
+}
+
+func TestHandleIncomingDatagramSinglePeer(t *testing.T) {
+	got := make(chan string, 1)
+	tr := &streamTransport{
+		stream:       &fakeVideoStream{canSend: true},
+		bindingToken: bindingToken("client"),
+		localEpoch:   0x100,
+		onDatagram: func(data []byte) {
+			got <- string(data)
+		},
+	}
+
+	tr.handleIncomingFrame(mkDatagramFrame(tr.bindingToken, 0x200, tr.localEpoch, []byte("udp")))
+	select {
+	case msg := <-got:
+		if msg != "udp" {
+			t.Fatalf("datagram = %q, want udp", msg)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("datagram callback was not called")
+	}
+	if tr.peerEpoch.Load() != 0x200 {
+		t.Fatalf("peer epoch = 0x%08x, want 0x200", tr.peerEpoch.Load())
+	}
+
+	tr.handleIncomingFrame(mkDatagramFrame(tr.bindingToken, 0x300, 0x999, []byte("foreign-dst")))
+	select {
+	case msg := <-got:
+		t.Fatalf("unexpected datagram for foreign dst: %q", msg)
+	default:
+	}
+}
+
+func TestHandleIncomingDatagramPeerRouting(t *testing.T) {
+	got := make(chan string, 1)
+	tr := &streamTransport{
+		stream:       &fakeVideoStream{canSend: true},
+		bindingToken: bindingToken("server"),
+		localEpoch:   0x100,
+		onPeerData:   func(string, []byte) {},
+		onPeerDatagram: func(peerID string, data []byte) {
+			got <- peerID + ":" + string(data)
+		},
+	}
+
+	tr.handleIncomingFrame(mkDatagramFrame(tr.bindingToken, 0x300, tr.localEpoch, []byte("peer-udp")))
+	select {
+	case msg := <-got:
+		if msg != "00000300:peer-udp" {
+			t.Fatalf("peer datagram = %q, want 00000300:peer-udp", msg)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("peer datagram callback was not called")
+	}
+}
+
+func TestWriterDrainsDatagramBeforeReliableData(t *testing.T) {
+	tr := &streamTransport{
+		outbound:         make(chan []byte, 1),
+		datagramOutbound: make(chan []byte, 1),
+		batchSize:        1,
+	}
+	dataHdr := testEpochHdr(1)
+	dataFrame := append(dataHdr[:], []byte("kcp")...)
+	datagramHdr := testEpochHdr(2)
+	datagramFrame := append(datagramHdr[:], datagramMagic[:]...)
+	datagramFrame = append(datagramFrame, []byte("udp")...)
+	tr.outbound <- dataFrame
+	tr.datagramOutbound <- datagramFrame
+
+	var writes [][]byte
+	tr.sampleWriter = func(data []byte) bool {
+		writes = append(writes, append([]byte(nil), data...))
+		return true
+	}
+	w := &writerState{p: tr}
+	if !w.drainDatagram() {
+		t.Fatal("drainDatagram() = false, want true")
+	}
+	w.drainData()
+	if len(writes) != 2 {
+		t.Fatalf("writes = %d, want 2", len(writes))
+	}
+	if payload, ok := splitDatagramPayload(writes[0][epochHdrLen:]); !ok || string(payload) != "udp" {
+		t.Fatalf("first write datagram payload=%q ok=%v", payload, ok)
+	}
+	if string(writes[1][epochHdrLen:]) != "kcp" {
+		t.Fatalf("second write = %q, want kcp", writes[1][epochHdrLen:])
 	}
 }
 
@@ -454,6 +622,15 @@ func mkPeerFrame(token, epoch uint32, payload []byte) []byte {
 	binary.BigEndian.PutUint32(frame[dstOff:crcOff], 0)
 	binary.BigEndian.PutUint32(frame[crcOff:epochHdrLen], epochCRC(token, epoch, 0))
 	copy(frame[epochHdrLen:], payload)
+	return frame
+}
+
+func mkDatagramFrame(token, src, dst uint32, payload []byte) []byte {
+	hdr := buildEpochHeaderTo(token, src, dst)
+	frame := make([]byte, 0, epochHdrLen+len(datagramMagic)+len(payload))
+	frame = append(frame, hdr[:]...)
+	frame = append(frame, datagramMagic[:]...)
+	frame = append(frame, payload...)
 	return frame
 }
 
