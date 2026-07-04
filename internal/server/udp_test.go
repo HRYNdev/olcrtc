@@ -9,16 +9,23 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/udpwire"
 )
 
+const (
+	testUDPPeerID        = "peer-1"
+	testUDPSessionID     = "session-1"
+	testUDPDNSGoogle     = "8.8.8.8"
+	testUDPDNSCloudflare = "1.1.1.1"
+)
+
 func TestCloseUDPFlowReportsTrafficOnce(t *testing.T) {
 	left, right := net.Pipe()
 	defer func() { _ = right.Close() }()
 
-	key := serverUDPKey{peerID: "peer-1", flowID: 42}
+	key := serverUDPKey{peerID: testUDPPeerID, flowID: 42}
 	flow := &serverUDPFlow{
 		key:       key,
 		conn:      left,
-		endpoint:  udpwire.Endpoint{Host: "8.8.8.8", Port: 53},
-		sessionID: "session-1",
+		endpoint:  udpwire.Endpoint{Host: testUDPDNSGoogle, Port: 53},
+		sessionID: testUDPSessionID,
 	}
 	flow.bytesIn.Store(11)
 	flow.bytesOut.Store(17)
@@ -28,11 +35,11 @@ func TestCloseUDPFlowReportsTrafficOnce(t *testing.T) {
 		udpFlows: map[serverUDPKey]*serverUDPFlow{key: flow},
 		onTraffic: func(sessionID, addr string, bytesIn, bytesOut uint64) {
 			calls++
-			if sessionID != "session-1" {
-				t.Fatalf("sessionID = %q, want session-1", sessionID)
+			if sessionID != testUDPSessionID {
+				t.Fatalf("sessionID = %q, want %s", sessionID, testUDPSessionID)
 			}
 			if addr != "8.8.8.8:53" {
-				t.Fatalf("addr = %q, want 8.8.8.8:53", addr)
+				t.Fatalf("addr = %q, want %s:53", addr, testUDPDNSGoogle)
 			}
 			if bytesIn != 11 || bytesOut != 17 {
 				t.Fatalf("traffic = %d/%d, want 11/17", bytesIn, bytesOut)
@@ -53,23 +60,23 @@ func TestCloseUDPFlowReportsTrafficOnce(t *testing.T) {
 }
 
 func TestGetOrCreateUDPFlowRejectsNewFlowAtLimit(t *testing.T) {
-	key := serverUDPKey{peerID: "peer-1", flowID: 1}
+	key := serverUDPKey{peerID: testUDPPeerID, flowID: 1}
 	s := &Server{
 		maxUDPFlows: 1,
 		udpFlows: map[serverUDPKey]*serverUDPFlow{
 			key: {
 				key:       key,
 				conn:      noopConn{},
-				endpoint:  udpwire.Endpoint{Host: "8.8.8.8", Port: 53},
-				sessionID: "session-1",
+				endpoint:  udpwire.Endpoint{Host: testUDPDNSGoogle, Port: 53},
+				sessionID: testUDPSessionID,
 			},
 		},
 	}
 
 	_, err := s.getOrCreateUDPFlow(
-		serverUDPKey{peerID: "peer-1", flowID: 2},
-		udpwire.Endpoint{Host: "1.1.1.1", Port: 53},
-		"session-1",
+		serverUDPKey{peerID: testUDPPeerID, flowID: 2},
+		udpwire.Endpoint{Host: testUDPDNSCloudflare, Port: 53},
+		testUDPSessionID,
 	)
 	if !errors.Is(err, errTooManyUDPFlows) {
 		t.Fatalf("getOrCreateUDPFlow() error = %v, want %v", err, errTooManyUDPFlows)
@@ -77,19 +84,19 @@ func TestGetOrCreateUDPFlowRejectsNewFlowAtLimit(t *testing.T) {
 }
 
 func TestGetOrCreateUDPFlowReusesExistingWhenAtLimit(t *testing.T) {
-	key := serverUDPKey{peerID: "peer-1", flowID: 1}
+	key := serverUDPKey{peerID: testUDPPeerID, flowID: 1}
 	flow := &serverUDPFlow{
 		key:       key,
 		conn:      noopConn{},
-		endpoint:  udpwire.Endpoint{Host: "8.8.8.8", Port: 53},
-		sessionID: "session-1",
+		endpoint:  udpwire.Endpoint{Host: testUDPDNSGoogle, Port: 53},
+		sessionID: testUDPSessionID,
 	}
 	s := &Server{
 		maxUDPFlows: 1,
 		udpFlows:    map[serverUDPKey]*serverUDPFlow{key: flow},
 	}
 
-	got, err := s.getOrCreateUDPFlow(key, flow.endpoint, "session-1")
+	got, err := s.getOrCreateUDPFlow(key, flow.endpoint, testUDPSessionID)
 	if err != nil {
 		t.Fatalf("getOrCreateUDPFlow() error = %v", err)
 	}

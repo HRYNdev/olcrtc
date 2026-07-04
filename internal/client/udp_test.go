@@ -8,6 +8,8 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/udpwire"
 )
 
+const clientTestDNSCloudflare = "1.1.1.1"
+
 func TestRemoveIdleUDPFlowsForConn(t *testing.T) {
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -26,7 +28,7 @@ func TestRemoveIdleUDPFlowsForConn(t *testing.T) {
 			1: {
 				conn:       conn,
 				clientAddr: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10001},
-				target:     udpwire.Endpoint{Host: "1.1.1.1", Port: 53},
+				target:     udpwire.Endpoint{Host: clientTestDNSCloudflare, Port: 53},
 				lastSeen:   now.Add(-udpFlowIdleTimeout - time.Second),
 			},
 			2: {
@@ -65,7 +67,7 @@ func TestUDPFlowIDReusesExistingWhenAtLimit(t *testing.T) {
 	defer func() { _ = conn.Close() }()
 
 	src := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10001}
-	target := udpwire.Endpoint{Host: "1.1.1.1", Port: 53}
+	target := udpwire.Endpoint{Host: clientTestDNSCloudflare, Port: 53}
 	c := &Client{
 		maxUDPFlows: 1,
 		udpFlows: map[uint64]clientUDPFlow{
@@ -100,7 +102,7 @@ func TestUDPFlowIDRejectsNewFlowAtLimit(t *testing.T) {
 			7: {
 				conn:       conn,
 				clientAddr: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10001},
-				target:     udpwire.Endpoint{Host: "1.1.1.1", Port: 53},
+				target:     udpwire.Endpoint{Host: clientTestDNSCloudflare, Port: 53},
 				lastSeen:   time.Now(),
 			},
 		},
