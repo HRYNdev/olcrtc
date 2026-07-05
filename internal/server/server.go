@@ -108,6 +108,7 @@ type Server struct {
 	doneOnce                     sync.Once
 	udpMu                        sync.Mutex
 	udpFlows                     map[serverUDPKey]*serverUDPFlow
+	udpPendingFlows              int
 }
 
 // peerStat holds the per-session info needed to report the live peer count

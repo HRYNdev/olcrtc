@@ -796,7 +796,7 @@ func (c *Client) handleSocks5(ctx context.Context, conn net.Conn) {
 		return
 	}
 	if req.cmd == socksCmdUDPAssociate {
-		c.handleUDPAssociate(ctx, conn)
+		c.handleUDPAssociate(ctx, conn, req)
 		return
 	}
 	if req.cmd != socksCmdConnect {
@@ -1007,6 +1007,12 @@ func (c *Client) readSocks5Addr(conn net.Conn, addrType byte) (string, error) {
 			return "", fmt.Errorf("read socks5 domain: %w", err)
 		}
 		return string(buf), nil
+	case 4: // IPv6
+		buf := make([]byte, 16)
+		if _, err := io.ReadFull(conn, buf); err != nil {
+			return "", fmt.Errorf("read socks5 ipv6: %w", err)
+		}
+		return net.IP(buf).String(), nil
 	default:
 		return "", fmt.Errorf("%w: %d", ErrUnsupportedAddressType, addrType)
 	}

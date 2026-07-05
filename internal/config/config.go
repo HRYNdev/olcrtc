@@ -170,8 +170,8 @@ type Traffic struct {
 
 // UDP controls the lossy SOCKS5 UDP ASSOCIATE relay.
 type UDP struct {
-	Disabled bool `yaml:"disabled"`
-	MaxFlows int  `yaml:"max_flows"`
+	Disabled *bool `yaml:"disabled"`
+	MaxFlows *int  `yaml:"max_flows"`
 }
 
 // Gen controls room-generation mode.
@@ -298,8 +298,12 @@ func Apply(dst session.Config, f File) session.Config {
 	dst.TrafficMaxPayloadSize = pickInt(dst.TrafficMaxPayloadSize, f.Traffic.MaxPayloadSize)
 	dst.TrafficMinDelay = pickString(dst.TrafficMinDelay, f.Traffic.MinDelay)
 	dst.TrafficMaxDelay = pickString(dst.TrafficMaxDelay, f.Traffic.MaxDelay)
-	dst.UDPDisabled = dst.UDPDisabled || f.UDP.Disabled
-	dst.UDPMaxFlows = pickInt(dst.UDPMaxFlows, f.UDP.MaxFlows)
+	if f.UDP.Disabled != nil {
+		dst.UDPDisabled = dst.UDPDisabled || *f.UDP.Disabled
+	}
+	if f.UDP.MaxFlows != nil {
+		dst.UDPMaxFlows = pickInt(dst.UDPMaxFlows, *f.UDP.MaxFlows)
+	}
 	dst.Amount = pickInt(dst.Amount, f.Gen.Amount)
 	return dst
 }
@@ -348,8 +352,12 @@ func ApplyProfile(base session.Config, p Profile) session.Config {
 	dst.TrafficMaxPayloadSize = overlayInt(dst.TrafficMaxPayloadSize, p.Traffic.MaxPayloadSize)
 	dst.TrafficMinDelay = overlayString(dst.TrafficMinDelay, p.Traffic.MinDelay)
 	dst.TrafficMaxDelay = overlayString(dst.TrafficMaxDelay, p.Traffic.MaxDelay)
-	dst.UDPDisabled = dst.UDPDisabled || p.UDP.Disabled
-	dst.UDPMaxFlows = overlayInt(dst.UDPMaxFlows, p.UDP.MaxFlows)
+	if p.UDP.Disabled != nil {
+		dst.UDPDisabled = *p.UDP.Disabled
+	}
+	if p.UDP.MaxFlows != nil {
+		dst.UDPMaxFlows = *p.UDP.MaxFlows
+	}
 	return dst
 }
 

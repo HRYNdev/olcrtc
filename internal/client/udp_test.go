@@ -145,6 +145,39 @@ func TestUDPFlowIDReusesExistingWhenAtLimit(t *testing.T) {
 	}
 }
 
+func TestUDPAssociationSourceAllowsBoundPeer(t *testing.T) {
+	tcpConn := tcpAddrConn{remote: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5000}}
+	src, err := udpAssociationAllowedSource(tcpConn, socksRequest{addr: "127.0.0.1", port: 4000})
+	if err != nil {
+		t.Fatalf("udpAssociationAllowedSource() error = %v", err)
+	}
+
+	if !src.allows(clientTestUDPAddr(4000)) {
+		t.Fatal("expected matching UDP source to be allowed")
+	}
+	if src.allows(clientTestUDPAddr(4001)) {
+		t.Fatal("expected wrong UDP source port to be rejected")
+	}
+	if src.allows(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 2), Port: 4000}) {
+		t.Fatal("expected wrong UDP source IP to be rejected")
+	}
+}
+
+func TestUDPAssociationSourceAllowsZeroRequestEndpoint(t *testing.T) {
+	tcpConn := tcpAddrConn{remote: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5000}}
+	src, err := udpAssociationAllowedSource(tcpConn, socksRequest{addr: "0.0.0.0"})
+	if err != nil {
+		t.Fatalf("udpAssociationAllowedSource() error = %v", err)
+	}
+
+	if !src.allows(clientTestUDPAddr(4000)) {
+		t.Fatal("expected TCP peer IP with any UDP port to be allowed")
+	}
+	if src.allows(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 2), Port: 4000}) {
+		t.Fatal("expected different source IP to be rejected")
+	}
+}
+
 func TestUDPFlowIDRejectsNewFlowAtLimit(t *testing.T) {
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -265,3 +298,16 @@ func BenchmarkUDPFlowIDExistingAtLimit(b *testing.B) {
 		}
 	}
 }
+
+type tcpAddrConn struct {
+	remote *net.TCPAddr
+}
+
+func (c tcpAddrConn) Read(_ []byte) (int, error)         { return 0, net.ErrClosed }
+func (c tcpAddrConn) Write(p []byte) (int, error)        { return len(p), nil }
+func (c tcpAddrConn) Close() error                       { return nil }
+func (c tcpAddrConn) LocalAddr() net.Addr                { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)} }
+func (c tcpAddrConn) RemoteAddr() net.Addr               { return c.remote }
+func (c tcpAddrConn) SetDeadline(_ time.Time) error      { return nil }
+func (c tcpAddrConn) SetReadDeadline(_ time.Time) error  { return nil }
+func (c tcpAddrConn) SetWriteDeadline(_ time.Time) error { return nil }

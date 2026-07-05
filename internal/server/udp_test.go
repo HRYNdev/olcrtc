@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"net"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -83,6 +84,39 @@ func TestGetOrCreateUDPFlowRejectsNewFlowAtLimit(t *testing.T) {
 	}
 }
 
+func TestGetOrCreateUDPFlowRejectsPendingAtLimit(t *testing.T) {
+	s := &Server{
+		maxUDPFlows:     1,
+		udpFlows:        map[serverUDPKey]*serverUDPFlow{},
+		udpPendingFlows: 1,
+	}
+
+	_, err := s.getOrCreateUDPFlow(
+		serverUDPKey{peerID: testUDPPeerID, flowID: 2},
+		udpwire.Endpoint{Host: testUDPDNSCloudflare, Port: 53},
+		testUDPSessionID,
+	)
+	if !errors.Is(err, errTooManyUDPFlows) {
+		t.Fatalf("getOrCreateUDPFlow() error = %v, want %v", err, errTooManyUDPFlows)
+	}
+}
+
+func TestGetOrCreateUDPFlowRejectsUpstreamProxy(t *testing.T) {
+	s := &Server{
+		socksProxyAddr: "127.0.0.1",
+		udpFlows:       map[serverUDPKey]*serverUDPFlow{},
+	}
+
+	_, err := s.getOrCreateUDPFlow(
+		serverUDPKey{peerID: testUDPPeerID, flowID: 2},
+		udpwire.Endpoint{Host: testUDPDNSCloudflare, Port: 53},
+		testUDPSessionID,
+	)
+	if !errors.Is(err, errUDPProxyRequired) {
+		t.Fatalf("getOrCreateUDPFlow() error = %v, want %v", err, errUDPProxyRequired)
+	}
+}
+
 func TestGetOrCreateUDPFlowReusesExistingWhenAtLimit(t *testing.T) {
 	key := serverUDPKey{peerID: testUDPPeerID, flowID: 1}
 	flow := &serverUDPFlow{
@@ -102,6 +136,58 @@ func TestGetOrCreateUDPFlowReusesExistingWhenAtLimit(t *testing.T) {
 	}
 	if got != flow {
 		t.Fatal("getOrCreateUDPFlow() did not reuse existing flow")
+	}
+}
+
+func TestValidateResolvedUDPAddrBlocksSpecialTargets(t *testing.T) {
+	s := &Server{}
+	tests := []string{
+		"127.0.0.1",
+		"10.0.0.1",
+		"169.254.1.1",
+		"224.0.0.1",
+		"255.255.255.255",
+		"::1",
+		"fc00::1",
+		"::ffff:127.0.0.1",
+		"::ffff:10.0.0.1",
+	}
+	for _, tc := range tests {
+		t.Run(tc, func(t *testing.T) {
+			addr, err := netip.ParseAddr(tc)
+			if err != nil {
+				t.Fatalf("parse addr: %v", err)
+			}
+			if _, err := s.validateResolvedUDPAddr(addr); !errors.Is(err, errBlockedUDPTarget) {
+				t.Fatalf("validateResolvedUDPAddr(%s) error = %v, want %v", tc, err, errBlockedUDPTarget)
+			}
+		})
+	}
+}
+
+func TestValidateResolvedUDPAddrSelectsNetwork(t *testing.T) {
+	s := &Server{}
+	tests := []struct {
+		addr        string
+		wantNetwork string
+	}{
+		{addr: testUDPDNSGoogle, wantNetwork: "udp4"},
+		{addr: "2001:4860:4860::8888", wantNetwork: "udp6"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.addr, func(t *testing.T) {
+			addr, err := netip.ParseAddr(tt.addr)
+			if err != nil {
+				t.Fatalf("parse addr: %v", err)
+			}
+			got, err := s.validateResolvedUDPAddr(addr)
+			if err != nil {
+				t.Fatalf("validateResolvedUDPAddr() error = %v", err)
+			}
+			if got.network != tt.wantNetwork {
+				t.Fatalf("network = %q, want %q", got.network, tt.wantNetwork)
+			}
+		})
 	}
 }
 

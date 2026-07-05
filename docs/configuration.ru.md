@@ -86,6 +86,8 @@ olcrtc /etc/olcrtc/client.yaml
 
 `mode: cnc` запрещает слушать не-loopback адрес (`0.0.0.0`, LAN IP и т.п.), если не заданы оба поля `socks.user` и `socks.pass`.
 
+Если задан `socks.proxy_addr`, серверный TCP egress идет через этот upstream SOCKS5-прокси. SOCKS5 UDP ASSOCIATE через upstream-прокси пока не реализован, поэтому UDP relay в этом режиме отклоняется и не откатывается на прямой UDP egress.
+
 ## Обязательный минимум
 
 ### Сервер

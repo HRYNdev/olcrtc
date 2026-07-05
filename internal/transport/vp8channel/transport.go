@@ -1378,7 +1378,7 @@ func (p *streamTransport) handleDatagramFrame(src uint32, payload []byte) {
 	}
 	switch {
 	case !p.peerConfirmed.Load():
-		p.handleFirstPeer(src)
+		return
 	case src != p.peerEpoch.Load():
 		p.maybePeerRestart(src)
 		return

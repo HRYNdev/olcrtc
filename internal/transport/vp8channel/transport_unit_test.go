@@ -305,6 +305,17 @@ func TestHandleIncomingDatagramSinglePeer(t *testing.T) {
 		},
 	}
 
+	tr.handleIncomingFrame(mkDatagramFrame(tr.bindingToken, 0x300, tr.localEpoch, []byte("early")))
+	select {
+	case msg := <-got:
+		t.Fatalf("unexpected pre-latch datagram: %q", msg)
+	default:
+	}
+	if tr.peerConfirmed.Load() {
+		t.Fatal("datagram should not confirm peer")
+	}
+
+	tr.handleFirstPeer(0x200)
 	tr.handleIncomingFrame(mkDatagramFrame(tr.bindingToken, 0x200, tr.localEpoch, []byte("udp")))
 	select {
 	case msg := <-got:
@@ -313,9 +324,6 @@ func TestHandleIncomingDatagramSinglePeer(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("datagram callback was not called")
-	}
-	if tr.peerEpoch.Load() != 0x200 {
-		t.Fatalf("peer epoch = 0x%08x, want 0x200", tr.peerEpoch.Load())
 	}
 
 	tr.handleIncomingFrame(mkDatagramFrame(tr.bindingToken, 0x300, 0x999, []byte("foreign-dst")))

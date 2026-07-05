@@ -26,7 +26,13 @@ var (
 	errBlockedUDPTarget = errors.New("blocked udp target")
 	errNoUDPRecords     = errors.New("resolve udp target: no A records")
 	errTooManyUDPFlows  = errors.New("too many udp flows")
+	errUDPProxyRequired = errors.New("udp relay requires upstream socks5 udp associate")
 )
+
+type udpDialTarget struct {
+	network string
+	host    string
+}
 
 type serverUDPKey struct {
 	peerID string
@@ -99,27 +105,32 @@ func (s *Server) getOrCreateUDPFlow(
 	endpoint udpwire.Endpoint,
 	sessionID string,
 ) (*serverUDPFlow, error) {
+	if s.socksProxyAddr != "" {
+		return nil, errUDPProxyRequired
+	}
 	s.udpMu.Lock()
 	if flow := s.udpFlows[key]; flow != nil {
 		s.udpMu.Unlock()
 		return flow, nil
 	}
-	if len(s.udpFlows) >= normalizeMaxUDPFlows(s.maxUDPFlows) {
+	if len(s.udpFlows)+s.udpPendingFlows >= normalizeMaxUDPFlows(s.maxUDPFlows) {
 		s.udpMu.Unlock()
 		return nil, errTooManyUDPFlows
 	}
+	s.udpPendingFlows++
 	s.udpMu.Unlock()
+	defer s.releaseUDPPendingFlow()
 
-	dialHost, err := s.resolveUDPTarget(endpoint)
+	target, err := s.resolveUDPTarget(endpoint)
 	if err != nil {
 		return nil, err
 	}
-	addr := net.JoinHostPort(dialHost, strconv.Itoa(int(endpoint.Port)))
+	addr := net.JoinHostPort(target.host, strconv.Itoa(int(endpoint.Port)))
 	dialer := &net.Dialer{
 		Timeout:  10 * time.Second,
 		Resolver: s.resolver,
 	}
-	conn, err := dialer.DialContext(s.baseCtx, "udp4", addr)
+	conn, err := dialer.DialContext(s.udpBaseCtx(), target.network, addr)
 	if err != nil {
 		return nil, fmt.Errorf("udp dial failed: %w", err)
 	}
@@ -149,6 +160,21 @@ func (s *Server) getOrCreateUDPFlow(
 	return flow, nil
 }
 
+func (s *Server) releaseUDPPendingFlow() {
+	s.udpMu.Lock()
+	if s.udpPendingFlows > 0 {
+		s.udpPendingFlows--
+	}
+	s.udpMu.Unlock()
+}
+
+func (s *Server) udpBaseCtx() context.Context {
+	if s.baseCtx != nil {
+		return s.baseCtx
+	}
+	return context.Background()
+}
+
 func (s *Server) readUDPFlow(flow *serverUDPFlow) {
 	buf := make([]byte, udpRelayBufferSize)
 	for {
@@ -170,7 +196,6 @@ func (s *Server) readUDPFlow(flow *serverUDPFlow) {
 		if n <= 0 {
 			continue
 		}
-		flow.bytesOut.Add(uint64(n))
 		flow.touch(time.Now())
 		frame := udpwire.Frame{
 			Type:     udpwire.FrameTypePacket,
@@ -178,7 +203,9 @@ func (s *Server) readUDPFlow(flow *serverUDPFlow) {
 			Endpoint: flow.endpoint,
 			Payload:  buf[:n],
 		}
-		s.sendUDPFrame(flow.key.peerID, frame)
+		if s.sendUDPFrame(flow.key.peerID, frame) {
+			flow.bytesOut.Add(uint64(n))
+		}
 	}
 }
 
@@ -186,32 +213,35 @@ func (flow *serverUDPFlow) touch(now time.Time) {
 	_ = flow.conn.SetReadDeadline(now.Add(udpFlowIdleTimeout))
 }
 
-func (s *Server) sendUDPFrame(peerID string, frame udpwire.Frame) {
+func (s *Server) sendUDPFrame(peerID string, frame udpwire.Frame) bool {
 	wire, err := udpwire.Encode(frame)
 	if err != nil {
 		logger.Debugf("udp relay encode response failed: %v", err)
-		return
+		return false
 	}
 	enc, err := s.cipher.Encrypt(wire)
 	if err != nil {
 		logger.Debugf("udp relay encrypt response failed: %v", err)
-		return
+		return false
 	}
 	if peerID != "" {
 		if pdg, ok := s.ln.(transport.PeerDatagramTransport); ok {
 			if err := pdg.SendDatagramTo(peerID, enc); err != nil {
 				logger.Debugf("udp relay peer send failed: %v", err)
+				return false
 			}
-			return
+			return true
 		}
 	}
 	dg, ok := s.ln.(transport.DatagramTransport)
 	if !ok {
-		return
+		return false
 	}
 	if err := dg.SendDatagram(enc); err != nil {
 		logger.Debugf("udp relay send failed: %v", err)
+		return false
 	}
+	return true
 }
 
 func (s *Server) closeUDPFlow(key serverUDPKey) {
@@ -269,33 +299,29 @@ func (s *Server) udpSessionID(peerID string) string {
 	return ps.sessionID
 }
 
-func (s *Server) resolveUDPTarget(endpoint udpwire.Endpoint) (string, error) {
+func (s *Server) resolveUDPTarget(endpoint udpwire.Endpoint) (udpDialTarget, error) {
 	if endpoint.Port == 0 || endpoint.Host == "" {
-		return "", udpwire.ErrInvalidEndpoint
+		return udpDialTarget{}, udpwire.ErrInvalidEndpoint
 	}
 	if addr, err := netip.ParseAddr(endpoint.Host); err == nil {
 		return s.validateResolvedUDPAddr(addr)
 	}
 	addrs, err := s.lookupUDPTarget(endpoint.Host)
 	if err != nil {
-		return "", err
+		return udpDialTarget{}, err
 	}
 	for _, addr := range addrs {
 		if _, err := s.validateResolvedUDPAddr(addr); err != nil {
-			return "", err
+			return udpDialTarget{}, err
 		}
 	}
-	return addrs[0].String(), nil
+	return udpTargetFromAddr(addrs[0].Unmap()), nil
 }
 
 func (s *Server) lookupUDPTarget(host string) ([]netip.Addr, error) {
-	baseCtx := s.baseCtx
-	if baseCtx == nil {
-		baseCtx = context.Background()
-	}
-	ctx, cancel := context.WithTimeout(baseCtx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(s.udpBaseCtx(), 5*time.Second)
 	defer cancel()
-	addrs, err := s.resolver.LookupNetIP(ctx, "ip4", host)
+	addrs, err := s.resolver.LookupNetIP(ctx, "ip", host)
 	if err != nil {
 		return nil, fmt.Errorf("resolve udp target: %w", err)
 	}
@@ -305,18 +331,21 @@ func (s *Server) lookupUDPTarget(host string) ([]netip.Addr, error) {
 	return addrs, nil
 }
 
-func (s *Server) validateResolvedUDPAddr(addr netip.Addr) (string, error) {
+func (s *Server) validateResolvedUDPAddr(addr netip.Addr) (udpDialTarget, error) {
+	addr = addr.Unmap()
 	if !s.unsafeAllowPrivateUDPTargets && blockedUDPAddr(addr) {
-		return "", errBlockedUDPTarget
+		return udpDialTarget{}, errBlockedUDPTarget
 	}
-	return addr.String(), nil
+	return udpTargetFromAddr(addr), nil
+}
+
+func udpTargetFromAddr(addr netip.Addr) udpDialTarget {
+	if addr.Is4() {
+		return udpDialTarget{network: "udp4", host: addr.String()}
+	}
+	return udpDialTarget{network: "udp6", host: addr.String()}
 }
 
 func blockedUDPAddr(addr netip.Addr) bool {
-	return addr.IsUnspecified() ||
-		addr.IsLoopback() ||
-		addr.IsPrivate() ||
-		addr.IsLinkLocalUnicast() ||
-		addr.IsLinkLocalMulticast() ||
-		addr.IsMulticast()
+	return !addr.IsGlobalUnicast() || addr.IsPrivate()
 }

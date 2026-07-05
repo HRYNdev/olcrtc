@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
@@ -34,8 +35,14 @@ var (
 	errTooManyUDPFlows           = errors.New("too many udp flows")
 )
 
+type udpAssociationSource struct {
+	peerIP    netip.Addr
+	requestIP netip.Addr
+	port      int
+}
+
 //nolint:cyclop // SOCKS5 UDP associate lifecycle has several protocol failure exits.
-func (c *Client) handleUDPAssociate(ctx context.Context, tcpConn net.Conn) {
+func (c *Client) handleUDPAssociate(ctx context.Context, tcpConn net.Conn, req socksRequest) {
 	if c.udpDisabled {
 		_, _ = tcpConn.Write(replyHostUnreachable())
 		return
@@ -46,6 +53,12 @@ func (c *Client) handleUDPAssociate(ctx context.Context, tcpConn net.Conn) {
 		return
 	}
 	if !c.waitSessionReady(ctx) {
+		_, _ = tcpConn.Write(replyHostUnreachable())
+		return
+	}
+	allowedSource, err := udpAssociationAllowedSource(tcpConn, req)
+	if err != nil {
+		logger.Debugf("socks udp associate source invalid: %v", err)
 		_, _ = tcpConn.Write(replyHostUnreachable())
 		return
 	}
@@ -91,8 +104,51 @@ func (c *Client) handleUDPAssociate(ctx context.Context, tcpConn net.Conn) {
 			}
 			return
 		}
+		if !allowedSource.allows(src) {
+			logger.Debugf("drop socks udp packet from unbound source: %s", src.String())
+			continue
+		}
 		c.forwardLocalUDP(ctx, dg, udpConn, src, buf[:n])
 	}
+}
+
+func udpAssociationAllowedSource(tcpConn net.Conn, req socksRequest) (udpAssociationSource, error) {
+	remote, ok := tcpConn.RemoteAddr().(*net.TCPAddr)
+	if !ok || remote.IP == nil {
+		return udpAssociationSource{}, ErrUnsupportedAddressType
+	}
+	peerIP, err := netip.ParseAddr(remote.IP.String())
+	if err != nil {
+		return udpAssociationSource{}, fmt.Errorf("parse tcp peer ip: %w", err)
+	}
+	allowed := udpAssociationSource{peerIP: peerIP.Unmap(), port: req.port}
+	if req.addr == "" {
+		return allowed, nil
+	}
+	reqIP, ok := parseUDPRequestIP(req.addr)
+	if !ok {
+		return allowed, nil
+	}
+	allowed.requestIP = reqIP.Unmap()
+	return allowed, nil
+}
+
+func parseUDPRequestIP(addr string) (netip.Addr, bool) {
+	reqIP, err := netip.ParseAddr(addr)
+	if err != nil || reqIP.IsUnspecified() {
+		return netip.Addr{}, false
+	}
+	return reqIP, true
+}
+
+func (s udpAssociationSource) allows(src *net.UDPAddr) bool {
+	if src == nil || src.AddrPort().Addr().Unmap() != s.peerIP {
+		return false
+	}
+	if s.requestIP.IsValid() && src.AddrPort().Addr().Unmap() != s.requestIP {
+		return false
+	}
+	return s.port == 0 || src.Port == s.port
 }
 
 func listenUDPAssociate(tcpConn net.Conn) (*net.UDPConn, error) {

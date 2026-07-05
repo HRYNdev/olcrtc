@@ -219,6 +219,28 @@ failover:
 	requireSecondProfile(t, second)
 }
 
+func TestApplyProfileCanOverrideUDPZeroValues(t *testing.T) {
+	disabled := false
+	maxFlows := 0
+	base := session.Config{UDPDisabled: true, UDPMaxFlows: 10}
+	got := ApplyProfile(base, Profile{UDP: UDP{Disabled: &disabled, MaxFlows: &maxFlows}})
+
+	if got.UDPDisabled {
+		t.Fatal("UDPDisabled = true, want false")
+	}
+	if got.UDPMaxFlows != 0 {
+		t.Fatalf("UDPMaxFlows = %d, want 0", got.UDPMaxFlows)
+	}
+}
+
+func TestApplyKeepsCLIUDPDisabled(t *testing.T) {
+	disabled := false
+	got := Apply(session.Config{UDPDisabled: true}, File{UDP: UDP{Disabled: &disabled}})
+	if !got.UDPDisabled {
+		t.Fatal("UDPDisabled = false, want CLI true to win")
+	}
+}
+
 func requireFirstProfile(t *testing.T, first session.Config) {
 	t.Helper()
 	want := session.Config{

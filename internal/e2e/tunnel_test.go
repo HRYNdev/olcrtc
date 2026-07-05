@@ -1741,6 +1741,28 @@ func TestClientServerSOCKSUDPOverMemoryVP8Channel(t *testing.T) {
 	}
 }
 
+func TestClientServerSOCKSUDPBlocksPrivateTargetByDefault(t *testing.T) {
+	echoAddr := startUDPEchoServer(t)
+	rt := startMemoryTunnel(t, transportVP8, false)
+	defer rt.stop(t)
+
+	udpConn, tcpConn, relayAddr := connectViaSOCKSUDP(t, rt.socksAddr)
+	defer func() { _ = udpConn.Close() }()
+	defer func() { _ = tcpConn.Close() }()
+
+	packet := buildSocksUDPPacket(t, echoAddr, []byte("blocked"))
+	if _, err := udpConn.WriteToUDP(packet, relayAddr); err != nil {
+		t.Fatalf("write socks udp packet: %v", err)
+	}
+	if err := udpConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+		t.Fatalf("set udp read deadline: %v", err)
+	}
+	buf := make([]byte, 4096)
+	if n, _, err := udpConn.ReadFromUDP(buf); err == nil {
+		t.Fatalf("unexpected udp response from blocked target: %x", buf[:n])
+	}
+}
+
 func TestFrequentReconnectsStillAllowNewSOCKSConnections(t *testing.T) {
 	echoAddr := startEchoServer(t)
 	rt := startTunnel(t)
