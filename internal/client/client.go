@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,6 +80,7 @@ type Client struct {
 	sessionReady chan struct{}
 	udpMu        sync.Mutex
 	udpFlows     map[uint64]clientUDPFlow
+	udpFlowIndex map[clientUDPFlowKey]uint64
 	udpDisabled  bool
 	maxUDPFlows  int
 }
@@ -154,6 +156,7 @@ func RunWithReady(ctx context.Context, cfg Config, onReady func()) error {
 		health:       runtime.NewHealthTracker(cfg.OnHealth),
 		sessionReady: make(chan struct{}),
 		udpFlows:     make(map[uint64]clientUDPFlow),
+		udpFlowIndex: make(map[clientUDPFlowKey]uint64),
 		udpDisabled:  cfg.UDPDisabled,
 		maxUDPFlows:  normalizeMaxUDPFlows(cfg.UDPMaxFlows),
 	}
@@ -1045,4 +1048,10 @@ type clientUDPFlow struct {
 	clientAddr *net.UDPAddr
 	target     udpwire.Endpoint
 	lastSeen   time.Time
+}
+
+type clientUDPFlowKey struct {
+	conn       *net.UDPConn
+	clientAddr netip.AddrPort
+	target     udpwire.Endpoint
 }

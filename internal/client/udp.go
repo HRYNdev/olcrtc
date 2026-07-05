@@ -188,12 +188,13 @@ func (c *Client) udpFlowID(conn *net.UDPConn, src *net.UDPAddr, target udpwire.E
 	c.udpMu.Lock()
 	defer c.udpMu.Unlock()
 	now := time.Now()
-	for id, flow := range c.udpFlows {
-		if flow.conn == conn && flow.clientAddr.String() == src.String() && flow.target == target {
-			flow.lastSeen = now
-			c.udpFlows[id] = flow
-			return id, true
-		}
+	c.ensureUDPFlowIndexLocked()
+	key := clientUDPFlowIndexKey(conn, src, target)
+	if id, ok := c.udpFlowIndex[key]; ok {
+		flow := c.udpFlows[id]
+		flow.lastSeen = now
+		c.udpFlows[id] = flow
+		return id, true
 	}
 	if len(c.udpFlows) >= normalizeMaxUDPFlows(c.maxUDPFlows) {
 		return 0, false
@@ -202,17 +203,38 @@ func (c *Client) udpFlowID(conn *net.UDPConn, src *net.UDPAddr, target udpwire.E
 		id := randomUDPFlowID()
 		if _, exists := c.udpFlows[id]; !exists {
 			c.udpFlows[id] = clientUDPFlow{conn: conn, clientAddr: src, target: target, lastSeen: now}
+			c.udpFlowIndex[key] = id
 			return id, true
 		}
 	}
 }
 
+func (c *Client) ensureUDPFlowIndexLocked() {
+	if c.udpFlowIndex != nil {
+		return
+	}
+	c.udpFlowIndex = make(map[clientUDPFlowKey]uint64, len(c.udpFlows))
+	for id, flow := range c.udpFlows {
+		c.udpFlowIndex[clientUDPFlowIndexKey(flow.conn, flow.clientAddr, flow.target)] = id
+	}
+}
+
+func clientUDPFlowIndexKey(
+	conn *net.UDPConn,
+	src *net.UDPAddr,
+	target udpwire.Endpoint,
+) clientUDPFlowKey {
+	return clientUDPFlowKey{conn: conn, clientAddr: src.AddrPort(), target: target}
+}
+
 func (c *Client) removeUDPFlowsForConn(conn *net.UDPConn) {
 	var closed []uint64
 	c.udpMu.Lock()
+	c.ensureUDPFlowIndexLocked()
 	for id, flow := range c.udpFlows {
 		if flow.conn == conn {
 			delete(c.udpFlows, id)
+			delete(c.udpFlowIndex, clientUDPFlowIndexKey(flow.conn, flow.clientAddr, flow.target))
 			closed = append(closed, id)
 		}
 	}
@@ -236,9 +258,11 @@ func (c *Client) sweepUDPFlows(ctx context.Context, conn *net.UDPConn) {
 func (c *Client) removeIdleUDPFlowsForConn(conn *net.UDPConn, now time.Time) {
 	var closed []uint64
 	c.udpMu.Lock()
+	c.ensureUDPFlowIndexLocked()
 	for id, flow := range c.udpFlows {
 		if flow.conn == conn && now.Sub(flow.lastSeen) >= udpFlowIdleTimeout {
 			delete(c.udpFlows, id)
+			delete(c.udpFlowIndex, clientUDPFlowIndexKey(flow.conn, flow.clientAddr, flow.target))
 			closed = append(closed, id)
 		}
 	}
@@ -326,7 +350,7 @@ func parseSocksUDP(packet []byte) (udpwire.Endpoint, []byte, error) {
 		return udpwire.Endpoint{}, nil, errSocksUDPMissingPort
 	}
 	port := binary.BigEndian.Uint16(packet[off : off+2])
-	payload := append([]byte(nil), packet[off+2:]...)
+	payload := packet[off+2:]
 	return udpwire.Endpoint{Host: host, Port: port}, payload, nil
 }
 

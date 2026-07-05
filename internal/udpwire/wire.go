@@ -103,6 +103,9 @@ func Encode(f Frame) ([]byte, error) {
 }
 
 // Decode parses one wire frame.
+//
+// The returned Payload aliases data. Callers that need to retain a decoded
+// packet after reusing the input buffer must copy Payload themselves.
 func Decode(data []byte) (Frame, error) { //nolint:cyclop // Compact binary protocol decoder.
 	if len(data) < headerLen {
 		return Frame{}, ErrFrameTooShort
@@ -136,7 +139,7 @@ func Decode(data []byte) (Frame, error) { //nolint:cyclop // Compact binary prot
 		return Frame{}, err
 	}
 	f.Endpoint.Host = host
-	f.Payload = append([]byte(nil), data[headerLen+addrLen:]...)
+	f.Payload = data[headerLen+addrLen:]
 	if len(f.Payload) > MaxPayloadSize {
 		return Frame{}, ErrPayloadTooLarge
 	}

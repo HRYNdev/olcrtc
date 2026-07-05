@@ -50,6 +50,28 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDecodePayloadAliasesWireBuffer(t *testing.T) {
+	encoded, err := Encode(Frame{
+		Type:     FrameTypePacket,
+		FlowID:   1,
+		Endpoint: Endpoint{Host: "127.0.0.1", Port: 53},
+		Payload:  []byte("payload"),
+	})
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+
+	got, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	encoded[len(encoded)-1] = 'X'
+
+	if string(got.Payload) != "payloaX" {
+		t.Fatalf("decoded payload does not alias wire buffer: %q", got.Payload)
+	}
+}
+
 func TestEncodeRejectsInvalidFrames(t *testing.T) {
 	oversized := make([]byte, MaxPayloadSize+1)
 	tests := []struct {
@@ -112,6 +134,69 @@ func TestEncodeRejectsInvalidFrames(t *testing.T) {
 				t.Fatalf("Encode() error = %v, want %v", err, tt.want)
 			}
 		})
+	}
+}
+
+func BenchmarkEncodeIPv4Packet(b *testing.B) {
+	payload := bytes.Repeat([]byte{0xab}, MaxPayloadSize)
+	frame := Frame{
+		Type:     FrameTypePacket,
+		FlowID:   1,
+		Endpoint: Endpoint{Host: "8.8.8.8", Port: 53},
+		Payload:  payload,
+	}
+
+	b.ReportAllocs()
+	b.SetBytes(int64(len(payload)))
+	b.ResetTimer()
+	for range b.N {
+		if _, err := Encode(frame); err != nil {
+			b.Fatalf("Encode() error = %v", err)
+		}
+	}
+}
+
+func BenchmarkDecodeIPv4Packet(b *testing.B) {
+	payload := bytes.Repeat([]byte{0xab}, MaxPayloadSize)
+	wire, err := Encode(Frame{
+		Type:     FrameTypePacket,
+		FlowID:   1,
+		Endpoint: Endpoint{Host: "8.8.8.8", Port: 53},
+		Payload:  payload,
+	})
+	if err != nil {
+		b.Fatalf("Encode() error = %v", err)
+	}
+
+	b.ReportAllocs()
+	b.SetBytes(int64(len(payload)))
+	b.ResetTimer()
+	for range b.N {
+		if _, err := Decode(wire); err != nil {
+			b.Fatalf("Decode() error = %v", err)
+		}
+	}
+}
+
+func BenchmarkDecodeDomainPacket(b *testing.B) {
+	payload := bytes.Repeat([]byte{0xab}, MaxPayloadSize)
+	wire, err := Encode(Frame{
+		Type:     FrameTypePacket,
+		FlowID:   1,
+		Endpoint: Endpoint{Host: testHost, Port: 443},
+		Payload:  payload,
+	})
+	if err != nil {
+		b.Fatalf("Encode() error = %v", err)
+	}
+
+	b.ReportAllocs()
+	b.SetBytes(int64(len(payload)))
+	b.ResetTimer()
+	for range b.N {
+		if _, err := Decode(wire); err != nil {
+			b.Fatalf("Decode() error = %v", err)
+		}
 	}
 }
 

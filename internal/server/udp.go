@@ -176,7 +176,7 @@ func (s *Server) readUDPFlow(flow *serverUDPFlow) {
 			Type:     udpwire.FrameTypePacket,
 			FlowID:   flow.key.flowID,
 			Endpoint: flow.endpoint,
-			Payload:  append([]byte(nil), buf[:n]...),
+			Payload:  buf[:n],
 		}
 		s.sendUDPFrame(flow.key.peerID, frame)
 	}
