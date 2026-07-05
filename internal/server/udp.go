@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"strconv"
@@ -26,12 +28,19 @@ var (
 	errBlockedUDPTarget = errors.New("blocked udp target")
 	errNoUDPRecords     = errors.New("resolve udp target: no A records")
 	errTooManyUDPFlows  = errors.New("too many udp flows")
-	errUDPProxyRequired = errors.New("udp relay requires upstream socks5 udp associate")
+	errSocksUDPReply    = errors.New("bad socks5 udp associate reply")
 )
 
 type udpDialTarget struct {
-	network string
-	host    string
+	network  string
+	host     string
+	endpoint udpwire.Endpoint
+}
+
+type socks5UDPConn struct {
+	tcpConn  net.Conn
+	udpConn  net.Conn
+	endpoint udpwire.Endpoint
 }
 
 type serverUDPKey struct {
@@ -105,9 +114,6 @@ func (s *Server) getOrCreateUDPFlow(
 	endpoint udpwire.Endpoint,
 	sessionID string,
 ) (*serverUDPFlow, error) {
-	if s.socksProxyAddr != "" {
-		return nil, errUDPProxyRequired
-	}
 	s.udpMu.Lock()
 	if flow := s.udpFlows[key]; flow != nil {
 		s.udpMu.Unlock()
@@ -121,18 +127,13 @@ func (s *Server) getOrCreateUDPFlow(
 	s.udpMu.Unlock()
 	defer s.releaseUDPPendingFlow()
 
-	target, err := s.resolveUDPTarget(endpoint)
+	target, err := s.resolveUDPTarget(endpoint, s.socksProxyAddr != "")
 	if err != nil {
 		return nil, err
 	}
-	addr := net.JoinHostPort(target.host, strconv.Itoa(int(endpoint.Port)))
-	dialer := &net.Dialer{
-		Timeout:  10 * time.Second,
-		Resolver: s.resolver,
-	}
-	conn, err := dialer.DialContext(s.udpBaseCtx(), target.network, addr)
+	conn, err := s.dialUDPFlow(target)
 	if err != nil {
-		return nil, fmt.Errorf("udp dial failed: %w", err)
+		return nil, err
 	}
 
 	flow := &serverUDPFlow{
@@ -160,12 +161,167 @@ func (s *Server) getOrCreateUDPFlow(
 	return flow, nil
 }
 
+func (s *Server) dialUDPFlow(target udpDialTarget) (net.Conn, error) {
+	if s.socksProxyAddr != "" {
+		conn, err := s.socks5UDPAssociate(target.endpoint)
+		if err != nil {
+			return nil, err
+		}
+		return conn, nil
+	}
+	addr := net.JoinHostPort(target.host, strconv.Itoa(int(target.endpoint.Port)))
+	dialer := &net.Dialer{Timeout: 10 * time.Second, Resolver: s.resolver}
+	conn, err := dialer.DialContext(s.udpBaseCtx(), target.network, addr)
+	if err != nil {
+		return nil, fmt.Errorf("udp dial failed: %w", err)
+	}
+	return conn, nil
+}
+
+func (s *Server) socks5UDPAssociate(endpoint udpwire.Endpoint) (net.Conn, error) {
+	proxyAddr := net.JoinHostPort(s.socksProxyAddr, strconv.Itoa(s.socksProxyPort))
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	tcpConn, err := dialer.DialContext(s.udpBaseCtx(), "tcp4", proxyAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to dial udp proxy: %w", err)
+	}
+	if err := s.socks5Authenticate(tcpConn); err != nil {
+		_ = tcpConn.Close()
+		return nil, err
+	}
+	if _, err := tcpConn.Write([]byte{5, 3, 0, 1, 0, 0, 0, 0, 0, 0}); err != nil {
+		_ = tcpConn.Close()
+		return nil, fmt.Errorf("failed to write socks5 udp associate req: %w", err)
+	}
+	relayAddr, err := readSocks5UDPAssociateReply(tcpConn)
+	if err != nil {
+		_ = tcpConn.Close()
+		return nil, err
+	}
+	udpConn, err := dialer.DialContext(s.udpBaseCtx(), relayAddr.Network(), relayAddr.String())
+	if err != nil {
+		_ = tcpConn.Close()
+		return nil, fmt.Errorf("failed to dial socks5 udp relay: %w", err)
+	}
+	return &socks5UDPConn{tcpConn: tcpConn, udpConn: udpConn, endpoint: endpoint}, nil
+}
+
+func readSocks5UDPAssociateReply(r io.Reader) (*net.UDPAddr, error) {
+	header := make([]byte, 4)
+	if _, err := io.ReadFull(r, header); err != nil {
+		return nil, fmt.Errorf("failed to read socks5 udp associate reply: %w", err)
+	}
+	if header[0] != 5 || header[1] != 0 {
+		return nil, fmt.Errorf("%w: code=%d", errSocksUDPReply, header[1])
+	}
+	host, err := readSocks5UDPReplyHost(r, header[3])
+	if err != nil {
+		return nil, err
+	}
+	var portBuf [2]byte
+	if _, err := io.ReadFull(r, portBuf[:]); err != nil {
+		return nil, fmt.Errorf("failed to read socks5 udp associate port: %w", err)
+	}
+	port := int(binary.BigEndian.Uint16(portBuf[:]))
+	addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(host, strconv.Itoa(port)))
+	if err != nil {
+		return nil, fmt.Errorf("resolve socks5 udp relay: %w", err)
+	}
+	return addr, nil
+}
+
+func readSocks5UDPReplyHost(r io.Reader, addrType byte) (string, error) {
+	switch addrType {
+	case 1:
+		buf := make([]byte, 4)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			return "", fmt.Errorf("failed to read socks5 udp relay ipv4: %w", err)
+		}
+		return net.IP(buf).String(), nil
+	case 3:
+		var size [1]byte
+		if _, err := io.ReadFull(r, size[:]); err != nil {
+			return "", fmt.Errorf("failed to read socks5 udp relay domain size: %w", err)
+		}
+		buf := make([]byte, int(size[0]))
+		if _, err := io.ReadFull(r, buf); err != nil {
+			return "", fmt.Errorf("failed to read socks5 udp relay domain: %w", err)
+		}
+		return string(buf), nil
+	case 4:
+		buf := make([]byte, 16)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			return "", fmt.Errorf("failed to read socks5 udp relay ipv6: %w", err)
+		}
+		return net.IP(buf).String(), nil
+	default:
+		return "", fmt.Errorf("%w: atyp=%d", errSocksUDPReply, addrType)
+	}
+}
+
 func (s *Server) releaseUDPPendingFlow() {
 	s.udpMu.Lock()
 	if s.udpPendingFlows > 0 {
 		s.udpPendingFlows--
 	}
 	s.udpMu.Unlock()
+}
+
+func (c *socks5UDPConn) Read(p []byte) (int, error) {
+	buf := make([]byte, udpRelayBufferSize)
+	for {
+		n, err := c.udpConn.Read(buf)
+		if err != nil {
+			return 0, fmt.Errorf("socks5 udp read: %w", err)
+		}
+		_, payload, err := decodeSocks5UDPPacket(buf[:n])
+		if err != nil {
+			continue
+		}
+		return copy(p, payload), nil
+	}
+}
+
+func (c *socks5UDPConn) Write(p []byte) (int, error) {
+	packet, err := encodeSocks5UDPPacket(c.endpoint, p)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := c.udpConn.Write(packet); err != nil {
+		return 0, fmt.Errorf("socks5 udp write: %w", err)
+	}
+	return len(p), nil
+}
+
+func (c *socks5UDPConn) Close() error {
+	err := c.udpConn.Close()
+	if tcpErr := c.tcpConn.Close(); err == nil {
+		err = tcpErr
+	}
+	if err != nil {
+		return fmt.Errorf("socks5 udp close: %w", err)
+	}
+	return nil
+}
+
+func (c *socks5UDPConn) LocalAddr() net.Addr  { return c.udpConn.LocalAddr() }
+func (c *socks5UDPConn) RemoteAddr() net.Addr { return c.udpConn.RemoteAddr() }
+func (c *socks5UDPConn) SetDeadline(t time.Time) error {
+	return c.wrapDeadline(c.udpConn.SetDeadline(t))
+}
+func (c *socks5UDPConn) SetReadDeadline(t time.Time) error {
+	return c.wrapDeadline(c.udpConn.SetReadDeadline(t))
+}
+
+func (c *socks5UDPConn) SetWriteDeadline(t time.Time) error {
+	return c.wrapDeadline(c.udpConn.SetWriteDeadline(t))
+}
+
+func (c *socks5UDPConn) wrapDeadline(err error) error {
+	if err != nil {
+		return fmt.Errorf("socks5 udp deadline: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) udpBaseCtx() context.Context {
@@ -299,12 +455,17 @@ func (s *Server) udpSessionID(peerID string) string {
 	return ps.sessionID
 }
 
-func (s *Server) resolveUDPTarget(endpoint udpwire.Endpoint) (udpDialTarget, error) {
+func (s *Server) resolveUDPTarget(endpoint udpwire.Endpoint, viaProxy bool) (udpDialTarget, error) {
 	if endpoint.Port == 0 || endpoint.Host == "" {
 		return udpDialTarget{}, udpwire.ErrInvalidEndpoint
 	}
 	if addr, err := netip.ParseAddr(endpoint.Host); err == nil {
-		return s.validateResolvedUDPAddr(addr)
+		target, err := s.validateResolvedUDPAddr(addr)
+		target.endpoint.Port = endpoint.Port
+		return target, err
+	}
+	if viaProxy {
+		return udpDialTarget{endpoint: endpoint}, nil
 	}
 	addrs, err := s.lookupUDPTarget(endpoint.Host)
 	if err != nil {
@@ -315,7 +476,7 @@ func (s *Server) resolveUDPTarget(endpoint udpwire.Endpoint) (udpDialTarget, err
 			return udpDialTarget{}, err
 		}
 	}
-	return udpTargetFromAddr(addrs[0].Unmap()), nil
+	return udpTargetFromAddr(addrs[0].Unmap(), endpoint.Port), nil
 }
 
 func (s *Server) lookupUDPTarget(host string) ([]netip.Addr, error) {
@@ -336,16 +497,99 @@ func (s *Server) validateResolvedUDPAddr(addr netip.Addr) (udpDialTarget, error)
 	if !s.unsafeAllowPrivateUDPTargets && blockedUDPAddr(addr) {
 		return udpDialTarget{}, errBlockedUDPTarget
 	}
-	return udpTargetFromAddr(addr), nil
+	return udpTargetFromAddr(addr, 0), nil
 }
 
-func udpTargetFromAddr(addr netip.Addr) udpDialTarget {
+func udpTargetFromAddr(addr netip.Addr, port uint16) udpDialTarget {
+	endpoint := udpwire.Endpoint{Host: addr.String(), Port: port}
 	if addr.Is4() {
-		return udpDialTarget{network: "udp4", host: addr.String()}
+		return udpDialTarget{network: "udp4", host: addr.String(), endpoint: endpoint}
 	}
-	return udpDialTarget{network: "udp6", host: addr.String()}
+	return udpDialTarget{network: "udp6", host: addr.String(), endpoint: endpoint}
 }
 
 func blockedUDPAddr(addr netip.Addr) bool {
 	return !addr.IsGlobalUnicast() || addr.IsPrivate()
+}
+
+func encodeSocks5UDPPacket(endpoint udpwire.Endpoint, payload []byte) ([]byte, error) {
+	addrType, addr, err := socks5UDPAddr(endpoint.Host)
+	if err != nil {
+		return nil, err
+	}
+	packet := make([]byte, 0, 4+len(addr)+2+len(payload))
+	packet = append(packet, 0, 0, 0, addrType)
+	if addrType == 3 {
+		packet = append(packet, byte(len(addr))) //nolint:gosec // domain length is capped by socks5UDPAddr.
+	}
+	packet = append(packet, addr...)
+	var port [2]byte
+	binary.BigEndian.PutUint16(port[:], endpoint.Port)
+	packet = append(packet, port[:]...)
+	packet = append(packet, payload...)
+	return packet, nil
+}
+
+func decodeSocks5UDPPacket(packet []byte) (udpwire.Endpoint, []byte, error) {
+	if len(packet) < 4 || packet[0] != 0 || packet[1] != 0 || packet[2] != 0 {
+		return udpwire.Endpoint{}, nil, udpwire.ErrInvalidEndpoint
+	}
+	host, off, err := decodeSocks5UDPHost(packet, 3)
+	if err != nil {
+		return udpwire.Endpoint{}, nil, err
+	}
+	if len(packet) < off+2 {
+		return udpwire.Endpoint{}, nil, udpwire.ErrInvalidEndpoint
+	}
+	port := binary.BigEndian.Uint16(packet[off : off+2])
+	return udpwire.Endpoint{Host: host, Port: port}, packet[off+2:], nil
+}
+
+func socks5UDPAddr(host string) (byte, []byte, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		if ip4 := ip.To4(); ip4 != nil {
+			return 1, ip4, nil
+		}
+		if ip16 := ip.To16(); ip16 != nil {
+			return 4, ip16, nil
+		}
+	}
+	if len(host) == 0 || len(host) > 255 {
+		return 0, nil, udpwire.ErrInvalidEndpoint
+	}
+	return 3, []byte(host), nil
+}
+
+func decodeSocks5UDPHost(packet []byte, off int) (string, int, error) {
+	if len(packet) <= off {
+		return "", 0, udpwire.ErrInvalidEndpoint
+	}
+	switch packet[off] {
+	case 1:
+		return decodeSocks5UDPFixedHost(packet, off, 4)
+	case 3:
+		return decodeSocks5UDPDomainHost(packet, off)
+	case 4:
+		return decodeSocks5UDPFixedHost(packet, off, 16)
+	default:
+		return "", 0, udpwire.ErrInvalidEndpoint
+	}
+}
+
+func decodeSocks5UDPFixedHost(packet []byte, off, size int) (string, int, error) {
+	if len(packet) < off+1+size {
+		return "", 0, udpwire.ErrInvalidEndpoint
+	}
+	return net.IP(packet[off+1 : off+1+size]).String(), off + 1 + size, nil
+}
+
+func decodeSocks5UDPDomainHost(packet []byte, off int) (string, int, error) {
+	if len(packet) < off+2 {
+		return "", 0, udpwire.ErrInvalidEndpoint
+	}
+	size := int(packet[off+1])
+	if size == 0 || len(packet) < off+2+size {
+		return "", 0, udpwire.ErrInvalidEndpoint
+	}
+	return string(packet[off+2 : off+2+size]), off + 2 + size, nil
 }

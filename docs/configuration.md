@@ -86,7 +86,7 @@ Ready-made examples:
 
 `mode: cnc` forbids listening on a non-loopback address (`0.0.0.0`, LAN IP etc.) unless both `socks.user` and `socks.pass` are set.
 
-When `socks.proxy_addr` is set, server-side TCP egress uses that upstream SOCKS5 proxy. SOCKS5 UDP ASSOCIATE through an upstream proxy is not implemented yet, so the UDP relay is rejected in that mode instead of falling back to direct UDP egress.
+When `socks.proxy_addr` is set, server-side TCP egress and UDP relay use that upstream SOCKS5 proxy.
 
 ## Required minimum
 

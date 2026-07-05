@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"errors"
 	"net"
 	"net/netip"
@@ -101,22 +102,6 @@ func TestGetOrCreateUDPFlowRejectsPendingAtLimit(t *testing.T) {
 	}
 }
 
-func TestGetOrCreateUDPFlowRejectsUpstreamProxy(t *testing.T) {
-	s := &Server{
-		socksProxyAddr: "127.0.0.1",
-		udpFlows:       map[serverUDPKey]*serverUDPFlow{},
-	}
-
-	_, err := s.getOrCreateUDPFlow(
-		serverUDPKey{peerID: testUDPPeerID, flowID: 2},
-		udpwire.Endpoint{Host: testUDPDNSCloudflare, Port: 53},
-		testUDPSessionID,
-	)
-	if !errors.Is(err, errUDPProxyRequired) {
-		t.Fatalf("getOrCreateUDPFlow() error = %v, want %v", err, errUDPProxyRequired)
-	}
-}
-
 func TestGetOrCreateUDPFlowReusesExistingWhenAtLimit(t *testing.T) {
 	key := serverUDPKey{peerID: testUDPPeerID, flowID: 1}
 	flow := &serverUDPFlow{
@@ -136,6 +121,100 @@ func TestGetOrCreateUDPFlowReusesExistingWhenAtLimit(t *testing.T) {
 	}
 	if got != flow {
 		t.Fatal("getOrCreateUDPFlow() did not reuse existing flow")
+	}
+}
+
+func TestSocks5UDPPacketRoundTrip(t *testing.T) {
+	endpoint := udpwire.Endpoint{Host: testUDPDNSGoogle, Port: 53}
+	payload := []byte("dns")
+	packet, err := encodeSocks5UDPPacket(endpoint, payload)
+	if err != nil {
+		t.Fatalf("encodeSocks5UDPPacket() error = %v", err)
+	}
+	gotEndpoint, gotPayload, err := decodeSocks5UDPPacket(packet)
+	if err != nil {
+		t.Fatalf("decodeSocks5UDPPacket() error = %v", err)
+	}
+	if gotEndpoint != endpoint {
+		t.Fatalf("endpoint = %+v, want %+v", gotEndpoint, endpoint)
+	}
+	if string(gotPayload) != string(payload) {
+		t.Fatalf("payload = %q, want %q", gotPayload, payload)
+	}
+}
+
+func TestSocks5UDPConnWrapsPayload(t *testing.T) {
+	udpLeft, udpRight := net.Pipe()
+	tcpLeft, tcpRight := net.Pipe()
+	defer func() { _ = udpRight.Close() }()
+	defer func() { _ = tcpRight.Close() }()
+	conn := &socks5UDPConn{
+		tcpConn:  tcpLeft,
+		udpConn:  udpLeft,
+		endpoint: udpwire.Endpoint{Host: testUDPDNSGoogle, Port: 53},
+	}
+	defer func() { _ = conn.Close() }()
+
+	assertSocks5UDPWrite(t, conn, udpRight)
+	assertSocks5UDPRead(t, conn, udpRight)
+}
+
+func assertSocks5UDPWrite(t *testing.T, conn *socks5UDPConn, peer net.Conn) {
+	t.Helper()
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := conn.Write([]byte("query"))
+		writeDone <- err
+	}()
+	buf := make([]byte, 128)
+	n, err := peer.Read(buf)
+	if err != nil {
+		t.Fatalf("read wrapped packet: %v", err)
+	}
+	endpoint, payload, err := decodeSocks5UDPPacket(buf[:n])
+	if err != nil {
+		t.Fatalf("decode wrapped packet: %v", err)
+	}
+	if endpoint.Host != testUDPDNSGoogle || endpoint.Port != 53 || string(payload) != "query" {
+		t.Fatalf("wrapped endpoint=%+v payload=%q", endpoint, payload)
+	}
+	if err := <-writeDone; err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+}
+
+func assertSocks5UDPRead(t *testing.T, conn *socks5UDPConn, peer net.Conn) {
+	t.Helper()
+	packet, err := encodeSocks5UDPPacket(udpwire.Endpoint{Host: testUDPDNSGoogle, Port: 53}, []byte("response"))
+	if err != nil {
+		t.Fatalf("encode response: %v", err)
+	}
+	readDone := make(chan []byte, 1)
+	go func() {
+		readBuf := make([]byte, 128)
+		n, readErr := conn.Read(readBuf)
+		if readErr != nil {
+			readDone <- nil
+			return
+		}
+		readDone <- readBuf[:n]
+	}()
+	if _, err := peer.Write(packet); err != nil {
+		t.Fatalf("write response: %v", err)
+	}
+	if got := <-readDone; string(got) != "response" {
+		t.Fatalf("Read() = %q, want response", got)
+	}
+}
+
+func TestReadSocks5UDPAssociateReply(t *testing.T) {
+	reply := []byte{5, 0, 0, 1, 127, 0, 0, 1, 0x12, 0x34}
+	addr, err := readSocks5UDPAssociateReply(bytes.NewReader(reply))
+	if err != nil {
+		t.Fatalf("readSocks5UDPAssociateReply() error = %v", err)
+	}
+	if addr.String() != "127.0.0.1:4660" {
+		t.Fatalf("addr = %s, want 127.0.0.1:4660", addr.String())
 	}
 }
 
