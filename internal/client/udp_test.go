@@ -10,7 +10,15 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/udpwire"
 )
 
-const clientTestDNSCloudflare = "1.1.1.1"
+const (
+	clientTestDNSCloudflare = "1.1.1.1"
+	clientTestDNSGoogle     = "8.8.8.8"
+	clientTestDNSQuad9      = "9.9.9.9"
+)
+
+func clientTestUDPAddr(port int) *net.UDPAddr {
+	return &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port}
+}
 
 func TestRemoveIdleUDPFlowsForConn(t *testing.T) {
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
@@ -29,20 +37,20 @@ func TestRemoveIdleUDPFlowsForConn(t *testing.T) {
 		udpFlows: map[uint64]clientUDPFlow{
 			1: {
 				conn:       conn,
-				clientAddr: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10001},
+				clientAddr: clientTestUDPAddr(10001),
 				target:     udpwire.Endpoint{Host: clientTestDNSCloudflare, Port: 53},
 				lastSeen:   now.Add(-udpFlowIdleTimeout - time.Second),
 			},
 			2: {
 				conn:       conn,
-				clientAddr: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10002},
-				target:     udpwire.Endpoint{Host: "8.8.8.8", Port: 53},
+				clientAddr: clientTestUDPAddr(10002),
+				target:     udpwire.Endpoint{Host: clientTestDNSGoogle, Port: 53},
 				lastSeen:   now,
 			},
 			3: {
 				conn:       otherConn,
-				clientAddr: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10003},
-				target:     udpwire.Endpoint{Host: "9.9.9.9", Port: 53},
+				clientAddr: clientTestUDPAddr(10003),
+				target:     udpwire.Endpoint{Host: clientTestDNSQuad9, Port: 53},
 				lastSeen:   now.Add(-udpFlowIdleTimeout - time.Second),
 			},
 		},
@@ -53,19 +61,34 @@ func TestRemoveIdleUDPFlowsForConn(t *testing.T) {
 	if _, ok := c.udpFlows[1]; ok {
 		t.Fatal("idle flow for conn was not removed")
 	}
-	if _, ok := c.udpFlowIndex[clientUDPFlowIndexKey(conn, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10001}, udpwire.Endpoint{Host: clientTestDNSCloudflare, Port: 53})]; ok {
+	idleKey := clientUDPFlowIndexKey(
+		conn,
+		clientTestUDPAddr(10001),
+		udpwire.Endpoint{Host: clientTestDNSCloudflare, Port: 53},
+	)
+	if _, ok := c.udpFlowIndex[idleKey]; ok {
 		t.Fatal("idle flow index entry for conn was not removed")
 	}
 	if _, ok := c.udpFlows[2]; !ok {
 		t.Fatal("active flow for conn was removed")
 	}
-	if _, ok := c.udpFlowIndex[clientUDPFlowIndexKey(conn, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10002}, udpwire.Endpoint{Host: "8.8.8.8", Port: 53})]; !ok {
+	activeKey := clientUDPFlowIndexKey(
+		conn,
+		clientTestUDPAddr(10002),
+		udpwire.Endpoint{Host: clientTestDNSGoogle, Port: 53},
+	)
+	if _, ok := c.udpFlowIndex[activeKey]; !ok {
 		t.Fatal("active flow index entry for conn was removed")
 	}
 	if _, ok := c.udpFlows[3]; !ok {
 		t.Fatal("idle flow for another conn was removed")
 	}
-	if _, ok := c.udpFlowIndex[clientUDPFlowIndexKey(otherConn, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10003}, udpwire.Endpoint{Host: "9.9.9.9", Port: 53})]; !ok {
+	otherKey := clientUDPFlowIndexKey(
+		otherConn,
+		clientTestUDPAddr(10003),
+		udpwire.Endpoint{Host: clientTestDNSQuad9, Port: 53},
+	)
+	if _, ok := c.udpFlowIndex[otherKey]; !ok {
 		t.Fatal("idle flow index entry for another conn was removed")
 	}
 }
@@ -96,7 +119,7 @@ func TestUDPFlowIDReusesExistingWhenAtLimit(t *testing.T) {
 	}
 	defer func() { _ = conn.Close() }()
 
-	src := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10001}
+	src := clientTestUDPAddr(10001)
 	target := udpwire.Endpoint{Host: clientTestDNSCloudflare, Port: 53}
 	c := &Client{
 		maxUDPFlows: 1,
@@ -134,7 +157,7 @@ func TestUDPFlowIDRejectsNewFlowAtLimit(t *testing.T) {
 		udpFlows: map[uint64]clientUDPFlow{
 			7: {
 				conn:       conn,
-				clientAddr: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10001},
+				clientAddr: clientTestUDPAddr(10001),
 				target:     udpwire.Endpoint{Host: clientTestDNSCloudflare, Port: 53},
 				lastSeen:   time.Now(),
 			},
@@ -143,8 +166,8 @@ func TestUDPFlowIDRejectsNewFlowAtLimit(t *testing.T) {
 
 	_, ok := c.udpFlowID(
 		conn,
-		&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10002},
-		udpwire.Endpoint{Host: "8.8.8.8", Port: 53},
+		clientTestUDPAddr(10002),
+		udpwire.Endpoint{Host: clientTestDNSGoogle, Port: 53},
 	)
 	if ok {
 		t.Fatal("udpFlowID accepted new flow at limit")
@@ -167,14 +190,14 @@ func TestRemoveUDPFlowsForConnRemovesIndexEntries(t *testing.T) {
 		udpFlows: map[uint64]clientUDPFlow{
 			1: {
 				conn:       conn,
-				clientAddr: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10001},
+				clientAddr: clientTestUDPAddr(10001),
 				target:     udpwire.Endpoint{Host: clientTestDNSCloudflare, Port: 53},
 				lastSeen:   time.Now(),
 			},
 			2: {
 				conn:       otherConn,
-				clientAddr: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10002},
-				target:     udpwire.Endpoint{Host: "8.8.8.8", Port: 53},
+				clientAddr: clientTestUDPAddr(10002),
+				target:     udpwire.Endpoint{Host: clientTestDNSGoogle, Port: 53},
 				lastSeen:   time.Now(),
 			},
 		},
@@ -188,10 +211,20 @@ func TestRemoveUDPFlowsForConnRemovesIndexEntries(t *testing.T) {
 	if _, ok := c.udpFlows[2]; !ok {
 		t.Fatal("flow for other conn was removed")
 	}
-	if _, ok := c.udpFlowIndex[clientUDPFlowIndexKey(conn, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10001}, udpwire.Endpoint{Host: clientTestDNSCloudflare, Port: 53})]; ok {
+	removedKey := clientUDPFlowIndexKey(
+		conn,
+		clientTestUDPAddr(10001),
+		udpwire.Endpoint{Host: clientTestDNSCloudflare, Port: 53},
+	)
+	if _, ok := c.udpFlowIndex[removedKey]; ok {
 		t.Fatal("flow index entry for conn was not removed")
 	}
-	if _, ok := c.udpFlowIndex[clientUDPFlowIndexKey(otherConn, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10002}, udpwire.Endpoint{Host: "8.8.8.8", Port: 53})]; !ok {
+	keptKey := clientUDPFlowIndexKey(
+		otherConn,
+		clientTestUDPAddr(10002),
+		udpwire.Endpoint{Host: clientTestDNSGoogle, Port: 53},
+	)
+	if _, ok := c.udpFlowIndex[keptKey]; !ok {
 		t.Fatal("flow index entry for other conn was removed")
 	}
 }
@@ -203,7 +236,7 @@ func BenchmarkUDPFlowIDExistingAtLimit(b *testing.B) {
 	}
 	defer func() { _ = conn.Close() }()
 
-	src := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10001}
+	src := clientTestUDPAddr(10001)
 	target := udpwire.Endpoint{Host: clientTestDNSCloudflare, Port: 53}
 	c := &Client{
 		maxUDPFlows: defaultMaxUDPFlows,
@@ -218,8 +251,8 @@ func BenchmarkUDPFlowIDExistingAtLimit(b *testing.B) {
 	for id := uint64(2); id <= defaultMaxUDPFlows; id++ {
 		c.udpFlows[id] = clientUDPFlow{
 			conn:       conn,
-			clientAddr: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: int(10000 + id)},
-			target:     udpwire.Endpoint{Host: "8.8.8.8", Port: 53},
+			clientAddr: clientTestUDPAddr(int(10000 + id)),
+			target:     udpwire.Endpoint{Host: clientTestDNSGoogle, Port: 53},
 			lastSeen:   time.Now(),
 		}
 	}
