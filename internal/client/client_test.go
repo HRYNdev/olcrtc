@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -534,6 +535,9 @@ func TestOpenControlStreamStopsOnContextCancel(t *testing.T) {
 type closerLinkStub struct {
 	closed     bool
 	resetCount int
+
+	mu        sync.Mutex
+	unhealthy []bool
 }
 
 func (s *closerLinkStub) Connect(context.Context) error   { return nil }
@@ -547,6 +551,23 @@ func (s *closerLinkStub) CanSend() bool                   { return true }
 func (s *closerLinkStub) Features() transport.Features    { return transport.Features{} }
 func (s *closerLinkStub) Reconnect(string)                {}
 func (s *closerLinkStub) ResetPeer()                      { s.resetCount++ }
+
+func (s *closerLinkStub) NotifyControlHealth(unhealthy bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.unhealthy = append(s.unhealthy, unhealthy)
+}
+
+// lastNotified returns the most recently pushed NotifyControlHealth value and
+// whether any call has happened yet.
+func (s *closerLinkStub) lastNotified() (bool, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.unhealthy) == 0 {
+		return false, false
+	}
+	return s.unhealthy[len(s.unhealthy)-1], true
+}
 
 func TestOnDataWithNilConn(_ *testing.T) {
 	c := &Client{}
@@ -652,6 +673,50 @@ func TestStartControlLoopReportsPong(t *testing.T) {
 	}
 	if status.LastPong.IsZero() || status.LastRTT < 0 || status.MissedPongs != 0 {
 		t.Fatalf("Status() = %+v", status)
+	}
+}
+
+// TestWatchControlStalenessNotifiesTransport unit-tests watchControlStaleness
+// directly (not through the full control.Run/smux stack - control.Run always
+// closes its stream when its context is done, so "stop responding but keep
+// the stream open" can't be simulated that way). Confirms it pushes
+// NotifyControlHealth(false) while controlLastPongNano is fresh, and flips to
+// true once the last pong ages past the 2x-interval staleness threshold - on
+// a timescale close to the ping interval, not the relaxed
+// OnMissedPong/OnUnhealthy thresholds (45-90s for vp8channel).
+func TestWatchControlStalenessNotifiesTransport(t *testing.T) {
+	const interval = 5 * time.Millisecond
+
+	ln := &closerLinkStub{}
+	c := &Client{ln: ln}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	c.controlLastPongNano.Store(time.Now().UnixNano())
+	go c.watchControlStaleness(ctx, interval)
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		if v, ok := ln.lastNotified(); ok && !v {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for NotifyControlHealth(false)")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	// Let the last pong age past the staleness threshold without refreshing
+	// it - simulates the peer going silent while the link itself stays up.
+	deadline = time.Now().Add(time.Second)
+	for {
+		if v, ok := ln.lastNotified(); ok && v {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for NotifyControlHealth(true)")
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
 }
 

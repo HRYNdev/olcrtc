@@ -66,3 +66,38 @@ func TestTrafficWrapperAppliesMinimumDelay(t *testing.T) {
 		t.Fatalf("Send() elapsed = %v, want at least 2ms", elapsed)
 	}
 }
+
+// trafficStubControlHealthTransport additionally implements
+// ControlHealthObserver, to verify trafficTransport forwards to it.
+type trafficStubControlHealthTransport struct {
+	trafficStubTransport
+	unhealthy []bool
+}
+
+func (s *trafficStubControlHealthTransport) NotifyControlHealth(unhealthy bool) {
+	s.unhealthy = append(s.unhealthy, unhealthy)
+}
+
+func TestTrafficWrapperForwardsControlHealth(t *testing.T) {
+	inner := &trafficStubControlHealthTransport{}
+	tr := WithTraffic(inner, TrafficConfig{MinDelay: time.Millisecond})
+	tt, ok := tr.(ControlHealthObserver)
+	if !ok {
+		t.Fatal("wrapped transport does not implement ControlHealthObserver")
+	}
+	tt.NotifyControlHealth(true)
+	tt.NotifyControlHealth(false)
+	if got := inner.unhealthy; len(got) != 2 || got[0] != true || got[1] != false {
+		t.Fatalf("inner.unhealthy = %v, want [true false]", got)
+	}
+}
+
+func TestTrafficWrapperNotifyControlHealthNoopWhenUnsupported(t *testing.T) {
+	inner := &trafficStubTransport{}
+	tr := WithTraffic(inner, TrafficConfig{MinDelay: time.Millisecond})
+	tt, ok := tr.(ControlHealthObserver)
+	if !ok {
+		t.Fatal("wrapped transport does not implement ControlHealthObserver")
+	}
+	tt.NotifyControlHealth(true) // must not panic when inner lacks the method
+}

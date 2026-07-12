@@ -93,6 +93,14 @@ type PeerReadyTransport interface {
 	WaitForPeer(ctx context.Context) error
 }
 
+// ControlHealthObserver is implemented by transports whose peer-restart
+// heuristics want corroborating evidence from a session-specific liveness
+// signal before acting on carrier-level noise (e.g. unrelated room
+// participants).
+type ControlHealthObserver interface {
+	NotifyControlHealth(unhealthy bool)
+}
+
 // Options is a marker for per-transport option structs. Each transport package
 // defines its own Options type (e.g. videochannel.Options) and registers a
 // factory that consumes it via type assertion. A nil Options is valid for

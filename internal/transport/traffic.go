@@ -106,6 +106,14 @@ func (t *trafficTransport) ResetPeer() {
 	}
 }
 
+// NotifyControlHealth forwards to inner if it implements ControlHealthObserver;
+// otherwise it's a no-op (most transports don't need this signal).
+func (t *trafficTransport) NotifyControlHealth(unhealthy bool) {
+	if obs, ok := t.inner.(ControlHealthObserver); ok {
+		obs.NotifyControlHealth(unhealthy)
+	}
+}
+
 func (t *trafficTransport) Reconnect(reason string) { t.inner.Reconnect(reason) }
 
 func (t *trafficTransport) SetReconnectCallback(cb func()) { t.inner.SetReconnectCallback(cb) }
