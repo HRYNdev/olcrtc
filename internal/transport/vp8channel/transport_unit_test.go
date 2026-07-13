@@ -457,6 +457,9 @@ func mkPeerFrame(token, epoch uint32, payload []byte) []byte {
 	return frame
 }
 
+// ai-generated: added tr.NotifyLinkHealth(true) call + updated comment
+// below, peer-restart-corroboration PR (rest of the test predates it).
+//
 // TestPeerRestartRebuildsCarrierAfterGrace guards issue #105: when the latched
 // peer goes silent past peerRestartGrace and a frame from a fresh epoch
 // arrives, the transport rebuilds the carrier (stream.Reconnect) so the client
@@ -492,7 +495,7 @@ func TestPeerRestartRebuildsCarrierAfterGrace(t *testing.T) {
 	// from the new epoch is read as a restart and rebuilds the carrier - but
 	// only once the control-plane liveness loop has corroborated trouble.
 	time.Sleep(15 * time.Millisecond)
-	tr.NotifyControlHealth(true)
+	tr.NotifyLinkHealth(true)
 	tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x300, []byte("restart")))
 	deadline := time.Now().Add(time.Second)
 	for stream.reconnects.Load() == 0 && time.Now().Before(deadline) {
@@ -506,6 +509,9 @@ func TestPeerRestartRebuildsCarrierAfterGrace(t *testing.T) {
 	}
 }
 
+// ai-generated: added tr.NotifyLinkHealth(true) call below,
+// peer-restart-corroboration PR (rest of the test predates it).
+//
 // TestPeerRestartRebuildsOnlyOnce ensures repeated frames from the new epoch do
 // not trigger a rebuild storm before the latch is reset.
 func TestPeerRestartRebuildsOnlyOnce(t *testing.T) {
@@ -523,7 +529,7 @@ func TestPeerRestartRebuildsOnlyOnce(t *testing.T) {
 
 	tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x200, []byte("hello")))
 	time.Sleep(15 * time.Millisecond)
-	tr.NotifyControlHealth(true)
+	tr.NotifyLinkHealth(true)
 	for range 5 {
 		tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x300, []byte("restart")))
 	}
@@ -533,6 +539,9 @@ func TestPeerRestartRebuildsOnlyOnce(t *testing.T) {
 	}
 }
 
+// ai-generated: added the linkUnhealthy default-false assertion below,
+// peer-restart-corroboration PR (rest of the test predates it).
+//
 // TestLivePeerKeepsLatchFresh confirms a peer that keeps sending frames within
 // the grace window never trips the restart watchdog, even if a stray frame from
 // another epoch shows up (unrelated room participant).
@@ -549,8 +558,8 @@ func TestLivePeerKeepsLatchFresh(t *testing.T) {
 	}
 	defer func() { _ = tr.Close() }()
 
-	if tr.controlUnhealthy.Load() {
-		t.Fatal("controlUnhealthy should default to false")
+	if tr.linkUnhealthy.Load() {
+		t.Fatal("linkUnhealthy should default to false")
 	}
 
 	tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x200, nil))
@@ -566,6 +575,8 @@ func TestLivePeerKeepsLatchFresh(t *testing.T) {
 	}
 }
 
+// ai-generated: new test, peer-restart-corroboration PR.
+//
 // TestPeerRestartSuppressedWhenControlHealthy reproduces the multi-client SFU
 // scenario directly: a second, unrelated room participant's epoch shows up
 // after the latched peer's silence exceeds peerRestartGrace, but the client's
@@ -590,7 +601,7 @@ func TestPeerRestartSuppressedWhenControlHealthy(t *testing.T) {
 	time.Sleep(15 * time.Millisecond)
 
 	// A second olcbox client joins the same Telemost room; the SFU broadcasts
-	// its epoch to everyone, us included. controlUnhealthy is never set.
+	// its epoch to everyone, us included. linkUnhealthy is never set.
 	tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x0a301844, []byte("second client")))
 	time.Sleep(50 * time.Millisecond)
 
@@ -599,7 +610,9 @@ func TestPeerRestartSuppressedWhenControlHealthy(t *testing.T) {
 	}
 }
 
-// TestPeerRestartFiresOnceCorroborated confirms NotifyControlHealth(true) is a
+// ai-generated: new test, peer-restart-corroboration PR.
+//
+// TestPeerRestartFiresOnceCorroborated confirms NotifyLinkHealth(true) is a
 // gate, not a permanent disable: with corroborating evidence the client's own
 // link is down, the same foreign-epoch frame still triggers the fast-path
 // carrier rebuild.
@@ -618,7 +631,7 @@ func TestPeerRestartFiresOnceCorroborated(t *testing.T) {
 
 	tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x200, []byte("hello")))
 	time.Sleep(15 * time.Millisecond)
-	tr.NotifyControlHealth(true)
+	tr.NotifyLinkHealth(true)
 	tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x300, []byte("restart")))
 
 	deadline := time.Now().Add(time.Second)
@@ -630,19 +643,21 @@ func TestPeerRestartFiresOnceCorroborated(t *testing.T) {
 	}
 }
 
-// TestNotifyControlHealthTogglesGuard is a direct unit test of the setter.
-func TestNotifyControlHealthTogglesGuard(t *testing.T) {
+// ai-generated: new test, peer-restart-corroboration PR.
+//
+// TestNotifyLinkHealthTogglesGuard is a direct unit test of the setter.
+func TestNotifyLinkHealthTogglesGuard(t *testing.T) {
 	tr := &streamTransport{}
-	if tr.controlUnhealthy.Load() {
-		t.Fatal("zero-value controlUnhealthy should be false")
+	if tr.linkUnhealthy.Load() {
+		t.Fatal("zero-value linkUnhealthy should be false")
 	}
-	tr.NotifyControlHealth(true)
-	if !tr.controlUnhealthy.Load() {
-		t.Fatal("NotifyControlHealth(true) did not set controlUnhealthy")
+	tr.NotifyLinkHealth(true)
+	if !tr.linkUnhealthy.Load() {
+		t.Fatal("NotifyLinkHealth(true) did not set linkUnhealthy")
 	}
-	tr.NotifyControlHealth(false)
-	if tr.controlUnhealthy.Load() {
-		t.Fatal("NotifyControlHealth(false) did not clear controlUnhealthy")
+	tr.NotifyLinkHealth(false)
+	if tr.linkUnhealthy.Load() {
+		t.Fatal("NotifyLinkHealth(false) did not clear linkUnhealthy")
 	}
 }
 

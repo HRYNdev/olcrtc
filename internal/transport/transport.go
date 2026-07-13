@@ -93,12 +93,15 @@ type PeerReadyTransport interface {
 	WaitForPeer(ctx context.Context) error
 }
 
-// ControlHealthObserver is implemented by transports whose peer-restart
+// LinkHealthObserver is implemented by transports whose peer-restart
 // heuristics want corroborating evidence from a session-specific liveness
 // signal before acting on carrier-level noise (e.g. unrelated room
 // participants).
-type ControlHealthObserver interface {
-	NotifyControlHealth(unhealthy bool)
+//
+// ai-generated: new interface, part of the "fix(vp8channel): gate
+// peer-restart heuristic on control-plane health" PR.
+type LinkHealthObserver interface {
+	NotifyLinkHealth(unhealthy bool)
 }
 
 // Options is a marker for per-transport option structs. Each transport package

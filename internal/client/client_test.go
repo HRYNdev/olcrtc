@@ -532,6 +532,9 @@ func TestOpenControlStreamStopsOnContextCancel(t *testing.T) {
 	}
 }
 
+// ai-generated: mu/unhealthy fields and the NotifyLinkHealth/lastNotified
+// methods below are new (peer-restart-corroboration PR); closed/resetCount
+// and the rest of the stub predate it.
 type closerLinkStub struct {
 	closed     bool
 	resetCount int
@@ -552,13 +555,13 @@ func (s *closerLinkStub) Features() transport.Features    { return transport.Fea
 func (s *closerLinkStub) Reconnect(string)                {}
 func (s *closerLinkStub) ResetPeer()                      { s.resetCount++ }
 
-func (s *closerLinkStub) NotifyControlHealth(unhealthy bool) {
+func (s *closerLinkStub) NotifyLinkHealth(unhealthy bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.unhealthy = append(s.unhealthy, unhealthy)
 }
 
-// lastNotified returns the most recently pushed NotifyControlHealth value and
+// lastNotified returns the most recently pushed NotifyLinkHealth value and
 // whether any call has happened yet.
 func (s *closerLinkStub) lastNotified() (bool, bool) {
 	s.mu.Lock()
@@ -676,11 +679,13 @@ func TestStartControlLoopReportsPong(t *testing.T) {
 	}
 }
 
+// ai-generated: new test, peer-restart-corroboration PR.
+//
 // TestWatchControlStalenessNotifiesTransport unit-tests watchControlStaleness
 // directly (not through the full control.Run/smux stack - control.Run always
 // closes its stream when its context is done, so "stop responding but keep
 // the stream open" can't be simulated that way). Confirms it pushes
-// NotifyControlHealth(false) while controlLastPongNano is fresh, and flips to
+// NotifyLinkHealth(false) while controlLastPong is fresh, and flips to
 // true once the last pong ages past the 2x-interval staleness threshold - on
 // a timescale close to the ping interval, not the relaxed
 // OnMissedPong/OnUnhealthy thresholds (45-90s for vp8channel).
@@ -692,7 +697,7 @@ func TestWatchControlStalenessNotifiesTransport(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	c.controlLastPongNano.Store(time.Now().UnixNano())
+	c.controlLastPong.Store(time.Now())
 	go c.watchControlStaleness(ctx, interval)
 
 	deadline := time.Now().Add(time.Second)
@@ -701,7 +706,7 @@ func TestWatchControlStalenessNotifiesTransport(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for NotifyControlHealth(false)")
+			t.Fatal("timed out waiting for NotifyLinkHealth(false)")
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
@@ -714,7 +719,7 @@ func TestWatchControlStalenessNotifiesTransport(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for NotifyControlHealth(true)")
+			t.Fatal("timed out waiting for NotifyLinkHealth(true)")
 		}
 		time.Sleep(2 * time.Millisecond)
 	}

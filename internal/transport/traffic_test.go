@@ -67,37 +67,40 @@ func TestTrafficWrapperAppliesMinimumDelay(t *testing.T) {
 	}
 }
 
-// trafficStubControlHealthTransport additionally implements
-// ControlHealthObserver, to verify trafficTransport forwards to it.
-type trafficStubControlHealthTransport struct {
+// ai-generated: this whole block (stub type + 2 tests below), new,
+// peer-restart-corroboration PR.
+//
+// trafficStubLinkHealthTransport additionally implements
+// LinkHealthObserver, to verify trafficTransport forwards to it.
+type trafficStubLinkHealthTransport struct {
 	trafficStubTransport
 	unhealthy []bool
 }
 
-func (s *trafficStubControlHealthTransport) NotifyControlHealth(unhealthy bool) {
+func (s *trafficStubLinkHealthTransport) NotifyLinkHealth(unhealthy bool) {
 	s.unhealthy = append(s.unhealthy, unhealthy)
 }
 
-func TestTrafficWrapperForwardsControlHealth(t *testing.T) {
-	inner := &trafficStubControlHealthTransport{}
+func TestTrafficWrapperForwardsLinkHealth(t *testing.T) {
+	inner := &trafficStubLinkHealthTransport{}
 	tr := WithTraffic(inner, TrafficConfig{MinDelay: time.Millisecond})
-	tt, ok := tr.(ControlHealthObserver)
+	tt, ok := tr.(LinkHealthObserver)
 	if !ok {
-		t.Fatal("wrapped transport does not implement ControlHealthObserver")
+		t.Fatal("wrapped transport does not implement LinkHealthObserver")
 	}
-	tt.NotifyControlHealth(true)
-	tt.NotifyControlHealth(false)
+	tt.NotifyLinkHealth(true)
+	tt.NotifyLinkHealth(false)
 	if got := inner.unhealthy; len(got) != 2 || got[0] != true || got[1] != false {
 		t.Fatalf("inner.unhealthy = %v, want [true false]", got)
 	}
 }
 
-func TestTrafficWrapperNotifyControlHealthNoopWhenUnsupported(t *testing.T) {
+func TestTrafficWrapperNotifyLinkHealthNoopWhenUnsupported(t *testing.T) {
 	inner := &trafficStubTransport{}
 	tr := WithTraffic(inner, TrafficConfig{MinDelay: time.Millisecond})
-	tt, ok := tr.(ControlHealthObserver)
+	tt, ok := tr.(LinkHealthObserver)
 	if !ok {
-		t.Fatal("wrapped transport does not implement ControlHealthObserver")
+		t.Fatal("wrapped transport does not implement LinkHealthObserver")
 	}
-	tt.NotifyControlHealth(true) // must not panic when inner lacks the method
+	tt.NotifyLinkHealth(true) // must not panic when inner lacks the method
 }

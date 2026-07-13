@@ -177,13 +177,15 @@ type streamTransport struct {
 	peerRestarting    atomic.Bool
 	peerRestartGrace  time.Duration
 
-	// controlUnhealthy corroborates the peer-restart heuristic with an
+	// ai-generated: new field, peer-restart-corroboration PR.
+	//
+	// linkUnhealthy corroborates the peer-restart heuristic with an
 	// independent signal from the client's control-plane liveness loop
-	// (pushed via NotifyControlHealth). Zero-value false means "not known
-	// unhealthy" — maybePeerRestart stays inert until the control plane has
+	// (pushed via NotifyLinkHealth). Zero-value false means "not known
+	// unhealthy" - maybePeerRestart stays inert until the control plane has
 	// actually confirmed trouble, so unrelated room participants (a second
 	// client's epoch broadcast) can never trip a false carrier rebuild.
-	controlUnhealthy atomic.Bool
+	linkUnhealthy atomic.Bool
 
 	kcp   *kcpRuntime
 	kcpMu sync.RWMutex
@@ -623,13 +625,15 @@ func (p *streamTransport) Reconnect(reason string) {
 	p.stream.Reconnect(reason)
 }
 
-// NotifyControlHealth implements transport.ControlHealthObserver. The client
+// NotifyLinkHealth implements transport.LinkHealthObserver. The client
 // wires its control-plane liveness loop to this so maybePeerRestart can
 // require corroborating evidence before firing (a second client joining the
 // SFU room broadcasts its own epoch to everyone, which alone must not be
 // mistaken for "my server restarted").
-func (p *streamTransport) NotifyControlHealth(unhealthy bool) {
-	p.controlUnhealthy.Store(unhealthy)
+//
+// ai-generated: new method, peer-restart-corroboration PR.
+func (p *streamTransport) NotifyLinkHealth(unhealthy bool) {
+	p.linkUnhealthy.Store(unhealthy)
 }
 
 func (p *streamTransport) SetReconnectCallback(cb func()) {
@@ -1199,6 +1203,9 @@ func (p *streamTransport) handleIncomingFrame(frame []byte) {
 	p.handleSinglePeerData(src, kcpPayload)
 }
 
+// ai-generated: doc comment updated (last clause about corroboration),
+// peer-restart-corroboration PR; function body predates it.
+//
 // handleSinglePeerData delivers a data frame in single-peer (client) mode. It
 // latches the first peer epoch seen. When the latched peer has gone silent
 // past peerRestartGrace and a frame from a different epoch arrives, that is
@@ -1229,6 +1236,11 @@ func (p *streamTransport) handleSinglePeerData(src uint32, kcpPayload []byte) {
 	}
 }
 
+// ai-generated: existing function, guard clause + doc comment update added
+// by the peer-restart-corroboration PR (linkUnhealthy check at the top of
+// the function body below is the new part; the rest of the function and
+// doc predates this change).
+//
 // maybePeerRestart reads a frame from a non-latched epoch as a possible
 // server restart once the latched peer has been silent longer than
 // peerRestartGrace. A live peer keeps the latch fresh by emitting a keepalive
@@ -1240,8 +1252,8 @@ func (p *streamTransport) handleSinglePeerData(src uint32, kcpPayload []byte) {
 // apart.
 //
 // To avoid tearing down a perfectly healthy carrier over unrelated room
-// noise, we require independent corroboration: controlUnhealthy, pushed by
-// the client's own control-plane liveness loop (NotifyControlHealth), must
+// noise, we require independent corroboration: linkUnhealthy, pushed by
+// the client's own control-plane liveness loop (NotifyLinkHealth), must
 // already be true. A genuine server restart kills that liveness link almost
 // immediately (it's a session-specific channel to the actual server, not
 // affected by other peers), so real restarts still recover fast; a second
@@ -1258,7 +1270,7 @@ func (p *streamTransport) handleSinglePeerData(src uint32, kcpPayload []byte) {
 // #105). We rebuild exactly once per restart; the flag clears when the next
 // peer latches in handleFirstPeer.
 func (p *streamTransport) maybePeerRestart(src uint32) {
-	if !p.controlUnhealthy.Load() {
+	if !p.linkUnhealthy.Load() {
 		return // no corroborating evidence our own control plane is down -
 		// likely unrelated room churn (another client's epoch), not a
 		// genuine server restart.

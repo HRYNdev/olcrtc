@@ -66,18 +66,23 @@ type Client struct {
 	sessMu      sync.RWMutex
 	reconnectMu sync.Mutex
 	health      *runtime.HealthTracker
-	// controlLastPongNano tracks the last successful control pong, used by
-	// watchControlStaleness to corroborate vp8channel's peer-restart
-	// heuristic on a tighter, independent timescale than the relaxed
-	// OnMissedPong/OnUnhealthy thresholds (which trade latency for KCP-
-	// batching tolerance, see runtime.LivenessTimeout).
-	controlLastPongNano atomic.Int64
-	deviceID            string
-	sessionID           string
-	claims              map[string]any
-	dnsServer           string
-	socksUser           string
-	socksPass           string
+	// ai-generated: new field, peer-restart-corroboration PR.
+	//
+	// controlLastPong tracks the last successful control pong (as a
+	// time.Time, not a stripped int64 - time.Since needs the monotonic
+	// reading time.Now() attaches, otherwise it's vulnerable to wall-clock
+	// jumps such as NTP corrections), used by watchControlStaleness to
+	// corroborate vp8channel's peer-restart heuristic on a tighter,
+	// independent timescale than the relaxed OnMissedPong/OnUnhealthy
+	// thresholds (which trade latency for KCP-batching tolerance, see
+	// runtime.LivenessTimeout).
+	controlLastPong atomic.Value // time.Time
+	deviceID        string
+	sessionID       string
+	claims          map[string]any
+	dnsServer       string
+	socksUser       string
+	socksPass       string
 	// sessionReady is closed (and replaced) each time a session becomes fully
 	// established (sessionID != ""). Tunnel handlers wait on it so they do
 	// not open smux streams before the server has accepted the handshake.
@@ -623,6 +628,8 @@ func (c *Client) startControlLoop(
 	if runtime.IsControlPlane(c.ln) && liveness.Timeout <= control.DefaultTimeout {
 		liveness.Timeout = runtime.LivenessTimeout(c.ln)
 	}
+	// ai-generated: pingInterval resolution + the watchControlStaleness
+	// launch below are new, peer-restart-corroboration PR.
 	pingInterval := liveness.Interval
 	if pingInterval <= 0 {
 		pingInterval = control.DefaultInterval
@@ -635,8 +642,9 @@ func (c *Client) startControlLoop(
 		sid := c.sessionID
 		c.sessMu.RUnlock()
 		c.recordPong(h)
-		c.controlLastPongNano.Store(time.Now().UnixNano())
-		c.notifyControlHealth(false)
+		// ai-generated: next two lines, peer-restart-corroboration PR.
+		c.controlLastPong.Store(time.Now())
+		c.notifyLinkHealth(false)
 		logger.Debugf("control alive session=%s rtt=%v seq=%d", sid, h.RTT, h.Seq)
 		if onPong != nil {
 			onPong(h)
@@ -657,6 +665,7 @@ func (c *Client) startControlLoop(
 		}
 	}
 
+	// ai-generated: this launch line, peer-restart-corroboration PR.
 	go c.watchControlStaleness(controlCtx, pingInterval)
 
 	go func() {
@@ -673,12 +682,23 @@ func (c *Client) startControlLoop(
 	}()
 }
 
+// ai-generated: new function, peer-restart-corroboration PR.
+//
 // watchControlStaleness pushes a tighter, independent "control unhealthy"
 // signal to the transport than OnMissedPong/OnUnhealthy provide - those are
 // deliberately relaxed for vp8channel (KCP-batching tolerance, see
 // runtime.LivenessTimeout) and would make peer-restart corroboration arrive
-// 45-90s late, defeating the point of the fast path. staleFactor keeps the
-// threshold a small multiple of the ping interval instead.
+// 45-90s late, defeating the point of the fast path.
+//
+// staleFactor=2: the staleness check ticks on its own timer, out of phase
+// with the actual pong arrivals, so a single expected pong landing a bit
+// late (scheduling jitter, one slow round trip) can make the last-seen
+// timestamp look older than one interval even though the link is fine. A
+// threshold of exactly 1x interval would false-positive on that normal
+// jitter almost every cycle. 2x interval tolerates one such miss before
+// treating the link as stale - the standard "missed the last two expected
+// heartbeats" pattern - while still resolving in ~2x the ping interval
+// (~20s with the default 10s interval), not 45-90s.
 func (c *Client) watchControlStaleness(ctx context.Context, interval time.Duration) {
 	const staleFactor = 2
 	threshold := staleFactor * interval
@@ -689,9 +709,9 @@ func (c *Client) watchControlStaleness(ctx context.Context, interval time.Durati
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			last := c.controlLastPongNano.Load()
-			stale := last != 0 && time.Since(time.Unix(0, last)) > threshold
-			c.notifyControlHealth(stale)
+			last, ok := c.controlLastPong.Load().(time.Time)
+			stale := ok && time.Since(last) > threshold
+			c.notifyLinkHealth(stale)
 		}
 	}
 }
@@ -707,14 +727,17 @@ func (c *Client) recordMissed(missed int)        { c.health.RecordMissed(missed)
 func (c *Client) recordUnhealthy(missed int)     { c.health.RecordUnhealthy(missed) }
 func (c *Client) recordReconnect()               { c.health.RecordReconnect() }
 
-// notifyControlHealth pushes a control-plane health update to the transport
-// if it implements transport.ControlHealthObserver (currently vp8channel, so
-// its peer-restart heuristic can require corroborating evidence instead of
-// reacting to unrelated room participants). A nil or non-observing transport
-// is a safe no-op.
-func (c *Client) notifyControlHealth(unhealthy bool) {
-	if obs, ok := c.ln.(transport.ControlHealthObserver); ok {
-		obs.NotifyControlHealth(unhealthy)
+// ai-generated: new method, peer-restart-corroboration PR.
+//
+// notifyLinkHealth pushes a liveness health update, sourced from the
+// client's own control-plane ping/pong loop, to the transport if it
+// implements transport.LinkHealthObserver (currently vp8channel, so its
+// peer-restart heuristic can require corroborating evidence instead of
+// reacting to unrelated room participants). A nil or non-observing
+// transport is a safe no-op.
+func (c *Client) notifyLinkHealth(unhealthy bool) {
+	if obs, ok := c.ln.(transport.LinkHealthObserver); ok {
+		obs.NotifyLinkHealth(unhealthy)
 	}
 }
 
