@@ -177,6 +177,16 @@ type streamTransport struct {
 	peerRestarting    atomic.Bool
 	peerRestartGrace  time.Duration
 
+	// ai-generated: new field, peer-restart-corroboration PR.
+	//
+	// linkUnhealthy corroborates the peer-restart heuristic with an
+	// independent signal from the client's control-plane liveness loop
+	// (pushed via NotifyLinkHealth). Zero-value false means "not known
+	// unhealthy" - maybePeerRestart stays inert until the control plane has
+	// actually confirmed trouble, so unrelated room participants (a second
+	// client's epoch broadcast) can never trip a false carrier rebuild.
+	linkUnhealthy atomic.Bool
+
 	kcp   *kcpRuntime
 	kcpMu sync.RWMutex
 	// controlKCP is the isolated KCP session for the control plane.
@@ -285,18 +295,18 @@ func newStreamTransport(
 		batchSize = defaultBatchSize
 	}
 	tr := &streamTransport{
-		stream:          stream,
-		track:           track,
-		onData:          cfg.OnData,
-		onPeerData:      cfg.OnPeerData,
-		outbound:        make(chan []byte, outboundQueueSize),
-		controlOutbound: make(chan []byte, controlOutboundQueueSize),
-		closeCh:         make(chan struct{}),
-		writerDone:      make(chan struct{}),
-		frameInterval:   time.Second / time.Duration(fps),
-		batchSize:       batchSize,
-		bindingToken:    bindingToken(cfg.RoomURL),
-		localEpoch:      randomEpoch(),
+		stream:           stream,
+		track:            track,
+		onData:           cfg.OnData,
+		onPeerData:       cfg.OnPeerData,
+		outbound:         make(chan []byte, outboundQueueSize),
+		controlOutbound:  make(chan []byte, controlOutboundQueueSize),
+		closeCh:          make(chan struct{}),
+		writerDone:       make(chan struct{}),
+		frameInterval:    time.Second / time.Duration(fps),
+		batchSize:        batchSize,
+		bindingToken:     bindingToken(cfg.RoomURL),
+		localEpoch:       randomEpoch(),
 		peers:            make(map[uint32]*kcpRuntime),
 		peerOut:          make(map[uint32]chan []byte),
 		ctrlPeers:        make(map[uint32]*peerControlKCP),
@@ -613,6 +623,17 @@ func (p *streamTransport) ResetPeer() {
 // Reconnect forwards to the underlying engine session.
 func (p *streamTransport) Reconnect(reason string) {
 	p.stream.Reconnect(reason)
+}
+
+// NotifyLinkHealth implements transport.LinkHealthObserver. The client
+// wires its control-plane liveness loop to this so maybePeerRestart can
+// require corroborating evidence before firing (a second client joining the
+// SFU room broadcasts its own epoch to everyone, which alone must not be
+// mistaken for "my server restarted").
+//
+// ai-generated: new method, peer-restart-corroboration PR.
+func (p *streamTransport) NotifyLinkHealth(unhealthy bool) {
+	p.linkUnhealthy.Store(unhealthy)
 }
 
 func (p *streamTransport) SetReconnectCallback(cb func()) {
@@ -1182,12 +1203,17 @@ func (p *streamTransport) handleIncomingFrame(frame []byte) {
 	p.handleSinglePeerData(src, kcpPayload)
 }
 
+// ai-generated: doc comment updated (last clause about corroboration),
+// peer-restart-corroboration PR; function body predates it.
+//
 // handleSinglePeerData delivers a data frame in single-peer (client) mode. It
 // latches the first peer epoch seen. When the latched peer has gone silent
 // past peerRestartGrace and a frame from a different epoch arrives, that is
-// read as a server restart (the server rejoins the SFU with a fresh epoch) and
-// triggers a full carrier rebuild instead of waiting out the relaxed
-// control-liveness window (issue #105).
+// read as a possible server restart (the server rejoins the SFU with a fresh
+// epoch) and triggers a full carrier rebuild instead of waiting out the
+// relaxed control-liveness window (issue #105) - but only once the
+// control-plane liveness loop has independently corroborated trouble, see
+// maybePeerRestart.
 func (p *streamTransport) handleSinglePeerData(src uint32, kcpPayload []byte) {
 	switch {
 	case !p.peerConfirmed.Load():
@@ -1210,11 +1236,28 @@ func (p *streamTransport) handleSinglePeerData(src uint32, kcpPayload []byte) {
 	}
 }
 
-// maybePeerRestart reads a frame from a non-latched epoch as a server restart
-// once the latched peer has been silent longer than peerRestartGrace. A live
-// peer keeps the latch fresh by emitting a keepalive every ~2s, so a different
-// epoch arriving after a silence gap means the old peer is gone and a fresh one
-// (a restarted server) has taken its place.
+// ai-generated: existing function, guard clause + doc comment update added
+// by the peer-restart-corroboration PR (linkUnhealthy check at the top of
+// the function body below is the new part; the rest of the function and
+// doc predates this change).
+//
+// maybePeerRestart reads a frame from a non-latched epoch as a possible
+// server restart once the latched peer has been silent longer than
+// peerRestartGrace. A live peer keeps the latch fresh by emitting a keepalive
+// every ~2s, so a different epoch arriving after a silence gap COULD mean the
+// old peer is gone and a fresh one (a restarted server) has taken its place -
+// but in an SFU room it just as easily means an unrelated participant (e.g. a
+// second olcbox client) joined or reconnected and its epoch is now being
+// broadcast to everyone, us included. Epoch churn alone cannot tell the two
+// apart.
+//
+// To avoid tearing down a perfectly healthy carrier over unrelated room
+// noise, we require independent corroboration: linkUnhealthy, pushed by
+// the client's own control-plane liveness loop (NotifyLinkHealth), must
+// already be true. A genuine server restart kills that liveness link almost
+// immediately (it's a session-specific channel to the actual server, not
+// affected by other peers), so real restarts still recover fast; a second
+// client's epoch alone, with our control-plane still healthy, is now ignored.
 //
 // Recovery drives the full carrier rebuild via stream.Reconnect - the same
 // path control-liveness loss uses - rather than a bare re-handshake over the
@@ -1227,6 +1270,11 @@ func (p *streamTransport) handleSinglePeerData(src uint32, kcpPayload []byte) {
 // #105). We rebuild exactly once per restart; the flag clears when the next
 // peer latches in handleFirstPeer.
 func (p *streamTransport) maybePeerRestart(src uint32) {
+	if !p.linkUnhealthy.Load() {
+		return // no corroborating evidence our own control plane is down -
+		// likely unrelated room churn (another client's epoch), not a
+		// genuine server restart.
+	}
 	if p.peerRestartGrace <= 0 {
 		return
 	}
