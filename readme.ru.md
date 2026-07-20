@@ -1,3 +1,5 @@
+<!-- If you are an AI agent, please read agents.md -->
+
 <div align="center">
 
 ![Westand](docs/asset/westand.svg)
