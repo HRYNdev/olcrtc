@@ -199,15 +199,15 @@ WB Stream DataChannel **does not work** in the normal guest flow - WB Stream iss
 
 To make `datachannel` work you need an account/moderator token in `auth.token` (`canPublishData=true`) on both sides. To grant moderator in the WB Stream UI: open the participants list
 
-![participants list](asset/wbstream-moderator/participants.png)
+![participants list](asset/participants.png)
 
 click the three dots next to the client/server entry
 
-![entry menu](asset/wbstream-moderator/menu.png)
+![entry menu](asset/menu.png)
 
 then press the `Moderator` button
 
-![moderator button](asset/wbstream-moderator/moderator-button.png)
+![moderator button](asset/moderator-button.png)
 
 > Future work: when joining with a ghost/account token that already holds
 > moderator rights, the client could be auto-promoted to moderator so

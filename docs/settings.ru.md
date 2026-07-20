@@ -200,15 +200,15 @@ WB Stream DataChannel **не работает** в обычном guest flow - W
 
 Чтобы `datachannel` заработал, нужен токен аккаунта/модератора в `auth.token` (`canPublishData=true`) с обеих сторон. Как выдать модератора в UI WB Stream: открой список участников
 
-![список участников](asset/wbstream-moderator/participants.png)
+![список участников](asset/participants.png)
 
 нажми три точки рядом с записью клиента/сервера
 
-![меню записи](asset/wbstream-moderator/menu.png)
+![меню записи](asset/menu.png)
 
 потом нажми кнопку `Модератор`
 
-![кнопка модератора](asset/wbstream-moderator/moderator-button.png)
+![кнопка модератора](asset/moderator-button.png)
 
 > На будущее: когда подключаемся с ghost/account токеном, у которого уже
 > есть права модератора, клиента можно было бы авто-повышать до модератора,
