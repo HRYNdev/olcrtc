@@ -411,7 +411,43 @@ func (s *Session) completeJingleSetup(ctx context.Context, jSess *j.Session) err
 	// Restart recvLoop now that bridge is ready.
 	s.wg.Add(1)
 	go s.recvLoop()
+
+	// Announce our epoch immediately so the peer latches on the first RTT
+	// instead of waiting up to a full bridgeKeepalive tick (10s). Mirrors
+	// the reconnect paths, which already announce right after bridge ready.
+	s.wg.Add(1)
+	go s.announceEpoch(needBridge)
 	return nil
+}
+
+// announceEpoch broadcasts empty bridge frames until the peer latches (or a
+// short deadline elapses). A single announce can be dropped when the SCTP
+// receive side is not yet ready, which otherwise leaves the peer waiting for
+// the next bridgeKeepalive tick (10s). Retrying fast closes that gap.
+func (s *Session) announceEpoch(needBridge bool) {
+	defer s.wg.Done()
+	if !needBridge {
+		return
+	}
+	const (
+		interval = 200 * time.Millisecond
+		attempts = 25 // ~5s budget
+	)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range attempts {
+		if s.closed.Load() || s.peerEpoch.Load() != 0 {
+			return
+		}
+		if err := s.Send(nil); err != nil {
+			logger.Debugf("jitsi: epoch announce failed: %v", err)
+		}
+		select {
+		case <-s.done:
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func (s *Session) openBridgeWS(ctx context.Context, jSess *j.Session) error {
