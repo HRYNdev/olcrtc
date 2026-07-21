@@ -384,13 +384,19 @@ func (s *Session) waitForJingle() {
 
 // completeJingleSetup opens the bridge and negotiates a PeerConnection only
 // when media or the SCTP bridge fallback needs one.
-func (s *Session) completeJingleSetup(ctx context.Context, jSess *j.Session) error {
+func (s *Session) completeJingleSetup( //nolint:cyclop // bridge logic is inherently branchy
+	ctx context.Context, jSess *j.Session,
+) error {
 	logger.Infof("jitsi: session-initiate received; colibri-ws=%s", jSess.ColibriWS)
 
 	needBridge := s.onData != nil || s.onPeerData != nil
-	sctpBridge := needBridge && jSess.ColibriWS == ""
+	// Video transports need the bridge for RequestVideo when colibri-ws
+	// is unavailable (SCTP fallback). Without it, JVB never forwards
+	// video to this endpoint.
+	wantVideo := s.shouldRequestVideo()
+	sctpBridge := (needBridge || wantVideo) && jSess.ColibriWS == ""
 
-	if needBridge && !sctpBridge {
+	if (needBridge || wantVideo) && !sctpBridge {
 		if err := s.openBridgeWS(ctx, jSess); err != nil {
 			return err
 		}
@@ -405,6 +411,15 @@ func (s *Session) completeJingleSetup(ctx context.Context, jSess *j.Session) err
 	if sctpBridge {
 		if err := s.openBridgeSCTP(ctx, jSess); err != nil {
 			return err
+		}
+	}
+
+	// Now that the bridge is open (WebSocket or SCTP), tell JVB to
+	// forward video to this endpoint. Without this call JVB will NOT
+	// send any video RTP, so OnTrack never fires.
+	if wantVideo {
+		if err := jSess.RequestVideo(ctx, 720); err != nil {
+			logger.Debugf("jitsi: request video: %v", err)
 		}
 	}
 
@@ -532,7 +547,9 @@ func newSettingEngine() (webrtc.SettingEngine, error) {
 // would obscure the wire order rather than clarify it.
 //
 //nolint:cyclop // sequential Jingle negotiation steps; refactoring would hide ordering
-func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge bool) error {
+func (s *Session) negotiatePC(
+	ctx context.Context, jSess *j.Session, sctpBridge bool,
+) error {
 	settings, err := newSettingEngine()
 	if err != nil {
 		return err
@@ -583,9 +600,14 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 
 	s.videoTrackMu.RLock()
 	hasLocalTracks := len(s.videoTracks) > 0
-	requestVideo := hasLocalTracks || s.onVideoTrack != nil
 	for _, track := range s.videoTracks {
-		if _, addErr := pc.AddTrack(track); addErr != nil {
+		dir := webrtc.RTPTransceiverDirectionSendonly
+		if s.wantsVideoReceive() {
+			dir = webrtc.RTPTransceiverDirectionSendrecv
+		}
+		if _, addErr := pc.AddTransceiverFromTrack(track,
+			webrtc.RTPTransceiverInit{Direction: dir},
+		); addErr != nil {
 			s.videoTrackMu.RUnlock()
 			_ = pc.Close()
 			return fmt.Errorf("add track: %w", addErr)
@@ -593,16 +615,10 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 	}
 	s.videoTrackMu.RUnlock()
 
-	// When sending video, AddTrack already creates the video m-line (sendonly).
-	// When we have no local video we still need a video m-line; the choice
-	// matters for endpoint liveness on JVB (see addVideoOrKeepaliveTrack).
-	var kaTrack *webrtc.TrackLocalStaticSample
-	if !hasLocalTracks {
-		kaTrack, err = s.addVideoOrKeepaliveTrack(pc)
-		if err != nil {
-			_ = pc.Close()
-			return err
-		}
+	kaTrack, err := s.setupVideoMLine(pc, hasLocalTracks)
+	if err != nil {
+		_ = pc.Close()
+		return err
 	}
 
 	pc.OnTrack(func(track *webrtc.TrackRemote, recv *webrtc.RTPReceiver) {
@@ -658,7 +674,6 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 		_ = pc.Close()
 		return fmt.Errorf("session-accept: %w", err)
 	}
-	logger.Debugf("jitsi: session-accept sent")
 
 	// Announce our SSRCs explicitly via source-add. Even though session-accept
 	// already carries them, Jicofo only propagates sources advertised via
@@ -669,12 +684,8 @@ func (s *Session) negotiatePC(ctx context.Context, jSess *j.Session, sctpBridge 
 		}
 	}
 
-	if requestVideo {
-		// Tell JVB to forward video streams to this endpoint.
-		if err := jSess.RequestVideo(ctx, 720); err != nil {
-			logger.Debugf("jitsi: request video: %v", err)
-		}
-	}
+	// RequestVideo is called after the bridge opens in completeJingleSetup,
+	// because the SCTP bridge may not be ready yet at this point.
 
 	s.pcMu.Lock()
 	s.pc = pc
@@ -764,6 +775,19 @@ func (s *Session) rtpKeepalive(pcCtx context.Context, track *webrtc.TrackLocalSt
 			}
 		}
 	}
+}
+
+// setupVideoMLine ensures the PeerConnection has the right video m-line.
+// When no local tracks exist, delegates to addVideoOrKeepaliveTrack.
+// When local tracks exist, AddTransceiverFromTrack already created the
+// video m-line with the right direction (sendonly or sendrecv).
+func (s *Session) setupVideoMLine(
+	pc *webrtc.PeerConnection, hasLocalTracks bool,
+) (*webrtc.TrackLocalStaticSample, error) {
+	if !hasLocalTracks {
+		return s.addVideoOrKeepaliveTrack(pc)
+	}
+	return nil, nil //nolint:nilnil // no keepalive needed when local tracks exist
 }
 
 // addVideoOrKeepaliveTrack adds the appropriate video m-line when no local
@@ -1812,10 +1836,13 @@ func (s *Session) teardownPC() {
 
 // reinitiateBridge negotiates a new PeerConnection only when required and opens
 // the bridge channel.
-func (s *Session) reinitiateBridge(ctx context.Context, jSess *j.Session) error {
+func (s *Session) reinitiateBridge( //nolint:cyclop // bridge logic is inherently branchy
+	ctx context.Context, jSess *j.Session,
+) error {
 	needBridge := s.onData != nil || s.onPeerData != nil
-	sctpBridge := needBridge && jSess.ColibriWS == ""
-	if s.shouldNegotiatePC(needBridge) {
+	wantVideo := s.shouldRequestVideo()
+	sctpBridge := (needBridge || wantVideo) && jSess.ColibriWS == ""
+	if s.shouldNegotiatePC(needBridge) || wantVideo {
 		if err := s.negotiatePC(ctx, jSess, sctpBridge); err != nil {
 			logger.Warnf("jitsi: negotiate after reinitiate failed: %v - full reconnect", err)
 			return s.reconnectFull(ctx)
@@ -1826,7 +1853,7 @@ func (s *Session) reinitiateBridge(ctx context.Context, jSess *j.Session) error 
 			logger.Warnf("jitsi: bridge after reinitiate failed: %v - full reconnect", err)
 			return s.reconnectFull(ctx)
 		}
-	} else if needBridge {
+	} else if needBridge || wantVideo {
 		if err := s.openBridgeWS(ctx, jSess); err != nil {
 			logger.Warnf("jitsi: bridge after reinitiate failed: %v - full reconnect", err)
 			return s.reconnectFull(ctx)
