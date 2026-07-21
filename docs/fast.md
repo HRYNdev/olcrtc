@@ -142,7 +142,7 @@ Enter choice [1-2, default: 1]:
 ```
 
 - **1) Auto-generate** - the script picks a room name on the chosen server. Recommended.
-- **2) Specific** - enter a room name (`myroom`) or a full URL (`https://meet.egovm.ru/myroom`).
+- **2) Specific** - enter a room name (`myroom`) or a full URL (`https://meet.example.org/myroom`).
 
 For **telemost** and **wbstream** the Jitsi menu is not shown - the script asks for the Room ID directly. Create a room on the site ([telemost](https://telemost.yandex.ru/), [wbstream](https://stream.wb.ru)) and paste its ID.
 
@@ -214,10 +214,10 @@ After startup the script prints the container name, carrier, transport, Room ID,
 Container name: olcrtc-server-xxxxxxxx
 Carrier:        jitsi
 Transport:      datachannel
-Room ID/URL:    https://meet.egovm.ru/olcrtc-xxxxxxxx
+Room ID/URL:    https://meet.example.org/olcrtc-xxxxxxxx
 Encryption key: d823fa01cb3e0609b67322f7cf984c4ee2e294936fc24ef38c9e59f4799...
 
-uri: olcrtc://jitsi?datachannel@https://meet.egovm.ru/olcrtc-xxxxxxxx#<key>$olc - t.me/openlibrecommunity
+uri: olcrtc://jitsi?datachannel@https://meet.example.org/olcrtc-xxxxxxxx#<key>$olc - t.me/openlibrecommunity
 ```
 
 **Save the Room ID and the encryption key** - the client needs them. The key is also saved to `~/.olcrtc_key` and reused on later runs.
@@ -262,7 +262,7 @@ Press Enter for address and port - the proxy comes up on `127.0.0.1:8808`. If yo
 Container name: olcrtc-client-xxxxxxxx
 Auth:           jitsi
 Transport:      datachannel
-Room ID/URL:    https://meet.egovm.ru/olcrtc-xxxxxxxx
+Room ID/URL:    https://meet.example.org/olcrtc-xxxxxxxx
 SOCKS5 proxy:   127.0.0.1:8808
 ```
 

@@ -142,7 +142,7 @@ Enter choice [1-2, default: 1]:
 ```
 
 - **1) Auto-generate** - скрипт сам придумает имя комнаты на выбранном сервере. Рекомендуется.
-- **2) Specific** - введи имя комнаты (`myroom`) или полный URL (`https://meet.egovm.ru/myroom`).
+- **2) Specific** - введи имя комнаты (`myroom`) или полный URL (`https://meet.example.org/myroom`).
 
 Для **telemost** и **wbstream** Jitsi-меню не показывается - скрипт спросит Room ID напрямую. Создай руму через сайт ([telemost](https://telemost.yandex.ru/), [wbstream](https://stream.wb.ru)) и вставь её ID.
 
@@ -214,10 +214,10 @@ Enter a comment for the config (default: olc - t.me/openlibrecommunity):
 Container name: olcrtc-server-xxxxxxxx
 Carrier:        jitsi
 Transport:      datachannel
-Room ID/URL:    https://meet.egovm.ru/olcrtc-xxxxxxxx
+Room ID/URL:    https://meet.example.org/olcrtc-xxxxxxxx
 Encryption key: d823fa01cb3e0609b67322f7cf984c4ee2e294936fc24ef38c9e59f4799...
 
-uri: olcrtc://jitsi?datachannel@https://meet.egovm.ru/olcrtc-xxxxxxxx#<key>$olc - t.me/openlibrecommunity
+uri: olcrtc://jitsi?datachannel@https://meet.example.org/olcrtc-xxxxxxxx#<key>$olc - t.me/openlibrecommunity
 ```
 
 **Сохрани Room ID и ключ шифрования** - они нужны для клиента. Ключ также сохраняется в `~/.olcrtc_key` и переиспользуется при повторных запусках.
@@ -262,7 +262,7 @@ SOCKS5 username (leave empty to disable auth):
 Container name: olcrtc-client-xxxxxxxx
 Auth:           jitsi
 Transport:      datachannel
-Room ID/URL:    https://meet.egovm.ru/olcrtc-xxxxxxxx
+Room ID/URL:    https://meet.example.org/olcrtc-xxxxxxxx
 SOCKS5 proxy:   127.0.0.1:8808
 ```
 

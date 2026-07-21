@@ -171,7 +171,7 @@ auth:
   provider: jitsi
 room:
   # Инстансы: docs/examples/jitsi.instances.yaml
-  id: "https://meet.egovm.ru/myroom"
+  id: "https://meet.example.org/myroom"
 crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
 net:
@@ -246,7 +246,7 @@ auth:
   provider: jitsi
 room:
   # Инстансы: docs/examples/jitsi.instances.yaml
-  id: "https://meet.egovm.ru/myroom"
+  id: "https://meet.example.org/myroom"
 crypto:
   key: "<hex-key-такой-же-как-на-сервере>"
 net:
@@ -497,7 +497,7 @@ mode: srv
 auth:
   provider: jitsi
 room:
-  id: "https://meet.egovm.ru/room1"
+  id: "https://meet.example.org/room1"
 crypto:
   key: "aaaa...1111"
 net:
@@ -538,7 +538,7 @@ mode: cnc
 auth:
   provider: jitsi
 room:
-  id: "https://meet.egovm.ru/room1"
+  id: "https://meet.example.org/room1"
 crypto:
   key: "aaaa...1111"
 net:

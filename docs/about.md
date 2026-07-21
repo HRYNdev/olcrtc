@@ -134,7 +134,7 @@ auth:
 room:
   # Use the Jitsi server that works in your network:
   # Instances: see docs/examples/jitsi.instances.yaml - https://HOST/ROOM
-  id: "https://meet.egovm.ru/REPLACE_ME_WITH_ROOM_ID"
+  id: "https://meet.example.org/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:
@@ -152,7 +152,7 @@ auth:
 room:
   # Use the Jitsi server that works in your network:
   # Instances: see docs/examples/jitsi.instances.yaml - https://HOST/ROOM
-  id: "https://meet.egovm.ru/REPLACE_ME_WITH_ROOM_ID"
+  id: "https://meet.example.org/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:
@@ -214,7 +214,7 @@ Go version: `1.26+`. `videochannel` requires `ffmpeg`; `codec: tile` requires a 
 sess, err := olcrtc.New(ctx, olcrtc.Config{
     Auth:   "jitsi",
     // Instances: see docs/examples/jitsi.instances.yaml
-    RoomID: "https://meet.egovm.ru/myroom",
+    RoomID: "https://meet.example.org/myroom",
 })
 if err != nil {
     return err
@@ -229,7 +229,7 @@ srv := tunnel.New(tunnel.Config{
     Transport: "datachannel",
     Carrier:   "jitsi",
     // Instances: see docs/examples/jitsi.instances.yaml
-    RoomURL:   "https://meet.egovm.ru/myroom",
+    RoomURL:   "https://meet.example.org/myroom",
     KeyHex:    "<64-char hex>",
     DNSServer: "8.8.8.8:53",
 })

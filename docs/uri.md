@@ -221,7 +221,7 @@ data: data
 ### jitsi + datachannel
 
 ```text
-olcrtc://jitsi?datachannel@https://meet.egovm.ru/myroom#d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799$RU / olc free sub
+olcrtc://jitsi?datachannel@https://meet.example.org/myroom#d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799$RU / olc free sub
 ```
 
 `<RoomID>` for jitsi is the full room URL in the form `https://host/room` (or `host/room`). Any self-hosted Jitsi Meet instance without authentication is supported; for public instances see [`docs/examples/jitsi.instances.yaml`](./examples/jitsi.instances.yaml) (or `meet.jit.si`). **Be sure to check which server is reachable in your network.**
@@ -234,7 +234,7 @@ auth:
   provider: jitsi
 room:
   # Instances: see docs/examples/jitsi.instances.yaml
-  id: "https://meet.egovm.ru/myroom"
+  id: "https://meet.example.org/myroom"
 crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
 net:

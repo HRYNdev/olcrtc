@@ -11,7 +11,7 @@ auth:
 # Instances: see docs/examples/jitsi.instances.yaml
 # Check in a browser which one works in your network.
 room:
-  id: "https://meet.egovm.ru/REPLACE_WITH_ROOM_NAME" # room name / URL
+  id: "https://meet.example.org/REPLACE_WITH_ROOM_NAME" # room name / URL
 
 crypto:
   # You can use key_file: "./olcrtc.key" to avoid storing the secret here.
