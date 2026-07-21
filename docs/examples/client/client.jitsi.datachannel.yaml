@@ -8,10 +8,10 @@ auth:
 
 # For jitsi: full room URL (https://host/room or host/room).
 # Must match the server.
-# Available servers: meet.small-dm.ru, meet1.arbitr.ru or meet.handyweb.org
+# Instances: see docs/examples/jitsi.instances.yaml
 # Check in a browser which one works in your network.
 room:
-  id: "https://meet.small-dm.ru/REPLACE_WITH_ROOM_NAME" # room name / URL
+  id: "https://meet.egovm.ru/REPLACE_WITH_ROOM_NAME" # room name / URL
 
 crypto:
   # You can use key_file: "./olcrtc.key" to avoid storing the secret here.

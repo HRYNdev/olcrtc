@@ -88,19 +88,16 @@ olcrtc /etc/olcrtc/client.yaml
 
 ### Сервер
 
-> **Jitsi-провайдер:** используйте тот сервер, который доступен в вашей сети. Проверьте в браузере и выберите рабочий:
-> - `https://meet.small-dm.ru/`
-> - `https://meet1.arbitr.ru/` 
-> - `https://meet.handyweb.org/`
+> **Jitsi-провайдер:** берите инстансы из файла [`examples/jitsi.instances.yaml`](./examples/jitsi.instances.yaml), а не из голого текста. Проверьте хост в браузере и выберите рабочий.
 
 ```yaml
 mode: srv
 auth:
   provider: jitsi
 room:
-  # Используйте тот Jitsi-сервер, который работает в вашей сети:
-  # https://meet.small-dm.ru/ROOM  или  https://meet1.arbitr.ru/ROOM  или  https://meet.handyweb.org/ROOM
-  id: "https://meet.small-dm.ru/REPLACE_ME_WITH_ROOM_ID"
+  # Хост берите из docs/examples/jitsi.instances.yaml:
+  # https://HOST/ROOM
+  id: "https://REPLACE_ME_WITH_HOST/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:
@@ -116,9 +113,9 @@ mode: cnc
 auth:
   provider: jitsi
 room:
-  # Используйте тот Jitsi-сервер, который работает в вашей сети:
-  # https://meet.small-dm.ru/ROOM  или  https://meet1.arbitr.ru/ROOM  или  https://meet.handyweb.org/ROOM
-  id: "https://meet.small-dm.ru/REPLACE_ME_WITH_ROOM_ID"
+  # Хост берите из docs/examples/jitsi.instances.yaml:
+  # https://HOST/ROOM
+  id: "https://REPLACE_ME_WITH_HOST/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:

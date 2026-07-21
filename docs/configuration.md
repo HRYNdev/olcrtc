@@ -88,19 +88,16 @@ Ready-made examples:
 
 ### Server
 
-> **Jitsi provider:** use the server that is reachable in your network. Check in the browser and pick a working one:
-> - `https://meet.small-dm.ru/`
-> - `https://meet1.arbitr.ru/` 
-> - `https://meet.handyweb.org/`
+> **Jitsi provider:** take instances from [`examples/jitsi.instances.yaml`](./examples/jitsi.instances.yaml), not from bare text. Check the host in the browser and pick a working one.
 
 ```yaml
 mode: srv
 auth:
   provider: jitsi
 room:
-  # Use the Jitsi server that works in your network:
-  # https://meet.small-dm.ru/ROOM  or  https://meet1.arbitr.ru/ROOM  or  https://meet.handyweb.org/ROOM
-  id: "https://meet.small-dm.ru/REPLACE_ME_WITH_ROOM_ID"
+  # Take the host from docs/examples/jitsi.instances.yaml:
+  # https://HOST/ROOM
+  id: "https://REPLACE_ME_WITH_HOST/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:
@@ -116,9 +113,9 @@ mode: cnc
 auth:
   provider: jitsi
 room:
-  # Use the Jitsi server that works in your network:
-  # https://meet.small-dm.ru/ROOM  or  https://meet1.arbitr.ru/ROOM  or  https://meet.handyweb.org/ROOM
-  id: "https://meet.small-dm.ru/REPLACE_ME_WITH_ROOM_ID"
+  # Take the host from docs/examples/jitsi.instances.yaml:
+  # https://HOST/ROOM
+  id: "https://REPLACE_ME_WITH_HOST/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:

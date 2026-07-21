@@ -74,7 +74,7 @@ olcrtc client.yaml
 
 | Provider | Engine | Comment |
 |---|---|---|
-| `jitsi` | `jitsi` | Jitsi room URL (`meet.small-dm.ru`, `meet1.arbitr.ru` or `meet.handyweb.org`), no separate registration |
+| `jitsi` | `jitsi` | Jitsi room URL, instances in docs/examples/jitsi.instances.yaml, no separate registration |
 | `telemost` | `goolom` | credentials via Yandex Telemost API, separate registration |
 | `wbstream` | `livekit` | credentials via WbBStream API, separate registration |
 | `none` | set in `engine.name` | direct engine mode with `engine.url` and `engine.token`, separate registration |
@@ -133,8 +133,8 @@ auth:
   provider: jitsi
 room:
   # Use the Jitsi server that works in your network:
-  # https://meet.small-dm.ru/ROOM  or  https://meet1.arbitr.ru/ROOM  or  https://meet.handyweb.org/ROOM
-  id: "https://meet.small-dm.ru/REPLACE_ME_WITH_ROOM_ID"
+  # Instances: see docs/examples/jitsi.instances.yaml - https://HOST/ROOM
+  id: "https://meet.egovm.ru/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:
@@ -151,8 +151,8 @@ auth:
   provider: jitsi
 room:
   # Use the Jitsi server that works in your network:
-  # https://meet.small-dm.ru/ROOM  or  https://meet1.arbitr.ru/ROOM  or  https://meet.handyweb.org/ROOM
-  id: "https://meet.small-dm.ru/REPLACE_ME_WITH_ROOM_ID"
+  # Instances: see docs/examples/jitsi.instances.yaml - https://HOST/ROOM
+  id: "https://meet.egovm.ru/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
 net:
@@ -213,8 +213,8 @@ Go version: `1.26+`. `videochannel` requires `ffmpeg`; `codec: tile` requires a 
 ```go
 sess, err := olcrtc.New(ctx, olcrtc.Config{
     Auth:   "jitsi",
-    // Use meet.small-dm.ru, meet1.arbitr.ru or meet.handyweb.org - whichever works in your network
-    RoomID: "https://meet.small-dm.ru/myroom",
+    // Instances: see docs/examples/jitsi.instances.yaml
+    RoomID: "https://meet.egovm.ru/myroom",
 })
 if err != nil {
     return err
@@ -228,8 +228,8 @@ conn, err := sess.Dial(ctx)
 srv := tunnel.New(tunnel.Config{
     Transport: "datachannel",
     Carrier:   "jitsi",
-    // Use meet.small-dm.ru, meet1.arbitr.ru or meet.handyweb.org - whichever works in your network
-    RoomURL:   "https://meet.small-dm.ru/myroom",
+    // Instances: see docs/examples/jitsi.instances.yaml
+    RoomURL:   "https://meet.egovm.ru/myroom",
     KeyHex:    "<64-char hex>",
     DNSServer: "8.8.8.8:53",
 })
