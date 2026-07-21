@@ -305,7 +305,7 @@ func newStreamTransport(
 		writerDone:       make(chan struct{}),
 		frameInterval:    time.Second / time.Duration(fps),
 		batchSize:        batchSize,
-		bindingToken:     bindingToken(cfg.RoomURL),
+		bindingToken:     channelBindingToken(cfg),
 		localEpoch:       randomEpoch(),
 		peers:            make(map[uint32]*kcpRuntime),
 		peerOut:          make(map[uint32]chan []byte),
@@ -483,6 +483,18 @@ func bindingToken(clientID string) uint32 {
 		token = 1
 	}
 	return token
+}
+
+// channelBindingToken derives a per-session token so multiple olcrtc pairs
+// in the same SFU room (e.g. concurrent e2e runs or real multi-tenant usage)
+// do not accept each other's VP8/KCP frames. ChannelID is unique per process
+// when set; falling back to RoomURL preserves compatibility for deployments
+// that rely on room-level isolation.
+func channelBindingToken(cfg transport.Config) uint32 {
+	if cfg.ChannelID != "" {
+		return bindingToken(cfg.ChannelID)
+	}
+	return bindingToken(cfg.RoomURL)
 }
 
 func randomEpoch() uint32 {
