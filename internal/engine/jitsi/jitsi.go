@@ -24,6 +24,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -522,12 +523,15 @@ func (s *Session) videoTrackHandler() func(*webrtc.TrackRemote, *webrtc.RTPRecei
 }
 
 // newSettingEngine builds the pion SettingEngine for a conference PC. When a
-// socket protector is set, it routes Pion sockets through ProtectedNet and
-// disables mDNS. It fails closed instead of falling back to the default path.
+// socket protector is set or we are on Android, it routes Pion sockets through
+// ProtectedNet and disables mDNS. On Android 11+ SELinux denies
+// netlink_route_socket for untrusted apps (b/155595000), so ProtectedNet
+// (which uses getifaddrs instead of netlink) must be installed even without
+// a Protector. It fails closed instead of falling back to the default path.
 func newSettingEngine() (webrtc.SettingEngine, error) {
 	settings := webrtc.SettingEngine{}
 	settings.LoggerFactory = logger.NewPionLoggerFactory()
-	if protect.Protector == nil {
+	if protect.Protector == nil && runtime.GOOS != "android" {
 		return settings, nil
 	}
 	pnet, err := protect.NewProtectedNet()
