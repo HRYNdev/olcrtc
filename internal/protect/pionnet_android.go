@@ -5,6 +5,7 @@
 package protect
 
 /*
+#include <android/api-level.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
@@ -13,6 +14,33 @@ package protect
 #include <netinet/in.h>
 #include <string.h>
 #include <unistd.h>
+
+// getifaddrs/freeifaddrs were added to bionic in API 24. The struct ifaddrs
+// definition is available at all API levels, but the function declarations
+// are guarded by __ANDROID_API__ >= 24. gomobile builds with -androidapi 21,
+// so we forward-declare them as weak symbols. With __attribute__((weak)) the
+// linker does not error when the NDK API 21 stub library lacks the symbol;
+// the address resolves to 0 at link time. Our Go code checks the runtime API
+// level (android_get_device_api_level >= 30) before calling, so the NULL
+// pointer is never dereferenced.
+#if __ANDROID_API__ < 24
+__attribute__((weak)) int getifaddrs(struct ifaddrs**);
+__attribute__((weak)) void freeifaddrs(struct ifaddrs*);
+#endif
+
+// if_nametoindex was also added in API 24. Implement it via SIOCGIFINDEX
+// ioctl, which is available at all API levels.
+static unsigned int ifc_name_to_index(const char *name) {
+	struct ifreq ifr;
+	int fd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (fd < 0) return 0;
+	memset(&ifr, 0, sizeof(ifr));
+	strncpy(ifr.ifr_name, name, IFNAMSIZ - 1);
+	int r = ioctl(fd, SIOCGIFINDEX, &ifr);
+	close(fd);
+	if (r < 0) return 0;
+	return (unsigned int)ifr.ifr_ifindex;
+}
 
 // Linux interface flags (see <net/if.h>). Defined as raw constants because
 // cgo does not reliably expose preprocessor macros across NDK versions.
@@ -51,6 +79,13 @@ static int ifc_get_hwaddr(const char *name, unsigned char *buf, int len) {
 	memcpy(buf, ifr.ifr_hwaddr.sa_data, 6);
 	return 0;
 }
+
+// android_api_level wraps android_get_device_api_level (available at all API
+// levels) so Go code can decide whether to use getifaddrs or fall back to
+// net.Interfaces(). Returns -1 on failure.
+static int android_api_level(void) {
+	return android_get_device_api_level();
+}
 */
 import "C"
 
@@ -62,14 +97,27 @@ import (
 	"github.com/pion/transport/v4"
 )
 
-// loadInterfaces enumerates network interfaces via getifaddrs(3).
+const android11ApiLevel = 30
+
+// loadInterfaces enumerates network interfaces.
 //
-// On Android 11+ SELinux denies untrusted_app from binding
+// On Android 11+ (API 30) SELinux denies untrusted_app from binding
 // netlink_route_socket (b/155595000). Both Go's net.Interfaces() and the
 // anet library use AF_NETLINK internally, which triggers the denial.
-// getifaddrs(3) uses /proc/net/dev + ioctl instead of netlink, so it is
-// not affected by the SELinux restriction.
+// getifaddrs(3) uses a different code path (ioctl-based) that is not
+// affected by the SELinux restriction.
+//
+// getifaddrs was added to bionic libc in API 24, so on API < 30 (where
+// netlink still works) we fall back to net.Interfaces() to avoid calling
+// a potentially unavailable symbol.
 func loadInterfaces() ([]*transport.Interface, error) {
+	if C.android_api_level() < android11ApiLevel {
+		return loadInterfacesNetlink()
+	}
+	return loadInterfacesGetifaddrs()
+}
+
+func loadInterfacesGetifaddrs() ([]*transport.Interface, error) {
 	var ifaHead *C.struct_ifaddrs
 	if rc := C.getifaddrs(&ifaHead); rc != 0 {
 		return nil, fmt.Errorf("getifaddrs: %w", ErrInterfacesUnavailable)
@@ -96,7 +144,7 @@ func loadInterfaces() ([]*transport.Interface, error) {
 		if !ok {
 			entry = &ifEntry{
 				iface: net.Interface{
-					Index: int(C.if_nametoindex(p.ifa_name)),
+					Index: int(C.ifc_name_to_index(p.ifa_name)),
 					Name:  name,
 					Flags: mapIfFlags(C.uint(p.ifa_flags)),
 				},
@@ -126,6 +174,28 @@ func loadInterfaces() ([]*transport.Interface, error) {
 		entry := byName[name]
 		ifc := transport.NewInterface(entry.iface)
 		for _, addr := range entry.addrs {
+			ifc.AddAddress(addr)
+		}
+		out = append(out, ifc)
+	}
+	return out, nil
+}
+
+// loadInterfacesNetlink falls back to net.Interfaces() for Android API < 30,
+// where SELinux does not yet restrict netlink_route_socket.
+func loadInterfacesNetlink() ([]*transport.Interface, error) {
+	ifs, err := net.Interfaces()
+	if err != nil {
+		return nil, fmt.Errorf("net interfaces: %w", err)
+	}
+	out := make([]*transport.Interface, 0, len(ifs))
+	for i := range ifs {
+		ifc := transport.NewInterface(ifs[i])
+		addrs, err := ifs[i].Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
 			ifc.AddAddress(addr)
 		}
 		out = append(out, ifc)
