@@ -74,11 +74,15 @@ mage lint    # golangci-lint
 mage mobile  # gomobile bindings (Android)
 ```
 
+## Клиенты
+
+- **Основной клиент:** [owenewans/owenclave](https://github.com/owenewans/owenclave) ([src.owenewans.org/owenrtc](https://src.owenewans.org/owenrtc)) - Android-клиент прокси (форк exclave). Поддерживает все распространённые протоколы (vless, hysteria2, mieru, trojan, vmess, tuic, shadowsocks, socks ...) плюс `olcrtc`, формат URI `olcrtc://` и подписки
+- UI-клиент сообщества: [alananisimov/olcbox](https://github.com/alananisimov/olcbox)
+
 ## Сообщество
 
 - Telegram: [@openlibrecommunity](https://t.me/openlibrecommunity)
 - Issues: [github.com/openlibrecommunity/olcrtc/issues](https://github.com/openlibrecommunity/olcrtc/issues)
-- UI-клиент сообщества: [alananisimov/olcbox](https://github.com/alananisimov/olcbox)
 
 ## Лицензия
 

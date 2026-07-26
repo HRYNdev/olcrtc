@@ -249,6 +249,17 @@ err := srv.Run(ctx)
 
 По умолчанию mobile-клиент использует `vp8channel`; `datachannel` тоже поддерживается.
 
+## Клиенты
+
+Готовые клиенты, которые говорят на `olcrtc`:
+
+| Клиент | Роль | Протоколы |
+|---|---|---|
+| [owenewans/owenclave](https://github.com/owenewans/owenclave) ([src.owenewans.org/owenrtc](https://src.owenewans.org/owenrtc)) | **основной клиент**, Android (форк exclave) | все распространённые протоколы (vless, hysteria2, mieru, trojan, vmess, tuic, shadowsocks, socks ...) плюс `olcrtc`, формат URI `olcrtc://` и подписки |
+| [alananisimov/olcbox](https://github.com/alananisimov/olcbox) | UI-клиент сообщества | `olcrtc` |
+
+`owenclave` - референсный клиент для URI `olcrtc://` и формата подписки. Нативный бинарник `olcrtc` в `mode: cnc` - тоже полноценный клиент, он только поднимает SOCKS5-слушатель без UI.
+
 ## Тесты
 
 ```bash

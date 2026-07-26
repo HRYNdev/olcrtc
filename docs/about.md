@@ -249,6 +249,17 @@ In this API the `Carrier` field is kept for compatibility with existing integrat
 
 By default the mobile client uses `vp8channel`; `datachannel` is also supported.
 
+## Clients
+
+Ready-made clients that speak `olcrtc`:
+
+| Client | Role | Protocols |
+|---|---|---|
+| [owenewans/owenclave](https://github.com/owenewans/owenclave) ([src.owenewans.org/owenrtc](https://src.owenewans.org/owenrtc)) | **main client**, Android (fork of exclave) | all common protocols (vless, hysteria2, mieru, trojan, vmess, tuic, shadowsocks, socks ...) plus `olcrtc`, the `olcrtc://` URI format and subscriptions |
+| [alananisimov/olcbox](https://github.com/alananisimov/olcbox) | community UI client | `olcrtc` |
+
+`owenclave` is the reference client for the `olcrtc://` URI and the subscription format. The native `olcrtc` binary in `mode: cnc` is also a full client - it only exposes a SOCKS5 listener without a UI.
+
 ## Tests
 
 ```bash
