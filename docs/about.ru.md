@@ -256,7 +256,8 @@ err := srv.Run(ctx)
 | Клиент | Роль | Протоколы |
 |---|---|---|
 | [owenewans/owenclave](https://github.com/owenewans/owenclave) ([src.owenewans.org/owenrtc](https://src.owenewans.org/owenrtc)) | **основной клиент**, Android (форк exclave) | все распространённые протоколы (vless, hysteria2, mieru, trojan, vmess, tuic, shadowsocks, socks ...) плюс `olcrtc`, формат URI `olcrtc://` и подписки |
-| [alananisimov/olcbox](https://github.com/alananisimov/olcbox) | UI-клиент сообщества | `olcrtc` |
+| [venterum/veil](https://github.com/venterum/veil) | клиент сообщества, Android (форк v2rayNG), Material 3 | VMess, VLESS, Shadowsocks, Trojan, SOCKS, WireGuard, Hysteria2 + `olcrtc` |
+| [alananisimov/olcbox](https://github.com/alananisimov/olcbox) | клиент сообщества, мультиплатформенный (Android, iOS, macOS, Windows, Linux) | Все провайдеры (Jitsi, Telemost, WB Stream, Jazz), все транспорты, split tunneling, режимы TUN/proxy |
 
 `owenclave` - референсный клиент для URI `olcrtc://` и формата подписки. Нативный бинарник `olcrtc` в `mode: cnc` - тоже полноценный клиент, он только поднимает SOCKS5-слушатель без UI.
 
