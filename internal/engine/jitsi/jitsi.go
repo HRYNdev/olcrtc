@@ -24,6 +24,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"net"
 	"runtime"
 	"strconv"
 	"strings"
@@ -531,6 +532,19 @@ func (s *Session) videoTrackHandler() func(*webrtc.TrackRemote, *webrtc.RTPRecei
 func newSettingEngine() (webrtc.SettingEngine, error) {
 	settings := webrtc.SettingEngine{}
 	settings.LoggerFactory = logger.NewPionLoggerFactory()
+
+	// ai-generated: added SetNetworkTypes/SetIPFilter (UDP4-only) below.
+	// Restrict ICE to UDP/IPv4, mirroring goolom's newWebRTCAPI. Without this,
+	// pion enumerates every local interface (VPN/WireGuard, docker, veth,
+	// link-local IPv6, ...) as a host candidate. A dead candidate (e.g. a
+	// WireGuard interface with no route back to the SFU) starves ICE
+	// consent-freshness checks on the working pair, so the SFU stops
+	// receiving consent and tears down the session every ~30-60s.
+	settings.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
+	settings.SetIPFilter(func(ip net.IP) bool {
+		return ip.To4() != nil
+	})
+
 	if protect.Protector == nil && runtime.GOOS != "android" {
 		return settings, nil
 	}
