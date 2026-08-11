@@ -37,6 +37,7 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/auth"
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
+	"github.com/openlibrecommunity/olcrtc/internal/protect"
 )
 
 var (
@@ -70,6 +71,8 @@ type Config struct {
 	Name string
 	// DNSServer is an optional custom DNS resolver (e.g. "8.8.8.8:53").
 	DNSServer string
+	// Resolver overrides DNSServer for outbound DNS lookups.
+	Resolver *net.Resolver
 	// ProxyAddr / ProxyPort configure an outbound SOCKS5 proxy.
 	ProxyAddr string
 	ProxyPort int
@@ -95,10 +98,20 @@ func RegisterDefaults() {
 // New creates a Session from cfg. The session is not connected yet; call
 // [Session.Connect] when ready.
 func New(ctx context.Context, cfg Config) (*Session, error) {
+	configureResolver(cfg)
 	if cfg.Auth != "" {
 		return newWithAuth(ctx, cfg)
 	}
 	return newDirect(ctx, cfg)
+}
+
+// ai-generated: installs the caller resolver without touching net.DefaultResolver.
+func configureResolver(cfg Config) {
+	resolver := cfg.Resolver
+	if resolver == nil {
+		resolver = protect.NewResolver(cfg.DNSServer)
+	}
+	protect.SetResolver(resolver)
 }
 
 func newWithAuth(ctx context.Context, cfg Config) (*Session, error) {

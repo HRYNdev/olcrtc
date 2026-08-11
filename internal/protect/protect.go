@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -40,6 +41,20 @@ var (
 // On Android, this calls VpnService.protect(fd) to bypass VPN routing.
 var Protector func(fd int) bool //nolint:gochecknoglobals // package-level state intentional
 
+var customResolver atomic.Pointer[net.Resolver] //nolint:gochecknoglobals // process integration setting
+
+// SetResolver sets the resolver used by newly created protected dialers.
+// ai-generated: added thread-safe custom resolver injection.
+func SetResolver(resolver *net.Resolver) {
+	customResolver.Store(resolver)
+}
+
+// Resolver returns the resolver used by newly created protected dialers.
+// ai-generated: added access to the current custom resolver.
+func Resolver() *net.Resolver {
+	return customResolver.Load()
+}
+
 func controlFunc(network, _ string, c syscall.RawConn) error {
 	if Protector == nil {
 		return nil
@@ -58,10 +73,32 @@ func controlFunc(network, _ string, c syscall.RawConn) error {
 
 // NewDialer returns a net.Dialer that calls Protector on each new socket.
 func NewDialer() *net.Dialer {
+	return NewDialerWithResolver(Resolver())
+}
+
+// NewDialerWithResolver returns a protected dialer using resolver for DNS.
+// ai-generated: added resolver-aware protected dialing.
+func NewDialerWithResolver(resolver *net.Resolver) *net.Dialer {
 	return &net.Dialer{
 		Timeout:   defaultDialTimeout,
 		KeepAlive: defaultKeepAlive,
 		Control:   controlFunc,
+		Resolver:  resolver,
+	}
+}
+
+// NewResolver returns a local Go resolver that sends queries to dnsServer.
+// ai-generated: added local DNS server resolver construction.
+func NewResolver(dnsServer string) *net.Resolver {
+	if dnsServer == "" {
+		return nil
+	}
+	return &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			dialer := net.Dialer{Timeout: 3 * time.Second, Control: controlFunc}
+			return dialer.DialContext(ctx, network, dnsServer)
+		},
 	}
 }
 
@@ -71,8 +108,8 @@ func NewTLSConfig() *tls.Config {
 }
 
 // NewHTTPTransport returns an HTTP transport using protected sockets and sane timeouts.
-func NewHTTPTransport() *http.Transport {
-	dialer := NewDialer()
+func NewHTTPTransport(resolvers ...*net.Resolver) *http.Transport {
+	dialer := NewDialerWithResolver(firstResolver(resolvers))
 	return &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           dialer.DialContext,
@@ -86,9 +123,9 @@ func NewHTTPTransport() *http.Transport {
 }
 
 // NewHTTPClient returns an http.Client using protected sockets with DNS retry.
-func NewHTTPClient() *http.Client {
+func NewHTTPClient(resolvers ...*net.Resolver) *http.Client {
 	return &http.Client{
-		Transport: &retryTransport{base: NewHTTPTransport()},
+		Transport: &retryTransport{base: NewHTTPTransport(resolvers...)},
 		Timeout:   defaultHTTPClientTimeout,
 	}
 }
@@ -136,12 +173,12 @@ func isRetriableError(err error) bool {
 }
 
 // NewWebSocketDialer returns a WebSocket dialer using protected sockets and shared TLS policy.
-func NewWebSocketDialer(handshakeTimeout time.Duration) websocket.Dialer {
+func NewWebSocketDialer(handshakeTimeout time.Duration, resolvers ...*net.Resolver) websocket.Dialer {
 	if handshakeTimeout <= 0 {
 		handshakeTimeout = defaultWebSocketTimeout
 	}
 	return websocket.Dialer{
-		NetDialContext:   DialContext,
+		NetDialContext:   NewDialerWithResolver(firstResolver(resolvers)).DialContext,
 		Proxy:            http.ProxyFromEnvironment,
 		TLSClientConfig:  NewTLSConfig(),
 		HandshakeTimeout: handshakeTimeout,
@@ -177,11 +214,13 @@ func DialContext(ctx context.Context, network, address string) (net.Conn, error)
 }
 
 // ProxyDialer implements golang.org/x/net/proxy.Dialer for pion ICE.
-type ProxyDialer struct{}
+type ProxyDialer struct {
+	resolver *net.Resolver
+}
 
 // Dial connects to the address on the named network using a protected socket.
 func (d *ProxyDialer) Dial(network, addr string) (net.Conn, error) {
-	conn, err := NewDialer().Dial(network, addr)
+	conn, err := NewDialerWithResolver(d.resolver).Dial(network, addr)
 	if err != nil {
 		return nil, fmt.Errorf("dial failed: %w", err)
 	}
@@ -189,6 +228,15 @@ func (d *ProxyDialer) Dial(network, addr string) (net.Conn, error) {
 }
 
 // NewProxyDialer returns a proxy.Dialer that protects ICE sockets.
-func NewProxyDialer() *ProxyDialer {
-	return &ProxyDialer{}
+// ai-generated: added optional resolver injection to the ICE proxy dialer.
+func NewProxyDialer(resolvers ...*net.Resolver) *ProxyDialer {
+	return &ProxyDialer{resolver: firstResolver(resolvers)}
+}
+
+// ai-generated: selects the optional resolver without changing legacy calls.
+func firstResolver(resolvers []*net.Resolver) *net.Resolver {
+	if len(resolvers) == 0 {
+		return Resolver()
+	}
+	return resolvers[0]
 }

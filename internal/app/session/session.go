@@ -16,6 +16,7 @@ import (
 	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/names"
+	"github.com/openlibrecommunity/olcrtc/internal/protect"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 	"github.com/openlibrecommunity/olcrtc/internal/server"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
@@ -188,6 +189,7 @@ type Config struct {
 	SOCKSUser             string
 	SOCKSPass             string
 	DNSServer             string
+	Resolver              *net.Resolver
 	SOCKSProxyAddr        string
 	SOCKSProxyPort        int
 	SOCKSProxyUser        string
@@ -388,7 +390,7 @@ func validateCommon(cfg Config) error {
 	if cfg.KeyHex == "" {
 		return ErrKeyRequired
 	}
-	if cfg.DNSServer == "" {
+	if cfg.DNSServer == "" && cfg.Resolver == nil {
 		return ErrDNSServerRequired
 	}
 	return nil
@@ -599,7 +601,7 @@ func isLoopbackListenHost(host string) bool {
 func Run(ctx context.Context, cfg Config) error {
 	cfg = ApplyTransportDefaults(cfg)
 	cfg = ApplyLivenessDefaults(cfg)
-	configureDefaultResolver(cfg.DNSServer)
+	configureResolver(cfg.Resolver, cfg.DNSServer)
 	roomURL := cfg.RoomID
 	liveness, err := livenessConfig(cfg)
 	if err != nil {
@@ -623,17 +625,12 @@ func Run(ctx context.Context, cfg Config) error {
 	return run(ctx)
 }
 
-func configureDefaultResolver(dnsServer string) {
-	if dnsServer == "" {
-		return
+// ai-generated: configures protected dialing without mutating net.DefaultResolver.
+func configureResolver(resolver *net.Resolver, dnsServer string) {
+	if resolver == nil {
+		resolver = protect.NewResolver(dnsServer)
 	}
-	net.DefaultResolver = &net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			d := net.Dialer{Timeout: 3 * time.Second}
-			return d.DialContext(ctx, network, dnsServer)
-		},
-	}
+	protect.SetResolver(resolver)
 }
 
 func runOnce(
@@ -758,7 +755,7 @@ func ValidateGen(cfg Config) error {
 	if !slices.Contains(enginebuiltin.Available(), cfg.Auth) {
 		return fmt.Errorf("%w: %s (available: %v)", ErrUnsupportedCarrier, cfg.Auth, enginebuiltin.Available())
 	}
-	if cfg.DNSServer == "" {
+	if cfg.DNSServer == "" && cfg.Resolver == nil {
 		return ErrDNSServerRequired
 	}
 	if cfg.Amount < 1 {
@@ -799,7 +796,7 @@ func genRetry(ctx context.Context, fn func(context.Context) error) error {
 
 // Gen creates cfg.Amount rooms for the configured auth provider and writes each room ID to out.
 func Gen(ctx context.Context, cfg Config, out func(string)) error {
-	configureDefaultResolver(cfg.DNSServer)
+	configureResolver(cfg.Resolver, cfg.DNSServer)
 	p, err := auth.Get(cfg.Auth)
 	if err != nil {
 		return fmt.Errorf("%w: %s", ErrUnsupportedCarrier, cfg.Auth)

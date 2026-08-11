@@ -22,6 +22,7 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/muxconn"
 	"github.com/openlibrecommunity/olcrtc/internal/names"
+	"github.com/openlibrecommunity/olcrtc/internal/protect"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
 	"github.com/xtaci/smux"
@@ -246,13 +247,11 @@ func setupCipher(keyHex string) (*crypto.Cipher, error) {
 	return cipher, nil
 }
 
+// ai-generated: uses the injected resolver or a local DNS server resolver.
 func (s *Server) setupResolver() {
-	s.resolver = &net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			d := net.Dialer{Timeout: 3 * time.Second}
-			return d.DialContext(ctx, network, s.dnsServer)
-		},
+	s.resolver = protect.Resolver()
+	if s.resolver == nil {
+		s.resolver = protect.NewResolver(s.dnsServer)
 	}
 }
 
@@ -1398,6 +1397,7 @@ func (s *Server) dial(req ConnectRequest) (net.Conn, error) {
 	dialer := &net.Dialer{
 		Timeout:   10 * time.Second,
 		KeepAlive: 30 * time.Second,
+		Resolver:  s.resolver,
 	}
 	conn, err := dialer.Dial("tcp4", proxyAddr)
 	if err != nil {

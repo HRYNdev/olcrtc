@@ -83,6 +83,7 @@ var (
 type mobileConfig struct {
 	transport        string
 	dnsServer        string
+	resolver         *net.Resolver
 	socksListenHost  string
 	authToken        string
 	vp8FPS           int
@@ -126,11 +127,24 @@ func SetTransport(transport string) {
 }
 
 // SetDNS selects the DNS server used by the tunnel.
+// ai-generated: constructs a local resolver instead of changing net.DefaultResolver.
 func SetDNS(dnsServer string) {
 	mu.Lock()
 	defer mu.Unlock()
 	ensureDefaultConfigLocked()
 	defaults.dnsServer = dnsServer
+	defaults.resolver = protect.NewResolver(dnsServer)
+	protect.SetResolver(defaults.resolver)
+}
+
+// SetCustomResolver sets the resolver used by outbound olcrtc connections.
+// ai-generated: added resolver injection for embedding applications.
+func SetCustomResolver(resolver *net.Resolver) {
+	mu.Lock()
+	defer mu.Unlock()
+	ensureDefaultConfigLocked()
+	defaults.resolver = resolver
+	protect.SetResolver(resolver)
 }
 
 // SetWBToken sets the pre-issued wbstream account token (auth.token).
@@ -580,6 +594,7 @@ func startWithConfig(
 	}
 
 	roomURL := buildRoomURL(carrierName, roomID)
+	protect.SetResolver(cfg.resolver)
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	cancel = cancelFunc
@@ -722,6 +737,7 @@ func ensureDefaultConfigLocked() {
 		defaults = mobileConfig{
 			transport:        defaultTransport,
 			dnsServer:        defaultDNSServer,
+			resolver:         protect.NewResolver(defaultDNSServer),
 			socksListenHost:  defaultSocksHost,
 			vp8FPS:           30,
 			vp8BatchSize:     8,

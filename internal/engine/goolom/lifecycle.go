@@ -115,7 +115,7 @@ func (s *Session) setupPeerConnections(config webrtc.Configuration) error {
 // be installed even without a Protector.
 func newWebRTCAPI() (*webrtc.API, error) {
 	settingEngine := webrtc.SettingEngine{}
-	if protect.Protector != nil || runtime.GOOS == "android" {
+	if protect.Protector != nil || protect.Resolver() != nil || runtime.GOOS == "android" {
 		pnet, err := protect.NewProtectedNet()
 		if err != nil {
 			return nil, fmt.Errorf("protected net: %w", err)

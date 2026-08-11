@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -48,6 +49,7 @@ func resetMobileGlobals(t *testing.T) {
 	defaultsSet = sync.Once{}
 	mu.Unlock()
 	protect.Protector = nil
+	protect.SetResolver(nil)
 	logger.SetVerbose(false)
 }
 
@@ -105,6 +107,29 @@ func TestDefaultsAndSetters(t *testing.T) {
 	SetDebug(false)
 	if logger.IsVerbose() {
 		t.Fatal("SetDebug(false) did not disable verbose")
+	}
+}
+
+// ai-generated: verifies DNS setters preserve the process default resolver.
+func TestDNSSettersDoNotMutateDefaultResolver(t *testing.T) {
+	resetMobileGlobals(t)
+	defaultResolver := net.DefaultResolver
+	custom := &net.Resolver{PreferGo: true}
+
+	SetDNS("9.9.9.9:53")
+	if net.DefaultResolver != defaultResolver {
+		t.Fatal("SetDNS() mutated net.DefaultResolver")
+	}
+	if protect.Resolver() == nil || protect.Resolver() == net.DefaultResolver {
+		t.Fatal("SetDNS() did not install a local resolver")
+	}
+
+	SetCustomResolver(custom)
+	if net.DefaultResolver != defaultResolver {
+		t.Fatal("SetCustomResolver() mutated net.DefaultResolver")
+	}
+	if protect.Resolver() != custom {
+		t.Fatal("SetCustomResolver() did not install the supplied resolver")
 	}
 }
 

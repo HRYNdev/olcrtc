@@ -101,6 +101,19 @@ func TestControlFuncProtects(t *testing.T) {
 	}
 }
 
+// ai-generated: verifies Pion dialers inherit the injected resolver.
+func TestCreateDialerUsesResolver(t *testing.T) {
+	resolver := &net.Resolver{PreferGo: true}
+	n := &ProtectedNet{resolver: resolver}
+	dialer, ok := n.CreateDialer(nil).(*protectedDialer)
+	if !ok {
+		t.Fatalf("CreateDialer() type = %T, want *protectedDialer", n.CreateDialer(nil))
+	}
+	if dialer.dialer.Resolver != resolver {
+		t.Fatalf("CreateDialer().Resolver = %p, want %p", dialer.dialer.Resolver, resolver)
+	}
+}
+
 // TestCreateDialerProtectsAndChains verifies that CreateDialer copies the
 // caller's Dialer and keeps the caller's Control hook.
 func TestCreateDialerProtectsAndChains(t *testing.T) {

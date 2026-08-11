@@ -3,11 +3,13 @@ package session
 import (
 	"context"
 	"errors"
+	"net"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/control"
+	"github.com/openlibrecommunity/olcrtc/internal/protect"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 )
 
@@ -95,6 +97,26 @@ func TestApplyLivenessDefaults(t *testing.T) {
 	}
 }
 
+// ai-generated: verifies session DNS setup preserves the process default resolver.
+func TestConfigureResolverDoesNotMutateDefaultResolver(t *testing.T) {
+	defaultResolver := net.DefaultResolver
+	custom := &net.Resolver{PreferGo: true}
+	t.Cleanup(func() { protect.SetResolver(nil) })
+
+	configureResolver(nil, "8.8.8.8:53")
+	if net.DefaultResolver != defaultResolver {
+		t.Fatal("configureResolver() mutated net.DefaultResolver")
+	}
+	if protect.Resolver() == nil || protect.Resolver() == net.DefaultResolver {
+		t.Fatal("configureResolver() did not install a local resolver")
+	}
+
+	configureResolver(custom, "8.8.8.8:53")
+	if protect.Resolver() != custom {
+		t.Fatal("configureResolver() did not prefer the supplied resolver")
+	}
+}
+
 func TestRunWithSessionRotationRestartsAfterMaxDuration(t *testing.T) {
 	oldRestartDelay := sessionRestartDelay
 	sessionRestartDelay = time.Millisecond
@@ -139,6 +161,15 @@ func TestValidate(t *testing.T) {
 		want error
 	}{
 		{name: "valid baseline", cfg: base},
+		{
+			name: "custom resolver without dns server",
+			cfg: func() Config {
+				cfg := base
+				cfg.DNSServer = ""
+				cfg.Resolver = &net.Resolver{PreferGo: true}
+				return cfg
+			}(),
+		},
 		{
 			name: "cnc requires socks host and port",
 			cfg: func() Config {
@@ -575,6 +606,13 @@ func TestValidateGen(t *testing.T) {
 		cfg  Config
 		want error
 	}{
+		{
+			name: "custom resolver reaches carrier validation",
+			cfg: Config{
+				Auth: testAuthWBStream, Resolver: &net.Resolver{PreferGo: true}, Amount: 3,
+			},
+			want: ErrUnsupportedCarrier,
+		},
 		{
 			name: "wbstream room generation unsupported",
 			cfg:  Config{Auth: testAuthWBStream, DNSServer: "8.8.8.8:53", Amount: 3},

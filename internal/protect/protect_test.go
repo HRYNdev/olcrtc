@@ -102,6 +102,23 @@ func TestNewDialerAndHTTPClient(t *testing.T) {
 	}
 }
 
+// ai-generated: verifies protected dialers use the injected resolver.
+func TestCustomResolverInjection(t *testing.T) {
+	resolver := &net.Resolver{PreferGo: true}
+	SetResolver(resolver)
+	t.Cleanup(func() { SetResolver(nil) })
+
+	if got := NewDialer().Resolver; got != resolver {
+		t.Fatalf("NewDialer().Resolver = %p, want %p", got, resolver)
+	}
+	if got := NewDialerWithResolver(nil).Resolver; got != nil {
+		t.Fatalf("NewDialerWithResolver(nil).Resolver = %p, want nil", got)
+	}
+	if got := NewProxyDialer().resolver; got != resolver {
+		t.Fatalf("NewProxyDialer().resolver = %p, want %p", got, resolver)
+	}
+}
+
 func TestNewWebSocketDialer(t *testing.T) {
 	dialer := NewWebSocketDialer(3 * time.Second)
 	if dialer.NetDialContext == nil || dialer.Proxy == nil || dialer.TLSClientConfig == nil ||

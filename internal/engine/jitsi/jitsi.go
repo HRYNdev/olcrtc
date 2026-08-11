@@ -545,7 +545,7 @@ func newSettingEngine() (webrtc.SettingEngine, error) {
 		return ip.To4() != nil
 	})
 
-	if protect.Protector == nil && runtime.GOOS != "android" {
+	if protect.Protector == nil && protect.Resolver() == nil && runtime.GOOS != "android" {
 		return settings, nil
 	}
 	pnet, err := protect.NewProtectedNet()

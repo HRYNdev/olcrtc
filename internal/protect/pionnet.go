@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -47,16 +48,17 @@ var tunInterfacePrefixes = []string{"tun", "ppp", "pptp"}
 // time via a platform-specific loadInterfaces function.
 type ProtectedNet struct {
 	interfaces []*transport.Interface
+	resolver   *net.Resolver
 }
 
 // NewProtectedNet builds a ProtectedNet with platform-specific interface
 // enumeration.
-func NewProtectedNet() (*ProtectedNet, error) {
+func NewProtectedNet(resolvers ...*net.Resolver) (*ProtectedNet, error) {
 	ifs, err := loadInterfaces()
 	if err != nil {
 		return nil, fmt.Errorf("load interfaces: %w", err)
 	}
-	return &ProtectedNet{interfaces: ifs}, nil
+	return &ProtectedNet{interfaces: ifs, resolver: firstResolver(resolvers)}, nil
 }
 
 // Interfaces returns system interfaces after filtering tunnel-style devices.
@@ -133,7 +135,7 @@ func (n *ProtectedNet) ListenUDP(network string, locAddr *net.UDPAddr) (transpor
 
 // Dial connects to the address on a protected socket.
 func (n *ProtectedNet) Dial(network, address string) (net.Conn, error) {
-	d := net.Dialer{Control: controlFunc}
+	d := net.Dialer{Control: controlFunc, Resolver: n.resolver}
 	conn, err := d.Dial(network, address)
 	if err != nil {
 		return nil, fmt.Errorf("dial %s %q: %w", network, address, err)
@@ -143,7 +145,7 @@ func (n *ProtectedNet) Dial(network, address string) (net.Conn, error) {
 
 // DialUDP connects to a UDP address on a protected socket.
 func (n *ProtectedNet) DialUDP(network string, laddr, raddr *net.UDPAddr) (transport.UDPConn, error) {
-	d := net.Dialer{Control: controlFunc}
+	d := net.Dialer{Control: controlFunc, Resolver: n.resolver}
 	if laddr != nil {
 		d.LocalAddr = laddr
 	}
@@ -162,7 +164,7 @@ func (n *ProtectedNet) DialUDP(network string, laddr, raddr *net.UDPAddr) (trans
 
 // DialTCP connects to a TCP address on a protected socket.
 func (n *ProtectedNet) DialTCP(network string, laddr, raddr *net.TCPAddr) (transport.TCPConn, error) {
-	d := net.Dialer{Control: controlFunc}
+	d := net.Dialer{Control: controlFunc, Resolver: n.resolver}
 	if laddr != nil {
 		d.LocalAddr = laddr
 	}
@@ -197,29 +199,88 @@ func (n *ProtectedNet) ListenTCP(network string, laddr *net.TCPAddr) (transport.
 
 // ResolveIPAddr returns an address of IP end point.
 func (n *ProtectedNet) ResolveIPAddr(network, address string) (*net.IPAddr, error) {
-	addr, err := net.ResolveIPAddr(network, address)
+	if n.resolver == nil {
+		addr, err := net.ResolveIPAddr(network, address)
+		if err != nil {
+			return nil, fmt.Errorf("resolve ip %s %q: %w", network, address, err)
+		}
+		return addr, nil
+	}
+	ip, err := lookupIP(n.resolver, network, address)
 	if err != nil {
 		return nil, fmt.Errorf("resolve ip %s %q: %w", network, address, err)
 	}
-	return addr, nil
+	return &net.IPAddr{IP: ip}, nil
 }
 
 // ResolveUDPAddr returns an address of UDP end point.
 func (n *ProtectedNet) ResolveUDPAddr(network, address string) (*net.UDPAddr, error) {
-	addr, err := net.ResolveUDPAddr(network, address)
+	if n.resolver == nil {
+		addr, err := net.ResolveUDPAddr(network, address)
+		if err != nil {
+			return nil, fmt.Errorf("resolve udp %s %q: %w", network, address, err)
+		}
+		return addr, nil
+	}
+	ip, port, err := n.resolveHostPort(network, address)
 	if err != nil {
 		return nil, fmt.Errorf("resolve udp %s %q: %w", network, address, err)
 	}
-	return addr, nil
+	return &net.UDPAddr{IP: ip, Port: port}, nil
 }
 
 // ResolveTCPAddr returns an address of TCP end point.
 func (n *ProtectedNet) ResolveTCPAddr(network, address string) (*net.TCPAddr, error) {
-	addr, err := net.ResolveTCPAddr(network, address)
+	if n.resolver == nil {
+		addr, err := net.ResolveTCPAddr(network, address)
+		if err != nil {
+			return nil, fmt.Errorf("resolve tcp %s %q: %w", network, address, err)
+		}
+		return addr, nil
+	}
+	ip, port, err := n.resolveHostPort(network, address)
 	if err != nil {
 		return nil, fmt.Errorf("resolve tcp %s %q: %w", network, address, err)
 	}
-	return addr, nil
+	return &net.TCPAddr{IP: ip, Port: port}, nil
+}
+
+// ai-generated: resolves a host and numeric port through the injected resolver.
+func (n *ProtectedNet) resolveHostPort(network, address string) (net.IP, int, error) {
+	host, portText, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, 0, fmt.Errorf("split host port: %w", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		return nil, 0, fmt.Errorf("parse port: %w", err)
+	}
+	ipNetwork := "ip"
+	if strings.HasSuffix(network, "4") {
+		ipNetwork = "ip4"
+	} else if strings.HasSuffix(network, "6") {
+		ipNetwork = "ip6"
+	}
+	ip, err := lookupIP(n.resolver, ipNetwork, host)
+	if err != nil {
+		return nil, 0, err
+	}
+	return ip, port, nil
+}
+
+// ai-generated: resolves one IP while preserving IP literals.
+func lookupIP(resolver *net.Resolver, network, host string) (net.IP, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		return ip, nil
+	}
+	ips, err := resolver.LookupIP(context.Background(), network, host)
+	if err != nil {
+		return nil, fmt.Errorf("lookup IP: %w", err)
+	}
+	if len(ips) == 0 {
+		return nil, &net.DNSError{Name: host, Err: "no addresses"}
+	}
+	return ips[0], nil
 }
 
 // CreateDialer returns a dialer that protects each fd. It copies d and chains
@@ -228,6 +289,9 @@ func (n *ProtectedNet) CreateDialer(d *net.Dialer) transport.Dialer {
 	var dialer net.Dialer
 	if d != nil {
 		dialer = *d
+	}
+	if dialer.Resolver == nil {
+		dialer.Resolver = n.resolver
 	}
 	if dialer.ControlContext != nil {
 		dialer.ControlContext = chainControlContext(dialer.ControlContext)
