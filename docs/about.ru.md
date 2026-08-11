@@ -133,7 +133,7 @@ XChaCha20 nonce строится как `sender prefix || counter`. Случай
 Поверх зашифрованного `muxconn` запускается `smux`. Первый smux stream занят handshake и control protocol:
 
 ```text
-CLIENT_HELLO -> SERVER_WELCOME
+CLIENT_HELLO(challenge) -> SERVER_WELCOME(challenge, authenticated peer ID)
 CONTROL_PING <-> CONTROL_PONG
 ```
 

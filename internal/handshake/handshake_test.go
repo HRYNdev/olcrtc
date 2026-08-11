@@ -1,6 +1,7 @@
 package handshake
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"net"
@@ -71,6 +72,38 @@ func TestHandshakeRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "nope") {
 		t.Fatalf("err message %q missing reason", err.Error())
+	}
+}
+
+func TestReplyMustMatchClientChallenge(t *testing.T) {
+	const (
+		challengeA = "00112233445566778899aabbccddeeff"
+		challengeB = "ffeeddccbbaa99887766554433221100"
+	)
+
+	var replies bytes.Buffer
+	if err := writeFrame(&replies, Welcome{
+		Version: ProtoVersion, Type: TypeWelcome, SessionID: "session-a",
+		PeerID: "peer-a", Challenge: challengeA,
+	}); err != nil {
+		t.Fatalf("write replayed welcome: %v", err)
+	}
+	if err := writeFrame(&replies, Welcome{
+		Version: ProtoVersion, Type: TypeWelcome, SessionID: "session-b",
+		PeerID: "peer-b", Challenge: challengeB,
+	}); err != nil {
+		t.Fatalf("write matching welcome: %v", err)
+	}
+
+	if _, _, matched, err := readReply(&replies, challengeB); err != nil || matched {
+		t.Fatalf("replayed reply = matched %v, err %v; want ignored", matched, err)
+	}
+	sessionID, peerID, matched, err := readReply(&replies, challengeB)
+	if err != nil || !matched {
+		t.Fatalf("matching reply = matched %v, err %v", matched, err)
+	}
+	if sessionID != "session-b" || peerID != "peer-b" {
+		t.Fatalf("matching reply = session %q peer %q", sessionID, peerID)
 	}
 }
 

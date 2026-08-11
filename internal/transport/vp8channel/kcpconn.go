@@ -104,6 +104,7 @@ func acquirePacketBuffer(pools *[4]sync.Pool, size int) *packetBuffer {
 		packet, ok := value.(*packetBuffer)
 		if ok {
 			packet.data = packet.data[:size]
+			packet.pool = pool
 			return packet
 		}
 	}
@@ -114,8 +115,10 @@ func (p *packetBuffer) release() {
 	if p == nil || p.pool == nil {
 		return
 	}
+	pool := p.pool
+	p.pool = nil
 	p.data = p.data[:0]
-	p.pool.Put(p)
+	pool.Put(p)
 }
 
 // setHeader re-points the outgoing frame header (used to update the dst epoch

@@ -211,7 +211,7 @@ func TestBatchSamplePreservesOverflowPacket(t *testing.T) {
 	if len(first) > defaultMaxPayloadSize {
 		t.Fatalf("first batch size = %d, max %d", len(first), defaultMaxPayloadSize)
 	}
-	if got := pool.Get(); got != nil {
+	if overflow.pool == nil || len(overflow.data) == 0 {
 		t.Fatal("overflow packet was released before the next batch")
 	}
 
@@ -226,11 +226,14 @@ func TestBatchSamplePreservesOverflowPacket(t *testing.T) {
 	if len(payloads) != 1 || len(payloads[0]) != 8 || payloads[0][0] != 'b' {
 		t.Fatalf("second batch payloads = %q, want one overflow packet", payloads)
 	}
-	if got := pool.Get(); got != overflow {
-		t.Fatalf("released packet = %p, want %p", got, overflow)
+	if overflow.pool != nil || len(overflow.data) != 0 {
+		t.Fatal("overflow packet was not released after the next batch")
 	}
-	if got := pool.Get(); got != nil {
-		t.Fatal("overflow packet was released more than once")
+	// release is idempotent, so close/retry races cannot put one object into
+	// sync.Pool twice.
+	overflow.release()
+	if overflow.pool != nil {
+		t.Fatal("second release restored packet ownership")
 	}
 }
 

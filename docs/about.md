@@ -127,7 +127,7 @@ The shared OLVC video frame format used by `seichannel` and `videochannel` is ve
 `smux` runs on top of the encrypted `muxconn`. The first smux stream is occupied by the handshake and the control protocol:
 
 ```text
-CLIENT_HELLO -> SERVER_WELCOME
+CLIENT_HELLO(challenge) -> SERVER_WELCOME(challenge, authenticated peer ID)
 CONTROL_PING <-> CONTROL_PONG
 ```
 
