@@ -1,4 +1,6 @@
 // Package tunnel exposes the olcrtc server tunnel as an embeddable Go library.
+// New registers the built-in providers, engines, and transports automatically.
+// RegisterDefaults is only needed after custom registry manipulation or extension.
 package tunnel
 
 import (
@@ -123,6 +125,7 @@ type Server struct {
 
 // New returns a server configured by cfg.
 func New(cfg Config) *Server {
+	RegisterDefaults()
 	return &Server{cfg: cfg, run: server.Run}
 }
 
@@ -170,7 +173,8 @@ func toTransportOptions(options TransportOptions) transport.Options {
 }
 
 // RegisterDefaults registers the built-in providers, engines, and transports.
-// It is safe to call multiple times.
+// New calls it automatically. Manual calls are only needed after custom registry
+// manipulation or extension. It is safe to call multiple times.
 func RegisterDefaults() {
 	session.RegisterDefaults()
 }

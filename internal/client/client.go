@@ -82,7 +82,7 @@ type Client struct {
 // HealthFunc is called when the client control health snapshot changes.
 type HealthFunc func(control.Status)
 
-// Config holds runtime configuration for [Run] and [RunWithReady].
+// Config holds runtime configuration for [Run], [RunWithReady], and [RunWithAddress].
 type Config struct {
 	Transport        string
 	Provider         string
@@ -109,11 +109,19 @@ type Config struct {
 
 // Run starts the client with the given configuration.
 func Run(ctx context.Context, cfg Config) error {
-	return RunWithReady(ctx, cfg, nil)
+	return RunWithAddress(ctx, cfg, nil)
 }
 
 // RunWithReady starts the client and invokes onReady after the SOCKS listener opens.
 func RunWithReady(ctx context.Context, cfg Config, onReady func()) error {
+	if onReady == nil {
+		return RunWithAddress(ctx, cfg, nil)
+	}
+	return RunWithAddress(ctx, cfg, func(string) { onReady() })
+}
+
+// RunWithAddress starts the client and reports the actual SOCKS listener address.
+func RunWithAddress(ctx context.Context, cfg Config, onReady func(actualAddr string)) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	keys, err := tunnelcore.SetupKeySet(cfg.KeyHex, crypto.Client)
@@ -141,9 +149,10 @@ func RunWithReady(ctx context.Context, cfg Config, onReady func()) error {
 		return fmt.Errorf("failed to listen on %s: %w", cfg.LocalAddr, err)
 	}
 	defer func() { _ = listener.Close() }()
-	logger.Infof("SOCKS5 server listening on %s", cfg.LocalAddr)
+	actualAddr := listener.Addr().String()
+	logger.Infof("SOCKS5 server listening on %s", actualAddr)
 	if onReady != nil {
-		onReady()
+		onReady(actualAddr)
 	}
 	client.goTracked(func() { client.acceptLoop(runCtx, listener) })
 	<-runCtx.Done()

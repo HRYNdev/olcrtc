@@ -18,9 +18,9 @@ func (testProtector) Protect(int) bool { return true }
 
 func TestSettersBuildPublicClientConfig(t *testing.T) {
 	configs := make(chan client.Config, 1)
-	runtime := configuredRuntime(t, func(ctx context.Context, cfg client.Config, onReady func()) error {
+	runtime := configuredRuntime(t, func(ctx context.Context, cfg client.Config, onReady func(string)) error {
 		configs <- cfg
-		onReady()
+		onReady(cfg.LocalAddr)
 		<-ctx.Done()
 		return ctx.Err()
 	})

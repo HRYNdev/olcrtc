@@ -33,8 +33,8 @@ func configuredRuntime(t *testing.T, runner clientRunner) *Runtime {
 	return runtime
 }
 
-func blockingReadyRunner(ctx context.Context, _ client.Config, onReady func()) error {
-	onReady()
+func blockingReadyRunner(ctx context.Context, _ client.Config, onReady func(string)) error {
+	onReady("127.0.0.1:1080")
 	<-ctx.Done()
 	return ctx.Err()
 }
@@ -68,7 +68,7 @@ func TestRuntimeLifecycle(t *testing.T) {
 }
 
 func TestWaitReadyReturnsStartupError(t *testing.T) {
-	runtime := configuredRuntime(t, func(context.Context, client.Config, func()) error {
+	runtime := configuredRuntime(t, func(context.Context, client.Config, func(string)) error {
 		return errTestRun
 	})
 	if err := runtime.Start(); err != nil {
@@ -80,7 +80,7 @@ func TestWaitReadyReturnsStartupError(t *testing.T) {
 }
 
 func TestWaitReadyTimeout(t *testing.T) {
-	runtime := configuredRuntime(t, func(ctx context.Context, _ client.Config, _ func()) error {
+	runtime := configuredRuntime(t, func(ctx context.Context, _ client.Config, _ func(string)) error {
 		<-ctx.Done()
 		return ctx.Err()
 	})
@@ -104,7 +104,7 @@ func TestTimeoutConversionDoesNotOverflow(t *testing.T) {
 
 func TestStopTimeoutKeepsStoppingState(t *testing.T) {
 	release := make(chan struct{})
-	runtime := configuredRuntime(t, func(context.Context, client.Config, func()) error {
+	runtime := configuredRuntime(t, func(context.Context, client.Config, func(string)) error {
 		<-release
 		return nil
 	})
@@ -145,13 +145,13 @@ func TestRapidRestartUsesNewGenerations(t *testing.T) {
 func TestStaleWaiterCannotObserveRestart(t *testing.T) {
 	var calls int
 	var callsMu sync.Mutex
-	runtime := configuredRuntime(t, func(ctx context.Context, _ client.Config, onReady func()) error {
+	runtime := configuredRuntime(t, func(ctx context.Context, _ client.Config, onReady func(string)) error {
 		callsMu.Lock()
 		calls++
 		call := calls
 		callsMu.Unlock()
 		if call > 1 {
-			onReady()
+			onReady("127.0.0.1:1080")
 		}
 		<-ctx.Done()
 		return ctx.Err()

@@ -63,9 +63,9 @@ func TestRunWithReadyUsesMappedConfig(t *testing.T) {
 	var got internalclient.Config
 	client := &Client{
 		cfg: Config{Provider: "jitsi", ChannelID: "channel", ProviderToken: "token"},
-		run: func(_ context.Context, cfg internalclient.Config, onReady func()) error {
+		run: func(_ context.Context, cfg internalclient.Config, onReady func(string)) error {
 			got = cfg
-			onReady()
+			onReady("127.0.0.1:1080")
 			return errRunner
 		},
 	}
@@ -78,5 +78,23 @@ func TestRunWithReadyUsesMappedConfig(t *testing.T) {
 	}
 	if got.Provider != "jitsi" || got.ChannelID != "channel" || got.ProviderToken != "token" {
 		t.Fatalf("runner config = %#v", got)
+	}
+}
+
+func TestRunWithAddressForwardsActualAddress(t *testing.T) {
+	const actualAddr = "127.0.0.1:43210"
+	client := &Client{
+		run: func(_ context.Context, _ internalclient.Config, onReady func(string)) error {
+			onReady(actualAddr)
+			return errRunner
+		},
+	}
+	var got string
+	err := client.RunWithAddress(context.Background(), func(address string) { got = address })
+	if !errors.Is(err, errRunner) {
+		t.Fatalf("RunWithAddress() error = %v, want %v", err, errRunner)
+	}
+	if got != actualAddr {
+		t.Fatalf("callback address = %q, want %q", got, actualAddr)
 	}
 }

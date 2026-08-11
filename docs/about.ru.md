@@ -227,6 +227,8 @@ Go версия: `1.26+`. `videochannel` реализован на чистом 
 
 `pkg/olcrtc/client` запускает полный зашифрованный клиентский стек и открывает SOCKS5 listener:
 
+Публичные конструкторы автоматически регистрируют все встроенные providers, engines и transports. Вызывай `RegisterDefaults` вручную только после пользовательского изменения или расширения registry.
+
 ```go
 cli := client.New(client.Config{
     Transport: "datachannel",
@@ -318,7 +320,7 @@ mage e2e
 Real-provider E2E включаются через переменные:
 
 ```bash
-E2E_PROVIDERS=wbstream E2E_TRANSPORTS= vp8channel mage e2e
+E2E_PROVIDERS=wbstream E2E_TRANSPORTS=vp8channel mage e2e
 ```
 
 ## Частые проблемы

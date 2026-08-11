@@ -219,6 +219,8 @@ Go version: `1.26+`. `videochannel` is pure Go; `codec: tile` requires a resolut
 
 `pkg/olcrtc/client` runs the complete encrypted client stack and opens a SOCKS5 listener:
 
+Public constructors automatically register all built-in providers, engines and transports. Call `RegisterDefaults` manually only after custom registry manipulation or extension.
+
 ```go
 cli := client.New(client.Config{
     Transport: "datachannel",
@@ -309,7 +311,7 @@ mage e2e
 Real-provider E2E is enabled via variables:
 
 ```bash
-E2E_PROVIDERS=wbstream E2E_TRANSPORTS= vp8channel mage e2e
+E2E_PROVIDERS=wbstream E2E_TRANSPORTS=vp8channel mage e2e
 ```
 
 ## Common problems

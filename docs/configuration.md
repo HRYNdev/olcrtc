@@ -86,6 +86,10 @@ Ready-made examples:
 
 The `data` directory must contain files named `names` and `surnames`, one display-name component per line. The embedded dictionaries remain active when `data` is omitted.
 
+## Config schema migration
+
+For one migration cycle the strict loader accepts the deprecated fields `link`, `ffmpeg`, `video.bitrate` and `video.hw`. All four fields are ignored by the current runtime and will be removed in the next config schema. Delete them from persisted configs. Other unknown or misspelled fields still cause a load error.
+
 ## Wire compatibility
 
 Current builds use the OLC2 encrypted record layer. Directional HKDF-SHA256 keys, distinct data/control AEAD associated data and a shared 64-record replay window make it incompatible with the old record format. There is no legacy decoder fallback.

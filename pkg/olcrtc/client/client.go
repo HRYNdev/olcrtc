@@ -1,4 +1,6 @@
 // Package client exposes the olcrtc SOCKS5 tunnel client as an embeddable Go library.
+// New registers the built-in providers, engines, and transports automatically.
+// RegisterDefaults is only needed after custom registry manipulation or extension.
 package client
 
 import (
@@ -98,7 +100,7 @@ type Config struct {
 	OnHealth         HealthFunc
 }
 
-type runner func(context.Context, internalclient.Config, func()) error
+type runner func(context.Context, internalclient.Config, func(string)) error
 
 // Client is an embeddable SOCKS5 tunnel client.
 type Client struct {
@@ -108,16 +110,25 @@ type Client struct {
 
 // New returns a client configured by cfg.
 func New(cfg Config) *Client {
-	return &Client{cfg: cfg, run: internalclient.RunWithReady}
+	RegisterDefaults()
+	return &Client{cfg: cfg, run: internalclient.RunWithAddress}
 }
 
 // Run starts the client and blocks until ctx is canceled or the provider ends.
 func (c *Client) Run(ctx context.Context) error {
-	return c.RunWithReady(ctx, nil)
+	return c.RunWithAddress(ctx, nil)
 }
 
 // RunWithReady starts the client and calls onReady after the SOCKS listener opens.
 func (c *Client) RunWithReady(ctx context.Context, onReady func()) error {
+	if onReady == nil {
+		return c.RunWithAddress(ctx, nil)
+	}
+	return c.RunWithAddress(ctx, func(string) { onReady() })
+}
+
+// RunWithAddress starts the client and reports the actual SOCKS listener address.
+func (c *Client) RunWithAddress(ctx context.Context, onReady func(actualAddr string)) error {
 	if err := c.run(ctx, toClientConfig(c.cfg), onReady); err != nil {
 		return fmt.Errorf("client: %w", err)
 	}
@@ -157,7 +168,8 @@ func toTransportOptions(options TransportOptions) transport.Options {
 }
 
 // RegisterDefaults registers the built-in providers, engines, and transports.
-// It is safe to call multiple times.
+// New calls it automatically. Manual calls are only needed after custom registry
+// manipulation or extension. It is safe to call multiple times.
 func RegisterDefaults() {
 	session.RegisterDefaults()
 }

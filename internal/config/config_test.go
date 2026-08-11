@@ -177,12 +177,39 @@ func TestApplyMapsEverySection(t *testing.T) {
 
 func TestLoadRejectsUnknownKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "olcrtc.yaml")
-	if err := os.WriteFile(path, []byte("mode: srv\nlink: direct\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("mode: srv\nlinnk: direct\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
 	if _, err := Load(path); err == nil {
 		t.Fatal("Load() error = nil, want failure for an unknown key")
+	}
+}
+
+func TestLoadAcceptsIgnoredLegacyFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "olcrtc.yaml")
+	body := `
+mode: cnc
+link: direct
+ffmpeg: /usr/bin/ffmpeg
+video:
+  bitrate: 5000k
+  hw: nvenc
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	file, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if file.Link != "direct" || file.FFmpeg != "/usr/bin/ffmpeg" ||
+		file.Video.Bitrate != "5000k" || file.Video.HW != "nvenc" {
+		t.Fatalf("legacy fields = %#v", file)
+	}
+	if got := Apply(file); got != (session.Config{Mode: "cnc"}) {
+		t.Fatalf("Apply() mapped ignored legacy fields: %#v", got)
 	}
 }
 

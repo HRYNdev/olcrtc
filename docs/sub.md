@@ -25,6 +25,8 @@ Important: this is a convention **for client applications**. `olcrtc` itself doe
 
 The subscription schema has no in-band version field and is documented as subscription format v1. Its URI lines use the `Provider` slot from URI format v1. Current OLC2 crypto and OLVC v4 video compatibility requirements apply to every listed endpoint.
 
+Migration note: old subscription producers may still include URI payload fields `video-bitrate` and `video-hw`. The current runtime ignores both fields, and producers must stop emitting them. The subscription and URI formats remain v1.
+
 ---
 
 ## Purpose

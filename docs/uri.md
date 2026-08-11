@@ -18,6 +18,8 @@ The current `olcrtc` does not parse such a URI automatically. If a client applic
 
 This convention has no in-band version field. The schema below is URI format v1. Renaming the first placeholder to `Provider` does not change serialized URIs because provider names already occupied that position.
 
+Migration note: old v1 producers may still emit `video-bitrate` and `video-hw`. The current runtime ignores both fields, so producers must stop emitting them. This does not introduce a new URI version or an `olcrtc` URI parser.
+
 The main client that consumes this URI format is [owenewans/owenclave](https://github.com/owenewans/owenclave) ([src.owenewans.org/owenrtc](https://src.owenewans.org/owenrtc)) - an Android proxy client (fork of exclave) supporting all common protocols (vless, hysteria2, mieru, trojan, vmess, tuic, shadowsocks, socks ...) plus `olcrtc` and subscriptions.
 
 ---

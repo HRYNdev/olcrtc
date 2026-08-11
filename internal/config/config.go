@@ -52,7 +52,15 @@ type Settings struct {
 
 // File is the on-disk YAML schema.
 type File struct {
-	Mode     string `yaml:"mode"`
+	Mode string `yaml:"mode"`
+	// Link is a deprecated no-op retained for one config schema migration cycle.
+	//
+	// Deprecated: remove this field from persisted configs.
+	Link string `yaml:"link"`
+	// FFmpeg is a deprecated no-op retained for one config schema migration cycle.
+	//
+	// Deprecated: remove this field from persisted configs.
+	FFmpeg   string `yaml:"ffmpeg"`
 	Settings `yaml:",inline"`
 	Gen      Gen       `yaml:"gen"`
 	Profiles []Profile `yaml:"profiles"`
@@ -118,9 +126,17 @@ type Engine struct {
 
 // Video tunes the videochannel transport.
 type Video struct {
-	Width      int    `yaml:"width"`
-	Height     int    `yaml:"height"`
-	FPS        int    `yaml:"fps"`
+	Width  int `yaml:"width"`
+	Height int `yaml:"height"`
+	FPS    int `yaml:"fps"`
+	// Bitrate is a deprecated no-op retained for one config schema migration cycle.
+	//
+	// Deprecated: remove this field from persisted configs.
+	Bitrate string `yaml:"bitrate"`
+	// HW is a deprecated no-op retained for one config schema migration cycle.
+	//
+	// Deprecated: remove this field from persisted configs.
+	HW         string `yaml:"hw"`
 	QRSize     int    `yaml:"qr_size"`
 	QRRecovery string `yaml:"qr_recovery"`
 	Codec      string `yaml:"codec"`

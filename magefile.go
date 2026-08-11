@@ -52,7 +52,7 @@ const (
 	ldflags  = "-s -w"
 )
 
-// errNotFormatted reports files that `go fmt` had to rewrite.
+// errNotFormatted reports files that are not gofmt-clean.
 //
 //nolint:gochecknoglobals // sentinel error
 var errNotFormatted = errors.New("files were not gofmt-clean")
@@ -191,9 +191,9 @@ func Mobile() error {
 
 // Fmt verifies that every file is gofmt-clean, the same gate CI applies.
 func Fmt() error {
-	out, err := sh.Output(goexe, "fmt", "./...")
+	out, err := sh.Output("gofmt", "-l", ".")
 	if err != nil {
-		return fmt.Errorf("go fmt: %w", err)
+		return fmt.Errorf("gofmt -l: %w", err)
 	}
 
 	if strings.TrimSpace(out) != "" {

@@ -2,6 +2,8 @@
 //
 // This package does not provide tunnel encryption, handshake, smux, SOCKS, or
 // liveness. Use package client or tunnel for the complete product stack.
+// New registers the built-in providers and engines automatically.
+// RegisterDefaults is only needed after custom registry manipulation or extension.
 package engineconn
 
 import (
@@ -54,13 +56,15 @@ type Session struct {
 }
 
 // RegisterDefaults registers all built-in providers and engines.
-// It is safe to call multiple times.
+// New calls it automatically. Manual calls are only needed after custom registry
+// manipulation or extension. It is safe to call multiple times.
 func RegisterDefaults() {
 	enginebuiltin.RegisterDefaults()
 }
 
 // New creates a disconnected raw engine session.
 func New(ctx context.Context, cfg Config) (*Session, error) {
+	RegisterDefaults()
 	cfg.Resolver = resolverFor(cfg)
 	if cfg.Provider != "" {
 		return newWithProvider(ctx, cfg)

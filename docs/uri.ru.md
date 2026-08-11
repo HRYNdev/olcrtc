@@ -18,6 +18,8 @@
 
 У соглашения нет поля версии внутри URI. Описанная ниже схема называется URI format v1. Переименование первого placeholder в `Provider` не меняет сериализованную строку, потому что на этой позиции уже находилось имя провайдера.
 
+Примечание по миграции: старые производители v1 могут по-прежнему добавлять `video-bitrate` и `video-hw`. Текущий runtime игнорирует оба поля, поэтому производители должны прекратить их добавлять. Это не вводит новую версию URI или URI-парсер в `olcrtc`.
+
 Основной клиент, который потребляет этот формат URI - [owenewans/owenclave](https://github.com/owenewans/owenclave) ([src.owenewans.org/owenrtc](https://src.owenewans.org/owenrtc)) - Android-клиент прокси (форк exclave), поддерживающий все распространённые протоколы (vless, hysteria2, mieru, trojan, vmess, tuic, shadowsocks, socks ...) плюс `olcrtc` и подписки.
 
 ---

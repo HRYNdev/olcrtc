@@ -38,12 +38,11 @@ var (
 	ErrInvalidConfig        = errors.New("invalid mobile runtime configuration")
 	ErrUnsupportedProvider  = errors.New("unsupported provider")
 	ErrUnsupportedTransport = errors.New("unsupported transport")
-	ErrProbePortInUse       = errors.New("probe SOCKS port is in use by this runtime")
 )
 
 type runtimeState string
 
-type clientRunner func(context.Context, client.Config, func()) error
+type clientRunner func(context.Context, client.Config, func(string)) error
 
 type runGeneration struct {
 	id            uint64
@@ -65,7 +64,6 @@ type Runtime struct {
 	nextGeneration uint64
 	current        *runGeneration
 	runner         clientRunner
-	probePorts     map[int]struct{}
 }
 
 // New returns an idle Runtime with documented mobile defaults.
@@ -76,15 +74,14 @@ func New() *Runtime {
 func newRuntime(runner clientRunner) *Runtime {
 	client.RegisterDefaults()
 	return &Runtime{
-		defaults:   defaultRuntimeConfig(),
-		state:      stateIdle,
-		runner:     runner,
-		probePorts: make(map[int]struct{}),
+		defaults: defaultRuntimeConfig(),
+		state:    stateIdle,
+		runner:   runner,
 	}
 }
 
-func runPublicClient(ctx context.Context, cfg client.Config, onReady func()) error {
-	if err := client.New(cfg).RunWithReady(ctx, onReady); err != nil {
+func runPublicClient(ctx context.Context, cfg client.Config, onReady func(string)) error {
+	if err := client.New(cfg).RunWithAddress(ctx, onReady); err != nil {
 		return fmt.Errorf("run public client: %w", err)
 	}
 	return nil
@@ -102,9 +99,6 @@ func (r *Runtime) Start() error {
 		return err
 	}
 	cfg := r.defaults.clientConfig()
-	if r.probePortClaimedLocked(cfg.LocalAddr) {
-		return ErrProbePortInUse
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	r.nextGeneration++
@@ -122,7 +116,7 @@ func (r *Runtime) Start() error {
 }
 
 func (r *Runtime) run(ctx context.Context, gen *runGeneration) {
-	err := r.runner(ctx, gen.cfg, func() { r.markReady(gen) })
+	err := r.runner(ctx, gen.cfg, func(string) { r.markReady(gen) })
 	gen.cancel()
 	r.finish(gen, err)
 }
