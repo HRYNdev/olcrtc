@@ -27,22 +27,22 @@ var (
 )
 
 type guestRegisterRequest struct {
-	DisplayName string `json:"displayName"`
+	DisplayName string `json:"displayName"` //nolint:tagliatelle // upstream WB API uses camelCase
 	Device      device `json:"device"`
 }
 
 type device struct {
-	DeviceName string `json:"deviceName"`
-	DeviceType string `json:"deviceType"`
+	DeviceName string `json:"deviceName"` //nolint:tagliatelle // upstream WB API uses camelCase
+	DeviceType string `json:"deviceType"` //nolint:tagliatelle // upstream WB API uses camelCase
 }
 
 type guestRegisterResponse struct {
-	AccessToken string `json:"accessToken"`
+	AccessToken string `json:"accessToken"` //nolint:tagliatelle // upstream WB API uses camelCase
 }
 
 type tokenResponse struct {
-	RoomToken string `json:"roomToken"`
-	ServerURL string `json:"serverUrl"`
+	RoomToken string `json:"roomToken"` //nolint:tagliatelle // upstream WB API uses camelCase
+	ServerURL string `json:"serverUrl"` //nolint:tagliatelle // upstream WB API uses camelCase
 }
 
 // apiURL returns the REST base for this provider.
@@ -101,7 +101,7 @@ func (p Provider) getToken(
 	ctx context.Context, client *http.Client, accessToken, roomID, displayName string,
 ) (tokenResponse, error) {
 	u := fmt.Sprintf("%s/api-room-manager/v2/room/%s/connection-details", p.apiURL(), roomID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
 		return tokenResponse{}, fmt.Errorf("create request: %w", err)
 	}

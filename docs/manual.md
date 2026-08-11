@@ -156,11 +156,11 @@ Save the output - you will need it when running the client.
 
 ## Step 7: Run the server
 
-On the server machine (VPS, etc.). Pick the right auth provider + transport combination from the matrix in [settings.md](settings.md).
+On the server machine (VPS, etc.). Pick the right provider + transport combination from the matrix in [settings.md](settings.md).
 
 ### jitsi + datachannel (recommended)
 
-The simplest way: use any self-hosted or public Jitsi Meet instance. No registration needed, the room name is made up on the fly. Available instances are listed in [`docs/examples/jitsi.instances.yaml`](./examples/jitsi.instances.yaml) - **be sure to check in a browser which one works in your network** and use the one that opens. Any other one will also do (`meet.jit.si`, your own self-hosted, etc.).
+The simplest way: use any self-hosted or public Jitsi Meet instance. No registration needed, the room name is made up on the fly. Available instances are listed in [`docs/jitsi.instances.yaml`](./jitsi.instances.yaml) - **be sure to check in a browser which one works in your network** and use the one that opens. Any other one will also do (`meet.jit.si`, your own self-hosted, etc.).
 
 Create a YAML config:
 
@@ -170,7 +170,7 @@ mode: srv
 auth:
   provider: jitsi
 room:
-  # Instances: see docs/examples/jitsi.instances.yaml
+  # Instances: see docs/jitsi.instances.yaml
   id: "https://meet.example.org/myroom"
 crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
@@ -245,7 +245,7 @@ mode: cnc
 auth:
   provider: jitsi
 room:
-  # Instances: see docs/examples/jitsi.instances.yaml
+  # Instances: see docs/jitsi.instances.yaml
   id: "https://meet.example.org/myroom"
 crypto:
   key: "<hex-key-same-as-on-the-server>"
@@ -467,18 +467,18 @@ Fine-tune the test runs through environment variables:
 
 ```sh
 # a single stress case
-E2E_CARRIERS=telemost E2E_TRANSPORTS=videochannel \
+STRESS_PROVIDERS=telemost E2E_TRANSPORTS=videochannel \
     STRESS_BULK_DURATION=0 STRESS_ECHO_DURATION=0 \
     STRESS_CASE_TIMEOUT=2m STRESS_TIMEOUT=3m mage stress
 
 # soak only jitsi for 30 minutes
-SOAK_CARRIERS=jitsi SOAK_DURATION=30m mage soak
+SOAK_PROVIDERS=jitsi SOAK_DURATION=30m mage soak
 ```
 
 Full list of variables:
-- `E2E_CARRIERS`, `E2E_TRANSPORTS`, `E2E_TIMEOUT`, `E2E_STRESS`, `E2E_STRESS_DURATION`
-- `STRESS_BULK_DURATION`, `STRESS_ECHO_DURATION`, `STRESS_CASE_TIMEOUT`, `STRESS_TIMEOUT`
-- `SOAK_CARRIERS`, `SOAK_TRANSPORTS`, `SOAK_DURATION`, `SOAK_CHAOS`
+- `E2E_PROVIDERS`, `E2E_TRANSPORTS`, `E2E_TIMEOUT`, `E2E_STRESS`, `E2E_STRESS_DURATION`
+- `STRESS_PROVIDERS`, `STRESS_BULK_DURATION`, `STRESS_ECHO_DURATION`, `STRESS_CASE_TIMEOUT`, `STRESS_TIMEOUT`
+- `SOAK_PROVIDERS`, `SOAK_TRANSPORTS`, `SOAK_DURATION`, `SOAK_CHAOS`
 
 ---
 

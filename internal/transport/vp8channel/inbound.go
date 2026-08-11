@@ -94,7 +94,7 @@ func (p *streamTransport) handleFirstPeer(peerEpoch uint32) {
 }
 
 // maybePeerRestart reads a frame from a non-latched epoch as a possible server
-// restart and rebuilds the carrier, at most once per restart. Both guards
+// restart and rebuilds the provider, at most once per restart. Both guards
 // below are load-bearing - see "Peer restart detection" in the package doc for
 // why silence alone is not evidence and what the rebuild path has to be.
 func (p *streamTransport) maybePeerRestart(src uint32) {
@@ -111,7 +111,7 @@ func (p *streamTransport) maybePeerRestart(src uint32) {
 	if !p.peerRestarting.CompareAndSwap(false, true) {
 		return // a rebuild is already in flight
 	}
-	logger.Infof("vp8channel: peer restart detected old=0x%08x new=0x%08x - rebuilding carrier",
+	logger.Infof("vp8channel: peer restart detected old=0x%08x new=0x%08x - rebuilding provider",
 		p.peerEpoch.Load(), src)
 	go p.stream.Reconnect("peer restart")
 }

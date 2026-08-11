@@ -2,7 +2,7 @@ package common
 
 import "context"
 
-// LifecycleSession is the carrier-lifecycle subset every transport forwards
+// LifecycleSession is the provider-lifecycle subset every transport forwards
 // verbatim. Both engine.Session and VideoSession satisfy it.
 type LifecycleSession interface {
 	SetShouldReconnect(fn func() bool)
@@ -11,7 +11,7 @@ type LifecycleSession interface {
 	Reconnect(reason string)
 }
 
-// Lifecycle supplies the four carrier-lifecycle methods every transport has
+// Lifecycle supplies the four provider-lifecycle methods every transport has
 // to expose but none of them does anything with. Transports embed it so the
 // pass-throughs are declared once instead of per package.
 type Lifecycle struct {
@@ -29,8 +29,8 @@ func (l Lifecycle) SetShouldReconnect(fn func() bool) { l.session.SetShouldRecon
 // SetEndedCallback registers end-of-session handling.
 func (l Lifecycle) SetEndedCallback(cb func(string)) { l.session.SetEndedCallback(cb) }
 
-// WatchConnection monitors the carrier connection lifecycle.
+// WatchConnection monitors the provider connection lifecycle.
 func (l Lifecycle) WatchConnection(ctx context.Context) { l.session.WatchConnection(ctx) }
 
-// Reconnect asks the carrier to tear down and re-establish its connection.
+// Reconnect asks the provider to tear down and re-establish its connection.
 func (l Lifecycle) Reconnect(reason string) { l.session.Reconnect(reason) }

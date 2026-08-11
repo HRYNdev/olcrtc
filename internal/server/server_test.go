@@ -718,7 +718,7 @@ func TestDispatchFiresOnTraffic(t *testing.T) {
 }
 
 func TestReinstallSessionClosesOldConnBeforeSwap(t *testing.T) {
-	// Regression test: after carrier reconnect, a client that reconnects
+	// Regression test: after provider reconnect, a client that reconnects
 	// faster can push smux frames into the server's old muxconn before
 	// reinstallSession swaps it out. This corrupts the old smux session
 	// and manifests as "frame too large" on the control stream.
@@ -1093,7 +1093,7 @@ func TestServeSingleWakesOnSessionInstall(t *testing.T) {
 	}
 
 	// Stop the accept loop before the deferred cleanup closes the sessions,
-	// otherwise it treats the teardown as a carrier failure and reinstalls.
+	// otherwise it treats the teardown as a provider failure and reinstalls.
 	cancel()
 	s.wg.Wait()
 }

@@ -1,6 +1,6 @@
 // Package transport defines transport abstractions and registry.
 //
-// A transport encodes byte payloads onto a carrier (engine) primitive - either
+// A transport encodes byte payloads onto a provider (engine) primitive - either
 // a reliable byte stream (datachannel) or a video track (videochannel,
 // seichannel, vp8channel). Transport-specific tuning lives in per-transport
 // Options types; the common configuration shared by every transport lives in
@@ -38,7 +38,7 @@ type Features struct {
 	MaxPayloadSize int
 }
 
-// Transport defines a byte transport independent of the underlying carrier.
+// Transport defines a byte transport independent of the underlying provider.
 type Transport interface {
 	Connect(ctx context.Context) error
 	Send(data []byte) error
@@ -49,7 +49,7 @@ type Transport interface {
 	WatchConnection(ctx context.Context)
 	CanSend() bool
 	Features() Features
-	// Reconnect asks the underlying carrier (engine) to tear down and
+	// Reconnect asks the underlying provider (engine) to tear down and
 	// re-establish the SFU connection. Upper layers call this when a
 	// liveness probe declares the link dead - useful when the engine has
 	// not yet noticed silent packet loss.
@@ -69,11 +69,11 @@ type ControlPlane interface {
 	SetControlOnData(cb func([]byte))
 	// ControlCanSend reports whether the control-plane is ready to send.
 	// Unlike CanSend, this should return true as soon as the subscriber PC
-	// is connected — it does NOT require the publisher PC to be ready.
+	// is connected - it does NOT require the publisher PC to be ready.
 	ControlCanSend() bool
 }
 
-// PeerTransport is implemented by transports whose carrier can identify and
+// PeerTransport is implemented by transports whose provider can identify and
 // address individual remote endpoints.
 type PeerTransport interface {
 	Transport
@@ -96,7 +96,7 @@ type PeerControlPlane interface {
 	ControlPeerCanSend(peerID string) bool
 }
 
-// PeerReadyTransport is implemented by transports whose carrier can signal
+// PeerReadyTransport is implemented by transports whose provider can signal
 // when a remote peer has appeared. WaitForPeer blocks until the remote side
 // is confirmed ready (first epoch frame received), or ctx is cancelled.
 type PeerReadyTransport interface {
@@ -105,7 +105,7 @@ type PeerReadyTransport interface {
 
 // LinkHealthObserver is implemented by transports whose peer-restart
 // heuristics want corroborating evidence from a session-specific liveness
-// signal before acting on carrier-level noise (e.g. unrelated room
+// signal before acting on provider-level noise (e.g. unrelated room
 // participants).
 type LinkHealthObserver interface {
 	NotifyLinkHealth(unhealthy bool)
@@ -153,27 +153,27 @@ type TrafficConfig struct {
 
 // Config holds common transport configuration applicable to every transport.
 type Config struct {
-	// Carrier is the auth-provider name; engine/URL/token are resolved through it.
-	Carrier string
-	RoomURL string
-	// Engine, URL, Token are forwarded to carrier.Config for the "none" auth
-	// carrier (direct engine access without a service-specific auth flow).
+	// Provider is the auth-provider name; engine/URL/token are resolved through it.
+	Provider string
+	RoomURL  string
+	// Engine, URL, Token are forwarded to provider.Config for the "none" auth
+	// provider (direct engine access without a service-specific auth flow).
 	Engine string
 	URL    string
 	Token  string
-	// AuthToken is an optional pre-issued account token forwarded to the auth
+	// ProviderToken is an optional pre-issued account token forwarded to the auth
 	// provider (e.g. a WB Stream account token). Empty uses the provider's
 	// default guest flow.
-	AuthToken  string
-	ChannelID  string
-	DeviceID   string
-	Name       string
-	OnData     func([]byte)
-	OnPeerData func(peerID string, data []byte)
-	DNSServer  string
-	Resolver   *net.Resolver
-	ProxyAddr  string
-	ProxyPort  int
+	ProviderToken string
+	ChannelID     string
+	DeviceID      string
+	Name          string
+	OnData        func([]byte)
+	OnPeerData    func(peerID string, data []byte)
+	DNSServer     string
+	Resolver      *net.Resolver
+	ProxyAddr     string
+	ProxyPort     int
 
 	// RequireTargetedPeer makes single-peer engines ignore broadcast frames
 	// from unrelated olcrtc clients until a peer sends a frame addressed to
@@ -189,7 +189,7 @@ type Config struct {
 	Traffic TrafficConfig
 }
 
-// EngineConfig projects the carrier-facing part of the transport config onto
+// EngineConfig projects the provider-facing part of the transport config onto
 // the engine builder config, so every transport opens its engine session the
 // same way instead of copying the field list by hand.
 func (c Config) EngineConfig() enginebuiltin.Config {
@@ -206,13 +206,13 @@ func (c Config) EngineConfig() enginebuiltin.Config {
 		Engine:              c.Engine,
 		URL:                 c.URL,
 		Token:               c.Token,
-		AuthToken:           c.AuthToken,
+		ProviderToken:       c.ProviderToken,
 	}
 }
 
 // OpenEngine resolves the configured provider and opens an engine session.
 func (c Config) OpenEngine(ctx context.Context) (engine.Session, error) {
-	sess, err := enginebuiltin.Open(ctx, c.Carrier, c.EngineConfig())
+	sess, err := enginebuiltin.Open(ctx, c.Provider, c.EngineConfig())
 	if err != nil {
 		return nil, fmt.Errorf("open engine session: %w", err)
 	}

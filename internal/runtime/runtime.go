@@ -78,11 +78,11 @@ func SmuxConfig(maxWirePayload int) *smux.Config {
 }
 
 // SmuxConfigLong is SmuxConfig with a relaxed keep-alive timeout for
-// transports whose carrier can legitimately go silent for tens of seconds
+// transports whose provider can legitimately go silent for tens of seconds
 // (vp8channel/goolom publisher-PC reconnect + SFU renegotiation). A tight
-// timeout would tear down the smux session while the carrier is rebuilding
+// timeout would tear down the smux session while the provider is rebuilding
 // itself, forcing an unnecessary second reconnect. Only transports that
-// implement transport.ControlPlane use this; conventional carriers
+// implement transport.ControlPlane use this; conventional providers
 // (jitsi/datachannel) keep the conservative 30s timeout so a genuinely dead
 // link is detected and reconnected promptly.
 func SmuxConfigLong(maxWirePayload int) *smux.Config {
@@ -100,7 +100,7 @@ func IsControlPlane(tr transport.Transport) bool {
 }
 
 // SmuxConfigFor returns the data-plane smux config appropriate for the
-// transport: relaxed keep-alive for ControlPlane carriers, conservative
+// transport: relaxed keep-alive for ControlPlane providers, conservative
 // otherwise.
 func SmuxConfigFor(tr transport.Transport) *smux.Config {
 	maxWirePayload := MaxPayload(tr)
@@ -113,7 +113,7 @@ func SmuxConfigFor(tr transport.Transport) *smux.Config {
 // LivenessTimeout returns the control-stream pong timeout for a transport:
 // a relaxed window for ControlPlane transports (KCP batching + frame pacing
 // can delay control packets under load), and the conservative default for
-// conventional carriers so dead links are detected quickly.
+// conventional providers so dead links are detected quickly.
 func LivenessTimeout(tr transport.Transport) time.Duration {
 	if IsControlPlane(tr) {
 		return 45 * time.Second
@@ -124,7 +124,7 @@ func LivenessTimeout(tr transport.Transport) time.Duration {
 // ConnectAckTimeout returns the tunnel CONNECT ack read deadline for a
 // transport. ControlPlane transports (SFU renegotiation) may take ~30s to
 // start forwarding data frames, so they get a generous window; conventional
-// carriers use the conservative default.
+// providers use the conservative default.
 func ConnectAckTimeout(tr transport.Transport) time.Duration {
 	if IsControlPlane(tr) {
 		return 90 * time.Second

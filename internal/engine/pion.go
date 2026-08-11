@@ -26,7 +26,7 @@ type PionSettings func(*webrtc.SettingEngine)
 
 // NewPionSettings prepares protected networking and per-engine pion settings.
 func NewPionSettings(opts PionSettingsOptions) (PionSettings, error) {
-	useProtectedNet := protect.Protector != nil || opts.Resolver != nil || runtime.GOOS == "android"
+	useProtectedNet := protect.HasProtector() || opts.Resolver != nil || runtime.GOOS == "android"
 	var protectedNet *protect.ProtectedNet
 	if useProtectedNet {
 		var err error

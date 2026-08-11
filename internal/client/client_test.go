@@ -957,7 +957,7 @@ func TestShutdownGivesUpOnStuckGoroutine(t *testing.T) {
 	}
 }
 
-// TestLivenessFallbackReestablishesSession covers the case where the carrier
+// TestLivenessFallbackReestablishesSession covers the case where the provider
 // never calls back after a liveness-triggered rebuild. handleReconnect returns
 // straight after ln.Reconnect and relies on that callback; without a fallback,
 // sessionReady is never signalled again and every SOCKS connection fails on the
@@ -977,7 +977,7 @@ func TestLivenessFallbackReestablishesSession(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	// Drive the real path: a liveness reconnect hands the rebuild to the
-	// carrier and arms the fallback.
+	// provider and arms the fallback.
 	c.handleReconnect(ctx, Config{}, cancel, reconnectLiveness)
 
 	select {
@@ -990,7 +990,7 @@ func TestLivenessFallbackReestablishesSession(t *testing.T) {
 }
 
 // TestLivenessFallbackSkipsWhenSessionIsBack makes sure the fallback stays out
-// of the way when the carrier callback did its job.
+// of the way when the provider callback did its job.
 func TestLivenessFallbackSkipsWhenSessionIsBack(t *testing.T) {
 	a, b := net.Pipe()
 	defer func() {

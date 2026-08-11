@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: WTFPL
 
-// ProtectedNet wraps Pion's network adapter. It applies Protector to each
+// ProtectedNet wraps Pion's network adapter. It applies the configured protector to each
 // socket fd and hides tunnel-style interfaces from candidate gathering.
 //
 // On Android 11+ (API 30) SELinux denies untrusted_app from binding
@@ -273,11 +273,11 @@ func (n *ProtectedNet) ResolveTCPAddr(network, address string) (*net.TCPAddr, er
 	return &net.TCPAddr{IP: ip.IP, Port: port, Zone: ip.Zone}, nil
 }
 
-func resolveTransportNetwork(network, transport string) (string, error) {
+func resolveTransportNetwork(network, protocol string) (string, error) {
 	if network == "" {
-		return transport, nil
+		return protocol, nil
 	}
-	if network == transport || network == transport+"4" || network == transport+"6" {
+	if network == protocol || network == protocol+"4" || network == protocol+"6" {
 		return network, nil
 	}
 	return "", net.UnknownNetworkError(network)

@@ -32,13 +32,15 @@
 
 **WBStream:** все транспорты кроме datachannel работают. DataChannel в обычном guest flow без выдавания модератора не работает - WB Stream выдаёт токены с `canPublishData=false`, и DC не маршрутизирует данные. Чтобы использовать `datachannel` поверх `wbstream`, задай `auth.token` с токеном аккаунта/модератора (`canPublishData=true`); см. `auth.token` в необязательных полях ниже.
 
-**Jitsi:** datachannel стабильно проходит - реализован поверх colibri-ws bridge channel и шлёт байты через `EndpointMessage{raw}` broadcast. Подходит для self-hosted и публичных Jitsi Meet инстансов без аутентификации (`https://meet.jit.si/...` и т.п.; инстансы в docs/examples/jitsi.instances.yaml). Проверьте в браузере, какой из серверов доступен в вашей сети. Видео-транспорты (vp8channel, seichannel, videochannel) экспонируют sendable VideoTrack через pion PeerConnection после Jingle session-accept, но Jicofo требует дополнительных протокольных шагов (LastN, ReceiverVideoConstraints, source-add) для маршрутизации видео - поэтому они помечены `~` .
+**Jitsi:** datachannel стабильно проходит - реализован поверх colibri-ws bridge channel и шлёт байты через `EndpointMessage{raw}` broadcast. Подходит для self-hosted и публичных Jitsi Meet инстансов без аутентификации (`https://meet.jit.si/...` и т.п.; инстансы в docs/jitsi.instances.yaml). Проверьте в браузере, какой из серверов доступен в вашей сети. Видео-транспорты (vp8channel, seichannel, videochannel) экспонируют sendable VideoTrack через pion PeerConnection после Jingle session-accept, но Jicofo требует дополнительных протокольных шагов (LastN, ReceiverVideoConstraints, source-add) для маршрутизации видео - поэтому они помечены `~` .
 
 **Jitsi + seichannel - отдельная оговорка.** SEI NAL-юниты идут пассажиром в H.264 видеопотоке, а Jicofo на self-hosted инстансах (например `meet.egovm.ru`) периодически режет/откладывает upstream видео когда ресивера в комнате формально нет - для нас это выглядит как `seichannel ack timeout` при формально живом PeerConnection. В steady-state транспорт работает, но e2e матрица помечает его `Unstable` (флаппит): зелёного и красного результата в CI достаточно, тест suite на этом не валится. Для надёжной передачи данных через jitsi предпочтительнее `datachannel` или `vp8channel`.
 
-**Рекомендуемая комбинация: `jitsi + datachannel`** - стабильно работает на любом self-hosted или публичном Jitsi Meet (инстансы в docs/examples/jitsi.instances.yaml - проверьте, какой доступен), не требует регистрации, простая руму создания. Альтернатива: `wbstream + vp8channel` - стабильно для коммерческих сценариев, не требует специальных прав.
+**Рекомендуемая комбинация: `jitsi + datachannel`** - стабильно работает на любом self-hosted или публичном Jitsi Meet (инстансы в docs/jitsi.instances.yaml - проверьте, какой доступен), не требует регистрации, простая руму создания. Альтернатива: `wbstream + vp8channel` - стабильно для коммерческих сценариев, не требует специальных прав.
 
 Скорость по убыванию: `datachannel` > `vp8channel` > `seichannel` > `videochannel`
+
+**Совместимость wire-форматов:** текущие сборки используют OLC2 с направленными HKDF-ключами, отдельным AAD для data/control и replay-защитой. Они не соединяются со сборками на старом crypto record format. `seichannel` и `videochannel` используют OLVC версии 4 и отклоняют старые кадры OVC1/OVV2.
 
 ---
 
@@ -66,11 +68,12 @@
 | `failover.retry_delay` | Пауза перед следующим профилем, например `2s` |
 | `failover.max_cycles` | Сколько полных проходов по профилям сделать; `0` = бесконечно |
 | `liveness.interval` | Интервал ping по control stream, по умолчанию `10s` |
-| `liveness.timeout` | Сколько ждать pong, по умолчанию `5s` |
-| `liveness.failures` | Сколько pong можно пропустить перед rebuild, по умолчанию `3` |
+| `liveness.timeout` | Сколько ждать pong, по умолчанию `15s` |
+| `liveness.failures` | Сколько pong можно пропустить перед rebuild, по умолчанию `4` |
 | `lifecycle.max_session_duration` | Плановый rebuild сессии после указанного времени, например `6h`; если поле не задано, выключено |
 | `traffic.max_payload_size` | Лимит размера зашифрованного wire-message; `0` = лимит транспорта |
 | `traffic.min_delay` / `.max_delay` | Необязательный pacing отправки, например `5ms` / `30ms` |
+| `data` | Необязательный каталог со словарями display name `names` и `surnames`; по умолчанию используются встроенные словари |
 
 `crypto.key_file` читается относительно YAML-файла. Не указывай `crypto.key` и `crypto.key_file` одновременно.
 
@@ -101,7 +104,7 @@ transport. Используй одинаковые traffic-настройки н
 
 ## mode: gen
 
-`gen` оставлен для auth-провайдеров, которые умеют создавать комнаты через API.
+`gen` оставлен для провайдеров, которые умеют создавать комнаты через API.
 Сейчас встроенные провайдеры не поддерживают автосоздание комнат через `olcrtc`.
 
 Для `telemost` и `wbstream` создай комнату через сайт сервиса и вставь её ID в
@@ -172,7 +175,7 @@ transport. Используй одинаковые traffic-настройки н
 
 ## videochannel
 
-**Рекомендуется: `codec: qrcode`, `width: 1080`, `height: 1080`, `fps: 30`, `bitrate: "5000k"`, `hw: none`**
+**Рекомендуется: `codec: qrcode`, `width: 1080`, `height: 1080`, `fps: 30`**
 
 | YAML поле | Описание | По умолчанию |
 |-----------|----------|:------------:|
@@ -180,13 +183,10 @@ transport. Используй одинаковые traffic-настройки н
 | `video.width` | Ширина в пикселях | `1920` |
 | `video.height` | Высота в пикселях | `1080` |
 | `video.fps` | FPS | `30` |
-| `video.bitrate` | Битрейт, например `"2M"` или `"5000k"` | `"2M"` |
-| `video.hw` | Аппаратное ускорение: `none` или `nvenc` | `none` |
 | `video.qr_recovery` | Коррекция ошибок QR: `low` / `medium` / `high` / `highest` | `low` |
 | `video.qr_size` | Размер фрагмента QR в байтах, `0` = авто | `0` |
 | `video.tile_module` | Размер тайла в пикселях 1..270 (только `tile`) | `4` |
-| `video.tile_rs` | Reed-Solomon паритет % 0..200 (только `tile`) | `20` |
-| `ffmpeg` | Путь к исполняемому файлу ffmpeg | `ffmpeg` |
+| `video.tile_rs` | Reed-Solomon паритет % 0..200 (только `tile`) | `0` |
 
 Для codec `tile` нужно точно `1080x1080`.
 
@@ -381,8 +381,6 @@ video:
   width: 1080
   height: 1080
   fps: 30
-  bitrate: "5000k"
-  hw: none
 ```
 
 ```yaml
@@ -405,8 +403,6 @@ video:
   width: 1080
   height: 1080
   fps: 30
-  bitrate: "5000k"
-  hw: none
 ```
 
 ---

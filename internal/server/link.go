@@ -14,8 +14,8 @@ import (
 func (s *Server) bringUpLink(ctx context.Context, cfg Config, cancel context.CancelFunc) error {
 	s.baseCtx = ctx
 	linkCfg := tunnelcore.BuildTransportConfig(tunnelcore.LinkConfig{
-		Carrier: cfg.Carrier, RoomURL: cfg.RoomURL, Engine: cfg.Engine,
-		URL: cfg.URL, Token: cfg.Token, AuthToken: cfg.AuthToken,
+		Provider: cfg.Provider, RoomURL: cfg.RoomURL, Engine: cfg.Engine,
+		URL: cfg.URL, Token: cfg.Token, ProviderToken: cfg.ProviderToken,
 		ChannelID: cfg.ChannelID, DNSServer: s.dnsServer,
 		Options: cfg.TransportOptions, Traffic: cfg.Traffic,
 	}, tunnelcore.LinkRoleConfig{
@@ -40,7 +40,7 @@ func (s *Server) bringUpLink(ctx context.Context, cfg Config, cancel context.Can
 			s.handleReconnect()
 		}
 	})
-	logger.Infof("Connecting transport=%s carrier=%s ...", cfg.Transport, cfg.Carrier)
+	logger.Infof("Connecting transport=%s provider=%s ...", cfg.Transport, cfg.Provider)
 	if s.peerLn == nil {
 		s.installSession()
 	} else {
@@ -99,7 +99,7 @@ func (s *Server) installControlSession() {
 
 func (s *Server) handleReconnect() {
 	s.health.RecordReconnect()
-	logger.Infof("server reconnect reason=carrier - tearing down smux session")
+	logger.Infof("server reconnect reason=provider - tearing down smux session")
 	s.sessMu.RLock()
 	current := s.session
 	s.sessMu.RUnlock()

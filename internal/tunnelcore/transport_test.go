@@ -12,8 +12,8 @@ func TestBuildTransportConfigPreservesRoleFields(t *testing.T) {
 	onData := func([]byte) {}
 	onPeerData := func(string, []byte) {}
 	cfg := BuildTransportConfig(LinkConfig{
-		Carrier: "carrier", RoomURL: "room", Engine: "engine", URL: "url",
-		Token: "token", AuthToken: "auth-token", ChannelID: "channel",
+		Provider: "provider", RoomURL: "room", Engine: "engine", URL: "url",
+		Token: "token", ProviderToken: "auth-token", ChannelID: "channel",
 		DNSServer: "dns", Traffic: transport.TrafficConfig{MaxPayloadSize: 4096},
 	}, LinkRoleConfig{
 		DeviceID: "device", OnData: onData, OnPeerData: onPeerData,
@@ -26,7 +26,7 @@ func TestBuildTransportConfigPreservesRoleFields(t *testing.T) {
 	if cfg.OnData == nil || cfg.OnPeerData == nil || cfg.ProxyAddr != "proxy" || cfg.ProxyPort != 1080 {
 		t.Fatalf("role callbacks/proxy = %+v", cfg)
 	}
-	if cfg.Carrier != "carrier" || cfg.RoomURL != "room" || cfg.Traffic.MaxPayloadSize != 4096 {
+	if cfg.Provider != "provider" || cfg.RoomURL != "room" || cfg.Traffic.MaxPayloadSize != 4096 {
 		t.Fatalf("shared config = %+v", cfg)
 	}
 }

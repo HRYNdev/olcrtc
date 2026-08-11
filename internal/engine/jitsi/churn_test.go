@@ -42,7 +42,7 @@ func TestResetPeerClearsBindingForNewPeer(t *testing.T) {
 	frameA := makeBridgeFrameForEpoch(t, 0x1111, 0, []byte("from-A"))
 	js.deliverBridgeMessage(makeBridgeMessageFrom("peerA", map[string]any{rawFieldKey: frameA}), true)
 
-	// Peer B sends — magic passes, so we re-latch onto peerB and the
+	// Peer B sends - magic passes, so we re-latch onto peerB and the
 	// payload is delivered. (Old behaviour: dropped until ResetPeer.)
 	frameB1 := makeBridgeFrameForEpoch(t, 0x2222, 0, []byte("from-B-relatched"))
 	js.deliverBridgeMessage(makeBridgeMessageFrom("peerB", map[string]any{rawFieldKey: frameB1}), true)
@@ -56,7 +56,7 @@ func TestResetPeerClearsBindingForNewPeer(t *testing.T) {
 		t.Fatalf("peerEndpoint after ResetPeer = %q, want nil", *p)
 	}
 
-	// Peer B again — fresh latch, frame delivers.
+	// Peer B again - fresh latch, frame delivers.
 	frameB2 := makeBridgeFrameForEpoch(t, 0x2222, 0, []byte("from-B-final"))
 	js.deliverBridgeMessage(makeBridgeMessageFrom("peerB", map[string]any{rawFieldKey: frameB2}), true)
 

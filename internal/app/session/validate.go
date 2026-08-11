@@ -16,7 +16,7 @@ import (
 func Validate(cfg Config) error {
 	checks := []func(Config) error{
 		validateMode,
-		validateAuth,
+		validateProvider,
 		validateTransportRegistration,
 		validateCommon,
 		validateTransportConfig,
@@ -42,12 +42,12 @@ func validateMode(cfg Config) error {
 	}
 }
 
-func validateAuth(cfg Config) error {
-	if cfg.Auth == "" {
-		return ErrAuthRequired
+func validateProvider(cfg Config) error {
+	if cfg.Provider == "" {
+		return ErrProviderRequired
 	}
-	if !slices.Contains(enginebuiltin.Available(), cfg.Auth) {
-		return fmt.Errorf("%w: %s (available: %v)", ErrUnsupportedCarrier, cfg.Auth, enginebuiltin.Available())
+	if !slices.Contains(enginebuiltin.Available(), cfg.Provider) {
+		return fmt.Errorf("%w: %s (available: %v)", ErrUnsupportedProvider, cfg.Provider, enginebuiltin.Available())
 	}
 	return nil
 }
@@ -63,7 +63,7 @@ func validateTransportRegistration(cfg Config) error {
 }
 
 func validateCommon(cfg Config) error {
-	if cfg.RoomID == "" && cfg.Auth != authNone {
+	if cfg.RoomID == "" && cfg.Provider != providerNone {
 		return ErrRoomIDRequired
 	}
 	if cfg.KeyHex == "" {
@@ -107,12 +107,6 @@ func validateVideoChannel(cfg Config) error {
 	}
 	if cfg.Video.FPS == 0 {
 		return ErrVideoFPSRequired
-	}
-	if cfg.Video.Bitrate == "" {
-		return ErrVideoBitrateRequired
-	}
-	if cfg.Video.HW == "" {
-		return ErrVideoHWRequired
 	}
 	return validateVideoCodec(cfg)
 }

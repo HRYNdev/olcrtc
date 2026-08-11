@@ -74,7 +74,3 @@ func (p Provider) Issue(ctx context.Context, cfg auth.Config) (auth.Credentials,
 		Extra: map[string]string{"roomID": roomID},
 	}, nil
 }
-
-func init() { //nolint:gochecknoinits // auth registration is the canonical Go pattern for plugins
-	auth.Register("wbstream", Provider{})
-}

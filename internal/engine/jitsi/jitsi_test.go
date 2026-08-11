@@ -510,12 +510,3 @@ func TestBridgeCloseEndsWhenReconnectDisabled(t *testing.T) {
 		t.Fatalf("ended = %q, want bridge close reason", ended)
 	}
 }
-
-func TestEngineRegistration(t *testing.T) {
-	if _, err := engine.New(context.Background(), "jitsi", engine.Config{
-		URL:   testHost,
-		Extra: map[string]string{credentialKeyRoom: testRoom},
-	}); err != nil {
-		t.Fatalf("engine.New(jitsi) = %v, want nil", err)
-	}
-}

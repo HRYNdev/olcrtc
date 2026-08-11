@@ -7,8 +7,8 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-// ErrVideoTrackUnsupported is returned when a carrier cannot expose video tracks.
-var ErrVideoTrackUnsupported = errors.New("carrier does not support video tracks")
+// ErrVideoTrackUnsupported is returned when a provider cannot expose video tracks.
+var ErrVideoTrackUnsupported = errors.New("provider does not support video tracks")
 
 // NewVideoTrack creates the local video track a transport publishes.
 //

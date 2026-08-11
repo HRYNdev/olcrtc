@@ -1,4 +1,4 @@
-# Jitsi instances for the jitsi auth provider.
+# Jitsi instances for the jitsi provider.
 # Pick a reachable host and put it into room.id as https://HOST/ROOM.
 # Hosts come and go - verify in a browser before use.
 instances:

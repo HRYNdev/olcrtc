@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	testModeSrv      = "srv"
-	testAuthProvider = "wbstream"
-	testRoomID       = "r1"
-	testCryptoKey    = "deadbeef"
-	testDNSServer    = "8.8.8.8:53"
+	testModeSrv   = "srv"
+	testProvider  = "wbstream"
+	testRoomID    = "r1"
+	testCryptoKey = "deadbeef"
+	testDNSServer = "8.8.8.8:53"
 )
 
 func TestLoadAndApply(t *testing.T) {
@@ -72,8 +72,8 @@ func requireLoadedFile(t *testing.T, f File) {
 	if f.Mode != testModeSrv {
 		t.Fatalf("Mode = %q, want %q", f.Mode, testModeSrv)
 	}
-	if f.Auth.Provider != testAuthProvider {
-		t.Fatalf("Auth.Provider = %q, want %q", f.Auth.Provider, testAuthProvider)
+	if f.Auth.Provider != testProvider {
+		t.Fatalf("Auth.Provider = %q, want %q", f.Auth.Provider, testProvider)
 	}
 	if f.Room.ID != testRoomID {
 		t.Fatalf("Room.ID = %q, want %q", f.Room.ID, testRoomID)
@@ -87,7 +87,7 @@ func requireAppliedConfig(t *testing.T, got session.Config) {
 	t.Helper()
 	want := session.Config{
 		Mode:                  testModeSrv,
-		Auth:                  testAuthProvider,
+		Provider:              testProvider,
 		RoomID:                testRoomID,
 		KeyHex:                testCryptoKey,
 		Transport:             "datachannel",
@@ -141,7 +141,7 @@ func TestApplyMapsEverySection(t *testing.T) {
 		Mode: testModeSrv,
 		Gen:  Gen{Amount: 2},
 		Settings: Settings{
-			Auth:      Auth{Provider: testAuthProvider, Token: "acct"},
+			Auth:      Auth{Provider: testProvider, Token: "acct"},
 			Room:      Room{ID: testRoomID, Channel: "chan"},
 			Engine:    Engine{Name: "livekit", URL: "wss://x", Token: "tok"},
 			SOCKS:     SOCKS{ProxyAddr: "127.0.0.1", ProxyPort: 1080, ProxyUser: "pu", ProxyPass: "pp"},
@@ -154,8 +154,8 @@ func TestApplyMapsEverySection(t *testing.T) {
 	want := session.Config{
 		Mode:               testModeSrv,
 		Amount:             2,
-		Auth:               testAuthProvider,
-		AuthToken:          "acct",
+		Provider:           testProvider,
+		ProviderToken:      "acct",
 		RoomID:             testRoomID,
 		ChannelID:          "chan",
 		Engine:             "livekit",
@@ -251,7 +251,7 @@ failover:
 
 	base := Apply(f)
 	first := ApplyProfile(base, f.Profiles[0])
-	if first.Auth != "wbstream" || first.Transport != "vp8channel" || first.RoomID != "wb-room" {
+	if first.Provider != "wbstream" || first.Transport != "vp8channel" || first.RoomID != "wb-room" {
 		t.Fatalf("first profile = %+v", first)
 	}
 	if first.KeyHex != "shared-key" || first.DNSServer != testDNSServer || first.VP8.FPS != 30 ||
@@ -261,7 +261,7 @@ failover:
 		t.Fatalf("first inherited/overlaid fields = %+v", first)
 	}
 	second := ApplyProfile(base, f.Profiles[1])
-	if second.Auth != "jitsi" || second.Transport != "datachannel" ||
+	if second.Provider != "jitsi" || second.Transport != "datachannel" ||
 		second.RoomID != "https://meet.example/room" || second.DNSServer != testDNSServer {
 		t.Fatalf("second profile = %+v", second)
 	}

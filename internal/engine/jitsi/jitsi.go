@@ -331,7 +331,3 @@ func (s *Session) signalEnded(reason string) {
 	s.bridgeReady.Store(false)
 	s.SignalEnded(reason)
 }
-
-func init() { //nolint:gochecknoinits // engine registration is the canonical plugin pattern
-	engine.Register("jitsi", New)
-}

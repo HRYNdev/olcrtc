@@ -15,7 +15,7 @@ import (
 // constant gives us a symmetrical P2P setup.
 const kcpConvID = 0xC0FFEE01
 
-// KCP tuning targets a lossy, bursty carrier (VP8 over an SFU). The defaults
+// KCP tuning targets a lossy, bursty provider (VP8 over an SFU). The defaults
 // are TCP-like and recover slowly after burst losses.
 const (
 	// kcp-go hardcodes mtuLimit=1500, so SetMtu() above this is silently
@@ -73,7 +73,7 @@ func startKCP(out chan<- *packetBuffer, onData func([]byte), epochHdr [epochHdrL
 	// The frame ticker already paces emission at the VP8 frame cadence, so the
 	// 5ms KCP tick just keeps scheduling latency low; a slower tick only adds
 	// dead time before retransmits and ACKs. nc=1 disables KCP's loss-based
-	// congestion control because the carrier is a hard policer, not a fair
+	// congestion control because the provider is a hard policer, not a fair
 	// queue: with nc=0 the unavoidable ~4% drops collapsed cwnd and starved
 	// the wire. With nc=1 KCP keeps the window full and retransmits the few
 	// losses, letting throughput reach the SFU's real ceiling.

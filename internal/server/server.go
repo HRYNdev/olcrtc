@@ -84,7 +84,7 @@ type Server struct {
 // Config holds runtime configuration for [Run].
 type Config struct {
 	Transport        string
-	Carrier          string
+	Provider         string
 	RoomURL          string
 	ChannelID        string
 	KeyHex           string
@@ -98,7 +98,7 @@ type Config struct {
 	Engine           string
 	URL              string
 	Token            string
-	AuthToken        string
+	ProviderToken    string
 	Liveness         control.Config
 	Traffic          transport.TrafficConfig
 	AuthHook         handshake.AuthFunc

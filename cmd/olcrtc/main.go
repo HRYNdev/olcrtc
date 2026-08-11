@@ -141,10 +141,7 @@ func parseFailoverConfig(f configpkg.Failover) (failoverConfig, error) {
 func runWithConfig(cfg loadedConfig) error {
 	configureLogging(cfg.debug)
 
-	scfg, err := session.ApplyDefaults(cfg.scfg)
-	if err != nil {
-		return fmt.Errorf("validate config: %w", err)
-	}
+	scfg := session.ApplyDefaults(cfg.scfg)
 
 	if scfg.Mode == session.ModeGen {
 		if len(cfg.profiles) > 0 {
@@ -155,31 +152,22 @@ func runWithConfig(cfg loadedConfig) error {
 	}
 
 	if len(cfg.profiles) > 0 {
-		profiles, perr := prepareProfiles(cfg.profiles)
-		if perr != nil {
-			return perr
-		}
-
+		profiles := prepareProfiles(cfg.profiles)
 		return runFailoverSessionMode(cfg.dataDir, profiles, cfg.failover)
 	}
 
 	return runSessionMode(cfg.dataDir, scfg)
 }
 
-func prepareProfiles(profiles []supervisor.Profile) ([]supervisor.Profile, error) {
+func prepareProfiles(profiles []supervisor.Profile) []supervisor.Profile {
 	out := make([]supervisor.Profile, 0, len(profiles))
 
 	for _, profile := range profiles {
-		scfg, err := session.ApplyDefaults(profile.Config)
-		if err != nil {
-			return nil, fmt.Errorf("validate profile %q: %w", profile.Name, err)
-		}
-
-		profile.Config = scfg
+		profile.Config = session.ApplyDefaults(profile.Config)
 		out = append(out, profile)
 	}
 
-	return out, nil
+	return out
 }
 
 func runSessionMode(dataDir string, scfg session.Config) error {
@@ -214,7 +202,7 @@ func runFailoverSessionMode(dataDir string, profiles []supervisor.Profile, failo
 			MaxCycles:  failover.maxCycles,
 			OnProfileStart: func(profile supervisor.Profile, cycle int) {
 				logger.Infof("failover cycle=%d starting profile=%s provider=%s transport=%s",
-					cycle, profile.Name, profile.Config.Auth, profile.Config.Transport)
+					cycle, profile.Name, profile.Config.Provider, profile.Config.Transport)
 			},
 			OnProfileEnd: func(profile supervisor.Profile, cycle int, err error) {
 				if err != nil {

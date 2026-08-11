@@ -23,8 +23,6 @@ type Options struct {
 	Width      int
 	Height     int
 	FPS        int
-	Bitrate    string
-	HW         string
 	QRSize     int
 	QRRecovery string
 	Codec      string

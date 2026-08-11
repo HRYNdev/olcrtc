@@ -68,18 +68,18 @@ olcrtc server.yaml
 olcrtc client.yaml
 ```
 
-## Auth Providers
+## Провайдеры
 
 `auth.provider` выбирает сервис и способ получения credentials.
 
 | Provider | Engine | Комментарий |
 |---|---|---|
-| `jitsi` | `jitsi` | URL комнаты Jitsi, инстансы в docs/examples/jitsi.instances.yaml, без отдельной регистрации |
+| `jitsi` | `jitsi` | URL комнаты Jitsi, инстансы в docs/jitsi.instances.yaml, без отдельной регистрации |
 | `telemost` | `goolom` | credentials через Yandex Telemost API, с отдельной регистрацией |
 | `wbstream` | `livekit` | credentials через WbBStream API, с отдельной регистрацией |
 | `none` | задаётся в `engine.name` | прямой engine-режим с `engine.url` и `engine.token`, с отдельной регистрацией |
 
-Термин `carrier` ещё встречается во внутреннем API и логах как историческое имя для выбранного auth/provider пути. В YAML актуальное поле - `auth.provider`.
+Во всех Go-конфигах, логах, флагах и тестах используется одно имя: `Provider` в Go и `auth.provider` в YAML.
 
 ## Engines
 
@@ -91,7 +91,7 @@ olcrtc client.yaml
 | `goolom` | `internal/engine/goolom` | Telemost/Goolom signaling, publisher/subscriber PeerConnection |
 | `jitsi` | `internal/engine/jitsi` | Jitsi MUC/Jingle/colibri-ws, datachannel/best-effort video |
 
-`internal/engine/builtin` связывает `auth.provider` с нужным engine. Отдельного пакета `internal/carrier` в текущем проекте нет.
+`internal/engine/builtin` связывает `auth.provider` с нужным engine. Отдельного пакета `internal/provider` в текущем проекте нет.
 
 ## Transports
 
@@ -102,7 +102,7 @@ olcrtc client.yaml
 | `datachannel` | нативный byte/data path engine | самый простой и быстрый путь, стабильно с Jitsi |
 | `vp8channel` | KCP поверх VP8-like video frames | основной video-path для WB Stream и Telemost |
 | `seichannel` | payload в H264 SEI NAL units, ACK/retry | fallback для WB Stream / Jitsi|
-| `videochannel` | QR/tile кадры через ffmpeg, ACK/retry | экспериментальный визуальный транспорт |
+| `videochannel` | QR/tile кадры с кодированием VP8 на чистом Go, ACK/retry | экспериментальный визуальный транспорт |
 
 Рекомендуемый старт: `jitsi + datachannel`. Альтернатива: `wbstream + vp8channel`.
 
@@ -139,6 +139,8 @@ CONTROL_PING <-> CONTROL_PONG
 
 Если control pong не приходит несколько раз подряд, runtime пересобирает smux-сессию или отдаёт управление failover supervisor.
 
+Общий формат видеокадров OLVC для `seichannel` и `videochannel` имеет версию 4. Он содержит роль отправителя, binding сессии, данные ACK для каждого фрагмента и CRC. Старые кадры OVC1 и OVV2 отклоняются по magic или версии, поэтому старые сборки видеотранспортов несовместимы.
+
 ## YAML
 
 Минимальный сервер:
@@ -149,7 +151,7 @@ auth:
   provider: jitsi
 room:
   # Используйте тот Jitsi-сервер, который работает в вашей сети:
-  # Инстансы: docs/examples/jitsi.instances.yaml - https://HOST/ROOM
+  # Инстансы: docs/jitsi.instances.yaml - https://HOST/ROOM
   id: "https://meet.example.org/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
@@ -166,7 +168,7 @@ auth:
   provider: jitsi
 room:
   # Используйте тот Jitsi-сервер, который работает в вашей сети:
-  # Инстансы: docs/examples/jitsi.instances.yaml - https://HOST/ROOM
+  # Инстансы: docs/jitsi.instances.yaml - https://HOST/ROOM
   id: "https://meet.example.org/REPLACE_ME_WITH_ROOM_ID"
 crypto:
   key: "REPLACE_ME_WITH_64_HEX_CHARS"
@@ -192,8 +194,9 @@ socks:
 |---|---|
 | `cmd/olcrtc` | CLI entrypoint |
 | `cmd/olcrtc-cgo` | c-shared entrypoint |
-| `pkg/olcrtc` | embeddable client/engine API |
-| `pkg/olcrtc/tunnel` | embeddable server tunnel API |
+| `pkg/olcrtc/client` | полный встраиваемый клиентский туннель с SOCKS5 |
+| `pkg/olcrtc/tunnel` | полный встраиваемый серверный туннель |
+| `pkg/olcrtc/engineconn` | сырой незашифрованный byte stream движка |
 | `mobile` | gomobile bindings для Android |
 | `internal/config` | YAML parsing, `crypto.key_file` |
 | `internal/app/session` | defaults, validation, routing в `srv`/`cnc`/`gen` |
@@ -218,22 +221,22 @@ mage lint
 mage mobile
 ```
 
-Go версия: `1.26+`. Для `videochannel` нужен `ffmpeg`; для `codec: tile` требуется разрешение `1080x1080`.
+Go версия: `1.26+`. `videochannel` реализован на чистом Go; для `codec: tile` требуется разрешение `1080x1080`.
 
 ## Public API
 
-`pkg/olcrtc` возвращает `net.Conn`-подобный объект поверх auth/engine:
+`pkg/olcrtc/client` запускает полный зашифрованный клиентский стек и открывает SOCKS5 listener:
 
 ```go
-sess, err := olcrtc.New(ctx, olcrtc.Config{
-    Auth:   "jitsi",
-    // Инстансы: docs/examples/jitsi.instances.yaml
-    RoomID: "https://meet.example.org/myroom",
+cli := client.New(client.Config{
+    Transport: "datachannel",
+    Provider: "jitsi",
+    RoomURL: "https://meet.example.org/myroom",
+    KeyHex: "<64-char hex>",
+    LocalAddr: "127.0.0.1:8808",
+    DNSServer: "8.8.8.8:53",
 })
-if err != nil {
-    return err
-}
-conn, err := sess.Dial(ctx)
+err := cli.Run(ctx)
 ```
 
 `pkg/olcrtc/tunnel` встраивает серверную сторону и даёт hooks:
@@ -241,8 +244,8 @@ conn, err := sess.Dial(ctx)
 ```go
 srv := tunnel.New(tunnel.Config{
     Transport: "datachannel",
-    Carrier:   "jitsi",
-    // Инстансы: docs/examples/jitsi.instances.yaml
+    Provider:   "jitsi",
+    // Инстансы: docs/jitsi.instances.yaml
     RoomURL:   "https://meet.example.org/myroom",
     KeyHex:    "<64-char hex>",
     DNSServer: "8.8.8.8:53",
@@ -250,18 +253,47 @@ srv := tunnel.New(tunnel.Config{
 err := srv.Run(ctx)
 ```
 
-В этом API поле `Carrier` сохранено ради совместимости с существующими интеграциями; по смыслу это имя `auth.provider`.
+`pkg/olcrtc/engineconn` предоставляет сырой API движка. Он не применяет OLC2-шифрование, handshake, smux, SOCKS и liveness. Его `Dial` возвращает `io.ReadWriteCloser`, а не `net.Conn`, потому что отправку движка нельзя прервать по deadline.
+
+Необязательное верхнеуровневое поле YAML `data` указывает каталог с файлами `names` и `surnames`. Если поле не задано, используются словари, встроенные в бинарник.
 
 ## Mobile / Android
 
-`mobile/mobile.go` предоставляет gomobile API:
+Пакет `mobile` предоставляет instance-based gomobile API. Каждый `Runtime`
+имеет независимые конфигурацию и lifecycle:
 
-- `SetProtector` для Android VPN `protect(fd)`;
-- `SetTransport`, `SetDNS`, `SetVP8Options`, `SetLivenessOptions`;
-- `Start`, `StartWithTransport`, `Stop`;
-- `Check`/ping helpers для проверки доступности.
+```go
+runtime := mobile.New()
+_ = runtime.SetProvider("jitsi")
+_ = runtime.SetTransport("datachannel")
+_ = runtime.SetRoom("https://meet.example.org/myroom")
+_ = runtime.SetKey("<64-char hex>")
+_ = runtime.SetSocksPort(8808)
 
-По умолчанию mobile-клиент использует `vp8channel`; `datachannel` тоже поддерживается.
+_ = runtime.Start()
+_ = runtime.WaitReady(10_000)
+_ = runtime.Stop(5_000)
+```
+
+`SetTransport` принимает `datachannel`, `vp8channel`, `seichannel` и
+`videochannel`; неизвестное значение возвращает ошибку. `SetVP8Options`,
+`SetSEIOptions` и `SetVideoOptions` настраивают соответствующие транспорты.
+Provider, room/channel, ключ, DNS/resolver, SOCKS credentials, provider token,
+device identity, liveness и traffic также задаются методами Runtime. Активное
+поколение сохраняет неизменяемый снимок конфигурации, поэтому вызовы setter
+влияют на следующий запуск.
+
+`WaitReady` остается привязанным к поколению, активному в момент вызова.
+`Stop` отменяет именно это поколение и возвращает `ErrStopTimeout`, если
+ограниченное по времени завершение не успело закончиться. `Check` и `Ping` -
+методы Runtime с изолированным временным клиентом; SOCKS-порт `0` выбирает
+временный loopback-порт.
+
+`Runtime.SetProtector` настраивает Android VPN `protect(fd)`. Этот callback -
+process-wide состояние Android networking, а не состояние конкретного Runtime.
+Он хранится атомарно, и каждая socket operation использует один снимок callback.
+`Runtime.SetDebug` управляет process-wide подробностью internal logger и не
+заменяет и не перенастраивает вывод стандартного пакета log.
 
 ## Клиенты
 
@@ -286,7 +318,7 @@ mage e2e
 Real-provider E2E включаются через переменные:
 
 ```bash
-E2E_CARRIERS=wbstream E2E_TRANSPORTS= vp8channel mage e2e
+E2E_PROVIDERS=wbstream E2E_TRANSPORTS= vp8channel mage e2e
 ```
 
 ## Частые проблемы
@@ -298,7 +330,6 @@ E2E_CARRIERS=wbstream E2E_TRANSPORTS= vp8channel mage e2e
 | Jitsi не соединяется без второго участника | сервер и клиент должны быть в одной комнате |
 | WB Stream + datachannel не работает | в guest flow нет `canPublishData`; используй `vp8channel`, `seichannel` или `videochannel` |
 | `seichannel ack timeout` | провайдер режет/не маршрутизирует video path; смени transport/provider |
-| `ffmpeg` not found | установи ffmpeg или задай `ffmpeg: /path/to/ffmpeg` |
 
 ## Ссылки
 

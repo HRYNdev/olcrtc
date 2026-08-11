@@ -4,16 +4,37 @@ import (
 	"context"
 	"errors"
 	"net"
+	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/control"
+	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
+	"github.com/openlibrecommunity/olcrtc/internal/transport"
 	"github.com/openlibrecommunity/olcrtc/internal/tunnelcore"
 )
 
 const testBadDuration = "nope"
+
+func TestRegisterDefaultsConcurrent(t *testing.T) {
+	var wg sync.WaitGroup
+	for range 32 {
+		wg.Go(RegisterDefaults)
+	}
+	wg.Wait()
+
+	for _, name := range []string{"jitsi", "none", "telemost", "wbstream"} {
+		if !slices.Contains(enginebuiltin.Available(), name) {
+			t.Fatalf("provider %q is not registered", name)
+		}
+	}
+	if !slices.IsSorted(enginebuiltin.Available()) || !slices.IsSorted(transport.Available()) {
+		t.Fatal("registered names are not sorted")
+	}
+}
 
 func TestApplyTransportDefaults(t *testing.T) {
 	tests := []struct {
@@ -40,8 +61,8 @@ func TestApplyTransportDefaults(t *testing.T) {
 			want: Config{
 				Transport: transportVideo,
 				Video: VideoConfig{
-					Width: 1920, Height: 1080, FPS: 30, Bitrate: "2M",
-					HW: defaultVideoHW, QRRecovery: "low", Codec: videoCodecQRCode,
+					Width: 1920, Height: 1080, FPS: 30,
+					QRRecovery: "low", Codec: videoCodecQRCode,
 				},
 			},
 		},
@@ -51,8 +72,8 @@ func TestApplyTransportDefaults(t *testing.T) {
 			want: Config{
 				Transport: transportVideo,
 				Video: VideoConfig{
-					Width: 1080, Height: 1080, FPS: 30, Bitrate: "2M",
-					HW: defaultVideoHW, QRRecovery: "low", Codec: videoCodecTile,
+					Width: 1080, Height: 1080, FPS: 30,
+					QRRecovery: "low", Codec: videoCodecTile,
 				},
 			},
 		},
@@ -140,7 +161,7 @@ func TestPrepareRunConfigAppliesDefaultsThenValidates(t *testing.T) {
 	cfg, err := prepareRunConfig(Config{
 		Mode:      ModeSrv,
 		Transport: transportVP8,
-		Auth:      "telemost",
+		Provider:  "telemost",
 		RoomID:    "room-1",
 		KeyHex:    "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
 		DNSServer: "8.8.8.8:53",
@@ -168,7 +189,7 @@ func TestValidate(t *testing.T) {
 	base := Config{
 		Mode:      ModeSrv,
 		Transport: "datachannel",
-		Auth:      "telemost",
+		Provider:  "telemost",
 		RoomID:    "room-1",
 		KeyHex:    "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
 		DNSServer: "8.8.8.8:53",
@@ -209,13 +230,13 @@ func TestValidate(t *testing.T) {
 			want: ErrModeRequired,
 		},
 		{
-			name: "unsupported carrier",
+			name: "unsupported provider",
 			cfg: func() Config {
 				cfg := base
-				cfg.Auth = "unknown"
+				cfg.Provider = "unknown"
 				return cfg
 			}(),
-			want: ErrUnsupportedCarrier,
+			want: ErrUnsupportedProvider,
 		},
 		{
 			name: "unsupported transport",
@@ -254,7 +275,7 @@ func TestValidate(t *testing.T) {
 			want: ErrDNSServerRequired,
 		},
 		{
-			name: "videochannel requires dimensions and bitrate settings",
+			name: "videochannel requires dimensions and fps",
 			cfg: func() Config {
 				cfg := base
 				cfg.Transport = "videochannel"
@@ -270,8 +291,6 @@ func TestValidate(t *testing.T) {
 				cfg.Video.Width = 640
 				cfg.Video.Height = 480
 				cfg.Video.FPS = 30
-				cfg.Video.Bitrate = "1M"
-				cfg.Video.HW = defaultVideoHW
 				cfg.Video.Codec = "bogus"
 				return cfg
 			}(),
@@ -299,31 +318,6 @@ func TestValidate(t *testing.T) {
 			want: ErrVideoFPSRequired,
 		},
 		{
-			name: "videochannel requires bitrate",
-			cfg: func() Config {
-				cfg := base
-				cfg.Transport = "videochannel"
-				cfg.Video.Width = 640
-				cfg.Video.Height = 480
-				cfg.Video.FPS = 30
-				return cfg
-			}(),
-			want: ErrVideoBitrateRequired,
-		},
-		{
-			name: "videochannel requires hw",
-			cfg: func() Config {
-				cfg := base
-				cfg.Transport = "videochannel"
-				cfg.Video.Width = 640
-				cfg.Video.Height = 480
-				cfg.Video.FPS = 30
-				cfg.Video.Bitrate = "1M"
-				return cfg
-			}(),
-			want: ErrVideoHWRequired,
-		},
-		{
 			name: "tile codec requires square 1080 dimensions",
 			cfg: func() Config {
 				cfg := base
@@ -331,8 +325,6 @@ func TestValidate(t *testing.T) {
 				cfg.Video.Width = 640
 				cfg.Video.Height = 480
 				cfg.Video.FPS = 30
-				cfg.Video.Bitrate = "1M"
-				cfg.Video.HW = defaultVideoHW
 				cfg.Video.Codec = "tile"
 				return cfg
 			}(),
@@ -346,8 +338,6 @@ func TestValidate(t *testing.T) {
 				cfg.Video.Width = 1080
 				cfg.Video.Height = 1080
 				cfg.Video.FPS = 30
-				cfg.Video.Bitrate = "1M"
-				cfg.Video.HW = defaultVideoHW
 				cfg.Video.Codec = "tile"
 				return cfg
 			}(),
@@ -615,7 +605,7 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-const testAuthWBStream = "wbstream"
+const testProviderWBStream = "wbstream"
 
 func TestValidateGen(t *testing.T) {
 	RegisterDefaults()
@@ -626,40 +616,40 @@ func TestValidateGen(t *testing.T) {
 		want error
 	}{
 		{
-			name: "custom resolver reaches carrier validation",
+			name: "custom resolver reaches provider validation",
 			cfg: Config{
-				Auth: testAuthWBStream, Resolver: &net.Resolver{PreferGo: true}, Amount: 3,
+				Provider: testProviderWBStream, Resolver: &net.Resolver{PreferGo: true}, Amount: 3,
 			},
-			want: ErrUnsupportedCarrier,
+			want: ErrUnsupportedProvider,
 		},
 		{
 			name: "wbstream room generation unsupported",
-			cfg:  Config{Auth: testAuthWBStream, DNSServer: "8.8.8.8:53", Amount: 3},
-			want: ErrUnsupportedCarrier,
+			cfg:  Config{Provider: testProviderWBStream, DNSServer: "8.8.8.8:53", Amount: 3},
+			want: ErrUnsupportedProvider,
 		},
 		{
-			name: "missing auth",
+			name: "missing provider",
 			cfg:  Config{DNSServer: "8.8.8.8:53", Amount: 1},
-			want: ErrAuthRequired,
+			want: ErrProviderRequired,
 		},
 		{
-			name: "unsupported auth",
-			cfg:  Config{Auth: "unknown", DNSServer: "8.8.8.8:53", Amount: 1},
-			want: ErrUnsupportedCarrier,
+			name: "unsupported provider",
+			cfg:  Config{Provider: "unknown", DNSServer: "8.8.8.8:53", Amount: 1},
+			want: ErrUnsupportedProvider,
 		},
 		{
 			name: "missing dns",
-			cfg:  Config{Auth: testAuthWBStream, Amount: 1},
+			cfg:  Config{Provider: testProviderWBStream, Amount: 1},
 			want: ErrDNSServerRequired,
 		},
 		{
 			name: "amount zero",
-			cfg:  Config{Auth: testAuthWBStream, DNSServer: "8.8.8.8:53", Amount: 0},
+			cfg:  Config{Provider: testProviderWBStream, DNSServer: "8.8.8.8:53", Amount: 0},
 			want: ErrAmountRequired,
 		},
 		{
 			name: "amount negative",
-			cfg:  Config{Auth: testAuthWBStream, DNSServer: "8.8.8.8:53", Amount: -1},
+			cfg:  Config{Provider: testProviderWBStream, DNSServer: "8.8.8.8:53", Amount: -1},
 			want: ErrAmountRequired,
 		},
 	}
@@ -680,11 +670,11 @@ func TestValidateGen(t *testing.T) {
 	}
 }
 
-func TestGenUnsupportedAuth(t *testing.T) {
+func TestGenUnsupportedProvider(t *testing.T) {
 	RegisterDefaults()
-	cfg := Config{Auth: "telemost", DNSServer: "8.8.8.8:53", Amount: 1}
+	cfg := Config{Provider: "telemost", DNSServer: "8.8.8.8:53", Amount: 1}
 	err := Gen(context.Background(), cfg, func(string) {})
-	if !errors.Is(err, ErrUnsupportedCarrier) {
-		t.Fatalf("Gen(telemost) error = %v, want ErrUnsupportedCarrier", err)
+	if !errors.Is(err, ErrUnsupportedProvider) {
+		t.Fatalf("Gen(telemost) error = %v, want ErrUnsupportedProvider", err)
 	}
 }

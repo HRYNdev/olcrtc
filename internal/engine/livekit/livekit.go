@@ -419,7 +419,7 @@ func (s *Session) queueReconnect() bool {
 }
 
 // Reconnect asks the LiveKit session to tear down its room handle and rejoin.
-// Triggered by upper layers when liveness probes declare the carrier dead
+// Triggered by upper layers when liveness probes declare the provider dead
 // before LiveKit has noticed (silent data-path black-hole).
 func (s *Session) Reconnect(reason string) {
 	if s.closed.Load() {
@@ -495,8 +495,4 @@ func (s *Session) swapRoom(room roomHandle) roomHandle {
 	old := s.room
 	s.room = room
 	return old
-}
-
-func init() { //nolint:gochecknoinits // engine registration is the canonical Go pattern for plugins
-	engine.Register("livekit", New)
 }

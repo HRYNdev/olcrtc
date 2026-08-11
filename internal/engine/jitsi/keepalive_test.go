@@ -1,5 +1,5 @@
 // Tests for the post-fix keepalive and reconnect-loop behaviour. Each test
-// runs in pure unit mode (no XMPP, no PC, no JVB) — they exercise the
+// runs in pure unit mode (no XMPP, no PC, no JVB) - they exercise the
 // in-process state machines that surround the network-facing code so the
 // fixes can be verified without flaky connectivity to a real Jitsi host.
 //
@@ -177,7 +177,7 @@ func TestInstallPeerConnectionStateCancelsReplacedContext(t *testing.T) {
 
 // TestXMPPKeepaliveSurvivesNilJSess simulates the boot window and the
 // reconnect window where s.jSess is briefly nil. The keepalive goroutine
-// must keep ticking — exiting on first nil leaves a permanent gap once
+// must keep ticking - exiting on first nil leaves a permanent gap once
 // reconnect installs the new session.
 func TestXMPPKeepaliveSurvivesNilJSess(t *testing.T) {
 	js := newSilentSession(t)
@@ -223,7 +223,7 @@ func TestXMPPKeepaliveSurvivesNilJSess(t *testing.T) {
 }
 
 // TestRequestReconnectRespectsShouldReconnect ensures that the supervisor
-// remains the single source of truth on whether to reconnect — keepalive
+// remains the single source of truth on whether to reconnect - keepalive
 // and bridge errors must not bypass shouldReconnect and force themselves
 // onto a session the application has decided to wind down.
 func TestRequestReconnectRespectsShouldReconnect(t *testing.T) {
@@ -265,7 +265,7 @@ func TestRequestReconnectIdempotent(t *testing.T) {
 		t.Fatal("expected exactly one reconnect to be enqueued")
 	}
 	if js.Drain() {
-		t.Fatal("more than one reconnect enqueued — duplicate-suppression broken")
+		t.Fatal("more than one reconnect enqueued - duplicate-suppression broken")
 	}
 }
 

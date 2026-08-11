@@ -35,8 +35,13 @@ app -> SOCKS5 -> olcrtc cnc -> WebRTC/SFU сервис -> olcrtc srv -> инте
 - **Провайдеры:** `jitsi`, `telemost`, `wbstream`
 - **Транспорты:** `datachannel`, `vp8channel`, `seichannel`, `videochannel`
 - **Платформы:** Linux, macOS, Windows, Android (gomobile), встраиваемая Go-библиотека
+- **Публичные Go-пакеты:** `pkg/olcrtc/client`, `pkg/olcrtc/tunnel`, `pkg/olcrtc/engineconn`
 
 Рекомендуемый старт: `jitsi + datachannel`.
+
+Текущие сборки используют OLC2-шифрование с направленными ключами HKDF-SHA256, отдельным AAD для data/control и replay-защитой. Fallback на старый crypto format отсутствует. `seichannel` и `videochannel` используют OLVC версии 4 и отклоняют старые видеокадры. Обновляй обе стороны одновременно.
+
+Словари display name встроены в бинарник. Необязательное поле YAML `data` может указать каталог с файлами `names` и `surnames` для их замены.
 
 ## Быстрый старт
 

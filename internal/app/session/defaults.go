@@ -5,25 +5,20 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/control"
 )
 
-// ApplyDefaults applies auth, transport, and liveness defaults in that order.
-func ApplyDefaults(cfg Config) (Config, error) {
-	cfg, err := ApplyAuthDefaults(cfg)
-	if err != nil {
-		return cfg, err
-	}
-	return ApplyLivenessDefaults(ApplyTransportDefaults(cfg)), nil
+// ApplyDefaults applies provider, transport, and liveness defaults in that order.
+func ApplyDefaults(cfg Config) Config {
+	cfg = ApplyProviderDefaults(cfg)
+	return ApplyLivenessDefaults(ApplyTransportDefaults(cfg))
 }
 
-// ApplyAuthDefaults fills engine and URL from the selected auth provider.
-//
-//nolint:unparam // error is retained as part of the existing package API
-func ApplyAuthDefaults(cfg Config) (Config, error) {
-	if cfg.Auth == authNone || cfg.Auth == "" {
-		return cfg, nil
+// ApplyProviderDefaults fills engine and URL from the selected provider.
+func ApplyProviderDefaults(cfg Config) Config {
+	if cfg.Provider == providerNone || cfg.Provider == "" {
+		return cfg
 	}
-	provider, err := auth.Get(cfg.Auth)
+	provider, err := auth.Get(cfg.Provider)
 	if err != nil {
-		return cfg, nil //nolint:nilerr // Validate reports the provider with the available set
+		return cfg
 	}
 	if cfg.Engine == "" {
 		cfg.Engine = provider.Engine()
@@ -31,7 +26,7 @@ func ApplyAuthDefaults(cfg Config) (Config, error) {
 	if cfg.URL == "" {
 		cfg.URL = provider.DefaultServiceURL()
 	}
-	return cfg, nil
+	return cfg
 }
 
 // ApplyTransportDefaults fills documented transport defaults.
@@ -78,12 +73,6 @@ func applyVideoDefaults(cfg Config) Config {
 	}
 	if cfg.Video.FPS == 0 {
 		cfg.Video.FPS = defaultVideoFPS
-	}
-	if cfg.Video.Bitrate == "" {
-		cfg.Video.Bitrate = defaultVideoBitrate
-	}
-	if cfg.Video.HW == "" {
-		cfg.Video.HW = defaultVideoHW
 	}
 	if cfg.Video.QRRecovery == "" {
 		cfg.Video.QRRecovery = defaultVideoQRRecovery

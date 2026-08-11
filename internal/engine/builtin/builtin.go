@@ -18,9 +18,9 @@ import (
 	authTelemost "github.com/openlibrecommunity/olcrtc/internal/auth/telemost"
 	authWBStream "github.com/openlibrecommunity/olcrtc/internal/auth/wbstream"
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
-	_ "github.com/openlibrecommunity/olcrtc/internal/engine/goolom"  // register goolom engine via init
-	_ "github.com/openlibrecommunity/olcrtc/internal/engine/jitsi"   // register jitsi engine via init
-	_ "github.com/openlibrecommunity/olcrtc/internal/engine/livekit" // register livekit engine via init
+	"github.com/openlibrecommunity/olcrtc/internal/engine/goolom"
+	engineJitsi "github.com/openlibrecommunity/olcrtc/internal/engine/jitsi"
+	"github.com/openlibrecommunity/olcrtc/internal/engine/livekit"
 )
 
 // defaultDirectEngine is used by the "none" provider when the config does not
@@ -51,10 +51,10 @@ type Config struct {
 	Engine string
 	URL    string
 	Token  string
-	// AuthToken is an optional pre-issued account token forwarded to the auth
+	// ProviderToken is an optional pre-issued account token forwarded to the auth
 	// provider so it can act as that account instead of running its guest
 	// flow (e.g. a WB Stream account token). Empty uses the guest flow.
-	AuthToken string
+	ProviderToken string
 }
 
 // Factory creates an engine session for a given provider.
@@ -105,6 +105,9 @@ func Available() []string {
 // RegisterDefaults wires the built-in providers: jitsi, telemost, wbstream
 // and "none" (direct engine access).
 func RegisterDefaults() {
+	engine.Register("livekit", livekit.New)
+	engine.Register("goolom", goolom.New)
+	engine.Register("jitsi", engineJitsi.New)
 	register("wbstream", authWBStream.Provider{})
 	register("telemost", authTelemost.Provider{})
 	register("jitsi", authJitsi.Provider{})
@@ -114,6 +117,9 @@ func RegisterDefaults() {
 // register adds a provider factory. A nil provider means direct engine access:
 // the caller supplies engine/URL/token through [Config] and no auth flow runs.
 func register(name string, provider auth.Provider) {
+	if provider != nil {
+		auth.Register(name, provider)
+	}
 	Register(name, func(ctx context.Context, cfg Config) (engine.Session, error) {
 		engineName, creds, refresh, err := resolveCredentials(ctx, provider, cfg)
 		if err != nil {
@@ -162,7 +168,7 @@ func resolveCredentials(
 	authCfg := auth.Config{
 		RoomURL:   cfg.RoomURL,
 		Name:      cfg.Name,
-		Token:     cfg.AuthToken,
+		Token:     cfg.ProviderToken,
 		DNSServer: cfg.DNSServer,
 		Resolver:  cfg.Resolver,
 		ProxyAddr: cfg.ProxyAddr,

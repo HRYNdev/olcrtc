@@ -47,7 +47,7 @@ func (p Provider) connectionInfo(
 ) (ConnectionInfo, error) {
 	u := fmt.Sprintf("%s/conferences/%s/connection", p.apiURL(), url.QueryEscape(roomURL))
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
 		return ConnectionInfo{}, fmt.Errorf("failed to create request: %w", err)
 	}

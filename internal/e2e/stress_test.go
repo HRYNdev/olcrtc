@@ -52,7 +52,7 @@ var (
 	realStressCaseTimeout = flag.Duration(
 		"olcrtc.stress-case-timeout",
 		5*time.Minute,
-		"hard timeout per stress carrier×transport case (covers connect + bulk + echo)",
+		"hard timeout per stress provider×transport case (covers connect + bulk + echo)",
 	)
 	realStressBulkChunkSize = flag.Int(
 		"olcrtc.stress-bulk-chunk",
@@ -61,7 +61,7 @@ var (
 	)
 )
 
-// TestRealProviderTransportStress exercises every real carrier×transport
+// TestRealProviderTransportStress exercises every real provider×transport
 // combination under load. For each pair, two phases run sequentially over
 // a single SOCKS connection:
 //
@@ -87,43 +87,43 @@ func TestRealProviderTransportStress(t *testing.T) {
 		t.Skip("stress disabled; pass -olcrtc.stress to enable")
 	}
 
-	carriers := splitTestList(*realE2ECarriers)
+	providers := splitTestList(*realE2EProviders)
 	transports := splitTestList(*realE2ETransports)
-	if len(carriers) == 0 {
-		t.Fatal("no real e2e carriers selected")
+	if len(providers) == 0 {
+		t.Fatal("no real e2e providers selected")
 	}
 	if len(transports) == 0 {
 		t.Fatal("no real e2e transports selected")
 	}
 
 	echoAddr := startEchoServer(t)
-	for _, carrierName := range carriers {
-		t.Run(carrierName, func(t *testing.T) {
+	for _, providerName := range providers {
+		t.Run(providerName, func(t *testing.T) {
 			roomCtx, cancelRoom := context.WithTimeout(context.Background(), *realStressCaseTimeout)
 			defer cancelRoom()
-			roomURL := requireRealRoom(roomCtx, t, carrierName)
+			roomURL := requireRealRoom(roomCtx, t, providerName)
 			var authFailed bool
 			for _, transportName := range transports {
 				t.Run(transportName, func(t *testing.T) {
 					if authFailed {
-						t.Skip("skipping: carrier auth failed on previous transport")
+						t.Skip("skipping: provider auth failed on previous transport")
 					}
-					expectation := realE2ECaseExpectation(carrierName, transportName)
+					expectation := realE2ECaseExpectation(providerName, transportName)
 					if expectation == realE2EExpectFail {
 						t.Skip("skipping: combo not expected to pass even at baseline")
 					}
-					err := runRealE2EStressCase(t, carrierName, transportName, roomURL, echoAddr)
+					err := runRealE2EStressCase(t, providerName, transportName, roomURL, echoAddr)
 					if err != nil && errors.Is(err, enginebuiltin.ErrAuthFailed) {
 						authFailed = true
-						t.Skipf("skip %s stress: auth failed: %v", carrierName, err)
+						t.Skipf("skip %s stress: auth failed: %v", providerName, err)
 					}
 					switch {
 					case err == nil:
-						t.Logf("STRESS OK %s/%s", carrierName, transportName)
+						t.Logf("STRESS OK %s/%s", providerName, transportName)
 					case expectation == realE2EExpectUnstable:
-						logUnstableOutcome(t, "STRESS UNSTABLE", carrierName, transportName, err)
+						logUnstableOutcome(t, "STRESS UNSTABLE", providerName, transportName, err)
 					default:
-						t.Fatalf("STRESS FAIL %s/%s: %v", carrierName, transportName, err)
+						t.Fatalf("STRESS FAIL %s/%s: %v", providerName, transportName, err)
 					}
 				})
 			}
@@ -131,7 +131,7 @@ func TestRealProviderTransportStress(t *testing.T) {
 	}
 }
 
-func runRealE2EStressCase(t *testing.T, carrierName, transportName, roomURL, echoAddr string) (err error) {
+func runRealE2EStressCase(t *testing.T, providerName, transportName, roomURL, echoAddr string) (err error) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), *realStressCaseTimeout)
@@ -139,7 +139,7 @@ func runRealE2EStressCase(t *testing.T, carrierName, transportName, roomURL, ech
 
 	goroutinesBefore := runtime.NumGoroutine()
 
-	rt, err := startRealTunnel(ctx, t, carrierName, transportName, roomURL, testClientDeviceID, testClientDeviceID)
+	rt, err := startRealTunnel(ctx, t, providerName, transportName, roomURL, testClientDeviceID, testClientDeviceID)
 	if err != nil {
 		return err
 	}
@@ -149,11 +149,11 @@ func runRealE2EStressCase(t *testing.T, carrierName, transportName, roomURL, ech
 		}
 	}()
 
-	if err := runBulkPhase(ctx, t, rt, carrierName, transportName, echoAddr); err != nil {
+	if err := runBulkPhase(ctx, t, rt, providerName, transportName, echoAddr); err != nil {
 		return err
 	}
 
-	if err := runEchoPhase(ctx, t, rt, carrierName, transportName, echoAddr); err != nil {
+	if err := runEchoPhase(ctx, t, rt, providerName, transportName, echoAddr); err != nil {
 		return err
 	}
 
@@ -163,7 +163,7 @@ func runRealE2EStressCase(t *testing.T, carrierName, transportName, roomURL, ech
 	const goroutineLeakSlack = 30
 	if goroutinesAfter > goroutinesBefore+goroutineLeakSlack {
 		t.Logf("WARNING: goroutines grew %d -> %d during %s/%s",
-			goroutinesBefore, goroutinesAfter, carrierName, transportName)
+			goroutinesBefore, goroutinesAfter, providerName, transportName)
 	}
 
 	return nil
@@ -174,7 +174,7 @@ func runRealE2EStressCase(t *testing.T, carrierName, transportName, roomURL, ech
 // the SFU) and accumulating total bytes across reconnects.
 func runBulkPhase(
 	ctx context.Context, t *testing.T, rt *tunnelRuntime,
-	carrierName, transportName, echoAddr string,
+	providerName, transportName, echoAddr string,
 ) error {
 	t.Helper()
 	d := *realStressBulkDuration
@@ -204,7 +204,7 @@ func runBulkPhase(
 		}
 	}()
 
-	totalWritten, err := pumpBulkUntil(ctx, t, conn, getConn, d, carrierName, transportName)
+	totalWritten, err := pumpBulkUntil(ctx, t, conn, getConn, d, providerName, transportName)
 	if err != nil {
 		return err
 	}
@@ -214,7 +214,7 @@ func runBulkPhase(
 	// Compute approximate throughput over full wall-clock duration.
 	throughput := float64(totalWritten) / d.Seconds() / (1 << 20)
 	t.Logf("bulk %s/%s: %d bytes in %s (%.3f MiB/s) [reconnects included]",
-		carrierName, transportName, totalWritten, d, throughput)
+		providerName, transportName, totalWritten, d, throughput)
 	return nil
 }
 
@@ -224,7 +224,7 @@ func runBulkPhase(
 func pumpBulkUntil(
 	ctx context.Context, t *testing.T, conn net.Conn,
 	getConn func() (net.Conn, error), d time.Duration,
-	carrierName, transportName string,
+	providerName, transportName string,
 ) (int64, error) {
 	t.Helper()
 	deadline := time.Now().Add(d)
@@ -238,7 +238,7 @@ func pumpBulkUntil(
 		}
 		// Connection died (likely transport reconnect). Log and retry.
 		t.Logf("bulk %s/%s: reconnect after written=%d dur=%s: %v",
-			carrierName, transportName, written, dur, pumpErr)
+			providerName, transportName, written, dur, pumpErr)
 		if time.Now().After(deadline) {
 			break
 		}
@@ -262,7 +262,7 @@ func pumpBulkUntil(
 // bulk phase).
 func runEchoPhase(
 	ctx context.Context, t *testing.T, rt *tunnelRuntime,
-	carrierName, transportName, echoAddr string,
+	providerName, transportName, echoAddr string,
 ) error {
 	t.Helper()
 	d := *realStressDuration
@@ -280,7 +280,7 @@ func runEchoPhase(
 		return fmt.Errorf("sustained echo: %w", err)
 	}
 	t.Logf("echo  %s/%s: %d rt in %s, p50=%s p95=%s p99=%s max=%s lost=%d",
-		carrierName, transportName, stats.count, d,
+		providerName, transportName, stats.count, d,
 		stats.p50, stats.p95, stats.p99, stats.maxLatency, stats.lost)
 	if stats.count == 0 {
 		return fmt.Errorf("%w: %s", errStressNoRoundtrips, d)
@@ -319,7 +319,7 @@ func streamPatternForDuration(conn net.Conn, duration time.Duration, chunkSize i
 	}
 
 	// Writer: pump deterministic pattern chunks until deadline.
-	// No backpressure — we measure raw send throughput, not round-trip.
+	// No backpressure - we measure raw send throughput, not round-trip.
 	// The TCP write buffer + smux + KCP provide their own flow control;
 	// adding an explicit maxInFlight here throttles bulk to RTT-limited
 	// speed (~0.003 MiB/s at 1.25s RTT through Telemost).
@@ -344,7 +344,7 @@ func streamPatternForDuration(conn net.Conn, duration time.Duration, chunkSize i
 	}()
 
 	// Drain incoming echo data to prevent server-side smux window from
-	// filling up and blocking writes. We don't verify pattern here —
+	// filling up and blocking writes. We don't verify pattern here -
 	// that's the sustained echo phase's job. We just discard bytes.
 	const readDeadline = 5 * time.Second
 	readerDone := make(chan struct{})
@@ -357,7 +357,7 @@ func streamPatternForDuration(conn net.Conn, duration time.Duration, chunkSize i
 			}
 			_, err := conn.Read(discardBuf)
 			if err != nil {
-				return // deadline or closed — writer will catch fatal errors
+				return // deadline or closed - writer will catch fatal errors
 			}
 		}
 	}()

@@ -121,8 +121,6 @@ type Video struct {
 	Width      int    `yaml:"width"`
 	Height     int    `yaml:"height"`
 	FPS        int    `yaml:"fps"`
-	Bitrate    string `yaml:"bitrate"`
-	HW         string `yaml:"hw"`
 	QRSize     int    `yaml:"qr_size"`
 	QRRecovery string `yaml:"qr_recovery"`
 	Codec      string `yaml:"codec"`
@@ -269,14 +267,12 @@ func ApplyProfile(base session.Config, profile Profile) session.Config {
 
 // ApplySettings overlays every non-zero field of s onto dst. It is the single
 // place that knows how the YAML schema maps onto [session.Config].
-//
-//nolint:funlen // a flat field-by-field mapping is clearer than any decomposition
 func ApplySettings(dst session.Config, s Settings) session.Config {
 	dst.Transport = overlay(dst.Transport, s.Net.Transport)
 	dst.DNSServer = overlay(dst.DNSServer, s.Net.DNS)
 
-	dst.Auth = overlay(dst.Auth, s.Auth.Provider)
-	dst.AuthToken = overlay(dst.AuthToken, s.Auth.Token)
+	dst.Provider = overlay(dst.Provider, s.Auth.Provider)
+	dst.ProviderToken = overlay(dst.ProviderToken, s.Auth.Token)
 
 	dst.Engine = overlay(dst.Engine, s.Engine.Name)
 	dst.URL = overlay(dst.URL, s.Engine.URL)
@@ -298,8 +294,6 @@ func ApplySettings(dst session.Config, s Settings) session.Config {
 	dst.Video.Width = overlay(dst.Video.Width, s.Video.Width)
 	dst.Video.Height = overlay(dst.Video.Height, s.Video.Height)
 	dst.Video.FPS = overlay(dst.Video.FPS, s.Video.FPS)
-	dst.Video.Bitrate = overlay(dst.Video.Bitrate, s.Video.Bitrate)
-	dst.Video.HW = overlay(dst.Video.HW, s.Video.HW)
 	dst.Video.QRSize = overlay(dst.Video.QRSize, s.Video.QRSize)
 	dst.Video.QRRecovery = overlay(dst.Video.QRRecovery, s.Video.QRRecovery)
 	dst.Video.Codec = overlay(dst.Video.Codec, s.Video.Codec)

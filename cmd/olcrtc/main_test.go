@@ -15,8 +15,8 @@ import (
 var errBoom = errors.New("boom")
 
 const (
-	testAuthWBStream = "wbstream"
-	testDNSServer    = "8.8.8.8:53"
+	testProviderWBStream = "wbstream"
+	testDNSServer        = "8.8.8.8:53"
 )
 
 func writeYAML(t *testing.T, body string) string {
@@ -46,11 +46,11 @@ func TestRunGenModeValidationErrors(t *testing.T) {
 	session.RegisterDefaults()
 
 	if err := runWithConfig(loadedConfig{scfg: session.Config{Mode: session.ModeGen}}); err == nil {
-		t.Fatal("runWithConfig(gen, no carrier) error = nil")
+		t.Fatal("runWithConfig(gen, no provider) error = nil")
 	}
 
 	cfg := loadedConfig{scfg: session.Config{
-		Mode: session.ModeGen, Auth: testAuthWBStream, DNSServer: testDNSServer,
+		Mode: session.ModeGen, Provider: testProviderWBStream, DNSServer: testDNSServer,
 	}}
 	if err := runWithConfig(cfg); err == nil {
 		t.Fatal("runWithConfig(gen, amount=0) error = nil")
@@ -64,7 +64,7 @@ func TestRunGenModeCallsGen(t *testing.T) {
 	oldRunGen := runGen
 	t.Cleanup(func() { runGen = oldRunGen })
 	runGen = func(scfg session.Config) error {
-		if scfg.Auth != testAuthWBStream || scfg.DNSServer != testDNSServer || scfg.Amount != 3 {
+		if scfg.Provider != testProviderWBStream || scfg.DNSServer != testDNSServer || scfg.Amount != 3 {
 			t.Fatalf("runGen scfg = %+v", scfg)
 		}
 		collected = append(collected, "ok")
@@ -72,7 +72,7 @@ func TestRunGenModeCallsGen(t *testing.T) {
 	}
 
 	cfg := loadedConfig{scfg: session.Config{
-		Mode: session.ModeGen, Auth: testAuthWBStream, DNSServer: testDNSServer, Amount: 3,
+		Mode: session.ModeGen, Provider: testProviderWBStream, DNSServer: testDNSServer, Amount: 3,
 	}}
 	if err := runWithConfig(cfg); err != nil {
 		t.Fatalf("runWithConfig(gen) error = %v", err)
@@ -87,7 +87,7 @@ func TestRunWithConfigRejectsInvalidConfig(t *testing.T) {
 
 	scfg := session.Config{
 		Transport: "datachannel",
-		Auth:      "jitsi",
+		Provider:  "jitsi",
 		RoomID:    "https://meet.systemli.org/test",
 		KeyHex:    "key",
 		DNSServer: "8.8.8.8:53",
@@ -104,7 +104,7 @@ func TestRunWithConfigRejectsUnreadableDataOverride(t *testing.T) {
 	scfg := session.Config{
 		Mode:      "srv",
 		Transport: "datachannel",
-		Auth:      "jitsi",
+		Provider:  "jitsi",
 		RoomID:    "https://meet.systemli.org/test",
 		KeyHex:    "key",
 		DNSServer: "8.8.8.8:53",
@@ -132,7 +132,7 @@ func TestRunWithArgsSuccessfulSessionReturn(t *testing.T) {
 	called := false
 	runSession = func(ctx context.Context, cfg session.Config) error {
 		called = true
-		if cfg.Mode != "srv" || cfg.Auth != "jitsi" {
+		if cfg.Mode != "srv" || cfg.Provider != "jitsi" {
 			t.Fatalf("session config = %+v", cfg)
 		}
 		select {
@@ -215,8 +215,8 @@ func TestRunWithArgsFailoverProfiles(t *testing.T) {
 	t.Cleanup(func() { runSession = oldRunSession })
 	var seen []string
 	runSession = func(_ context.Context, cfg session.Config) error {
-		seen = append(seen, cfg.Auth+"/"+cfg.Transport)
-		if cfg.Auth == "wbstream" && (cfg.VP8.FPS != 30 || cfg.VP8.BatchSize != 64) {
+		seen = append(seen, cfg.Provider+"/"+cfg.Transport)
+		if cfg.Provider == "wbstream" && (cfg.VP8.FPS != 30 || cfg.VP8.BatchSize != 64) {
 			t.Errorf("VP8 defaults = fps %d batch %d, want 30/64", cfg.VP8.FPS, cfg.VP8.BatchSize)
 		}
 		return errBoom
@@ -308,7 +308,7 @@ func TestResolveDataDir(t *testing.T) {
 		t.Fatalf("resolveDataDir(abs) = %q, want %q", got, abs)
 	}
 
-	want := filepath.Join("/etc", "olcrtc", "data")
+	want := filepath.FromSlash("/etc/olcrtc/data")
 	if got := resolveDataDir("/etc/olcrtc/server.yaml", "data"); got != want {
 		t.Fatalf("resolveDataDir(rel) = %q, want %q", got, want)
 	}

@@ -1,4 +1,4 @@
-// Package datachannel provides a transport backed by a carrier's data channel.
+// Package datachannel provides a transport backed by a provider's data channel.
 package datachannel
 
 import (
@@ -22,7 +22,7 @@ type streamTransport struct {
 	shaper  *transport.Shaper
 }
 
-// New creates a datachannel transport backed by a carrier engine.
+// New creates a datachannel transport backed by a provider engine.
 func New(ctx context.Context, cfg transport.Config) (transport.Transport, error) {
 	sess, err := cfg.OpenEngine(ctx)
 	if err != nil {

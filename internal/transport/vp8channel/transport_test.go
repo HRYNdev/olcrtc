@@ -58,7 +58,7 @@ func buildReceiver(n int) (func([]byte), <-chan struct{}, func() [][]byte) {
 }
 
 // TestKCPLoopback runs two KCP runtimes back-to-back through an in-memory
-// pipe simulating a perfect carrier. Verifies that messages survive the
+// pipe simulating a perfect provider. Verifies that messages survive the
 // KCP layer with their boundaries intact.
 func TestKCPLoopback(t *testing.T) {
 	msgs := [][]byte{
@@ -223,7 +223,7 @@ func TestHandleIncomingFrameIgnoresLoopedBackLocalEpoch(t *testing.T) {
 		t.Fatalf("peer epoch changed on self-echo: got %d want 0", got)
 	}
 	if got := stream.reconnects.Load(); got != 0 {
-		t.Fatalf("carrier rebuilt on self-echo: got %d want 0", got)
+		t.Fatalf("provider rebuilt on self-echo: got %d want 0", got)
 	}
 }
 
@@ -254,6 +254,6 @@ func TestHandleIncomingFrameIgnoresForeignBindingToken(t *testing.T) {
 		t.Fatalf("peer epoch changed on foreign frame: got %d want 0", got)
 	}
 	if got := stream.reconnects.Load(); got != 0 {
-		t.Fatalf("carrier rebuilt on foreign frame: got %d want 0", got)
+		t.Fatalf("provider rebuilt on foreign frame: got %d want 0", got)
 	}
 }

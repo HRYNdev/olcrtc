@@ -73,7 +73,7 @@ func (v *EngineVideoSession) Close() error {
 	return nil
 }
 
-// SetReconnectCallback registers cb for carrier reconnects.
+// SetReconnectCallback registers cb for provider reconnects.
 func (v *EngineVideoSession) SetReconnectCallback(cb func()) {
 	v.session.SetReconnectCallback(cb)
 }
@@ -84,7 +84,7 @@ func (v *EngineVideoSession) SetShouldReconnect(fn func() bool) { v.session.SetS
 // SetEndedCallback registers end-of-session handling.
 func (v *EngineVideoSession) SetEndedCallback(cb func(string)) { v.session.SetEndedCallback(cb) }
 
-// WatchConnection monitors the carrier connection lifecycle.
+// WatchConnection monitors the provider connection lifecycle.
 func (v *EngineVideoSession) WatchConnection(ctx context.Context) { v.session.WatchConnection(ctx) }
 
 // CanSend reports whether the engine is ready to send.
@@ -93,7 +93,7 @@ func (v *EngineVideoSession) CanSend() bool { return v.session.CanSend() }
 // SubscriberCanSend reports whether the subscriber PC alone is ready.
 func (v *EngineVideoSession) SubscriberCanSend() bool { return v.session.SubscriberCanSend() }
 
-// Reconnect asks the engine to rebuild the carrier connection.
+// Reconnect asks the engine to rebuild the provider connection.
 func (v *EngineVideoSession) Reconnect(reason string) { v.session.Reconnect(reason) }
 
 // AddTrack publishes a local video track.

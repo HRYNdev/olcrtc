@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -37,17 +38,35 @@ var (
 	sensitiveBearerRE = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
 )
 
-// Protector is called with a socket file descriptor before connect.
-// On Android, this calls VpnService.protect(fd) to bypass VPN routing.
-var Protector func(fd int) bool //nolint:gochecknoglobals // package-level state intentional
+type protectorHolder struct {
+	protect func(int) bool
+}
+
+//nolint:gochecknoglobals // Android VpnService socket protection is process-wide by kernel fd
+var protector atomic.Pointer[protectorHolder]
+
+// SetProtector sets the process-wide Android VpnService socket callback.
+func SetProtector(protectFunc func(int) bool) {
+	if protectFunc == nil {
+		protector.Store(nil)
+		return
+	}
+	protector.Store(&protectorHolder{protect: protectFunc})
+}
+
+// HasProtector reports whether Android socket protection is configured.
+func HasProtector() bool {
+	return protector.Load() != nil
+}
 
 func controlFunc(network, _ string, c syscall.RawConn) error {
-	if Protector == nil {
+	current := protector.Load()
+	if current == nil {
 		return nil
 	}
 	var err error
 	controlErr := c.Control(func(fd uintptr) {
-		if !Protector(int(fd)) {
+		if !current.protect(int(fd)) {
 			err = &net.OpError{Op: "protect", Net: network, Err: net.ErrClosed}
 		}
 	})
@@ -57,7 +76,7 @@ func controlFunc(network, _ string, c syscall.RawConn) error {
 	return err
 }
 
-// newDialer returns a net.Dialer that calls Protector on each new socket.
+// newDialer returns a net.Dialer that protects each new socket.
 func newDialer() *net.Dialer {
 	return newDialerWithResolver(nil)
 }

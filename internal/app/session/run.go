@@ -47,10 +47,7 @@ func Run(ctx context.Context, cfg Config) error {
 }
 
 func prepareRunConfig(cfg Config) (Config, error) {
-	prepared, err := ApplyDefaults(cfg)
-	if err != nil {
-		return Config{}, fmt.Errorf("apply defaults: %w", err)
-	}
+	prepared := ApplyDefaults(cfg)
 	if err := Validate(prepared); err != nil {
 		return Config{}, err
 	}
@@ -84,12 +81,12 @@ func runServer(
 	opts transport.Options,
 ) error {
 	err := server.Run(ctx, server.Config{
-		Transport: cfg.Transport, Carrier: cfg.Auth, RoomURL: roomURL, ChannelID: cfg.ChannelID,
+		Transport: cfg.Transport, Provider: cfg.Provider, RoomURL: roomURL, ChannelID: cfg.ChannelID,
 		KeyHex: cfg.KeyHex, DNSServer: cfg.DNSServer, Resolver: cfg.Resolver,
 		SOCKSProxyAddr: cfg.SOCKSProxyAddr, SOCKSProxyPort: cfg.SOCKSProxyPort,
 		SOCKSProxyUser: cfg.SOCKSProxyUser, SOCKSProxyPass: cfg.SOCKSProxyPass,
 		TransportOptions: opts, Engine: cfg.Engine, URL: cfg.URL, Token: cfg.Token,
-		AuthToken: cfg.AuthToken, Liveness: liveness, Traffic: traffic,
+		ProviderToken: cfg.ProviderToken, Liveness: liveness, Traffic: traffic,
 		OnSessionOpen: func(sessionID, deviceID string, claims map[string]any) {
 			logger.Infof("session opened: id=%s device=%s claims=%v", sessionID, deviceID, claims)
 		},
@@ -115,11 +112,11 @@ func runClient(
 	opts transport.Options,
 ) error {
 	err := client.Run(ctx, client.Config{
-		Transport: cfg.Transport, Carrier: cfg.Auth, RoomURL: roomURL, ChannelID: cfg.ChannelID,
+		Transport: cfg.Transport, Provider: cfg.Provider, RoomURL: roomURL, ChannelID: cfg.ChannelID,
 		KeyHex: cfg.KeyHex, LocalAddr: fmt.Sprintf("%s:%d", cfg.SOCKSHost, cfg.SOCKSPort),
 		DNSServer: cfg.DNSServer, Resolver: cfg.Resolver, SOCKSUser: cfg.SOCKSUser,
 		SOCKSPass: cfg.SOCKSPass, TransportOptions: opts, Engine: cfg.Engine,
-		URL: cfg.URL, Token: cfg.Token, AuthToken: cfg.AuthToken,
+		URL: cfg.URL, Token: cfg.Token, ProviderToken: cfg.ProviderToken,
 		Liveness: liveness, Traffic: traffic,
 	})
 	if err != nil {

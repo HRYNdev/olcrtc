@@ -21,7 +21,7 @@ const (
 )
 
 const (
-	authNone         = "none"
+	providerNone     = "none"
 	transportVideo   = "videochannel"
 	transportVP8     = "vp8channel"
 	transportSEI     = "seichannel"
@@ -33,8 +33,6 @@ const (
 	defaultVideoWidth      = 1920
 	defaultVideoHeight     = 1080
 	defaultVideoFPS        = 30
-	defaultVideoBitrate    = "2M"
-	defaultVideoHW         = "none"
 	defaultVideoQRRecovery = "low"
 	defaultVP8FPS          = 30
 	defaultVP8BatchSize    = 64
@@ -45,26 +43,21 @@ const (
 )
 
 var (
-	ErrRoomIDRequired = errors.New("room ID required (set room.id)")
-	ErrModeRequired   = errors.New("mode required (set mode to srv, cnc or gen)")
-	ErrAmountRequired = errors.New("amount required for gen mode (set gen.amount)")
-	ErrAuthRequired   = errors.New(
+	ErrRoomIDRequired   = errors.New("room ID required (set room.id)")
+	ErrModeRequired     = errors.New("mode required (set mode to srv, cnc or gen)")
+	ErrAmountRequired   = errors.New("amount required for gen mode (set gen.amount)")
+	ErrProviderRequired = errors.New(
 		"auth provider required (set auth.provider to jitsi, telemost, wbstream or none)")
-	ErrURLRequired          = errors.New("SFU URL required (set auth.url)")
-	ErrUnsupportedCarrier   = errors.New("unsupported carrier")
+	ErrUnsupportedProvider  = errors.New("unsupported provider")
 	ErrUnsupportedTransport = errors.New("unsupported transport")
 	ErrTransportRequired    = errors.New(
 		"transport required (set transport to datachannel, videochannel, seichannel or vp8channel)")
-	ErrKeyRequired          = errors.New("key required (set crypto.key)")
-	ErrDNSServerRequired    = errors.New("dns server required (set net.dns)")
-	ErrVideoWidthRequired   = errors.New("video width required for videochannel (set video.width)")
-	ErrVideoHeightRequired  = errors.New("video height required for videochannel (set video.height)")
-	ErrVideoFPSRequired     = errors.New("video fps required for videochannel (set video.fps)")
-	ErrVideoBitrateRequired = errors.New(
-		"video bitrate required for videochannel (set video.bitrate)")
-	ErrVideoHWRequired = errors.New(
-		"video hardware acceleration required for videochannel (set video.hw to none or nvenc)")
-	ErrVideoCodecInvalid = errors.New(
+	ErrKeyRequired         = errors.New("key required (set crypto.key)")
+	ErrDNSServerRequired   = errors.New("dns server required (set net.dns)")
+	ErrVideoWidthRequired  = errors.New("video width required for videochannel (set video.width)")
+	ErrVideoHeightRequired = errors.New("video height required for videochannel (set video.height)")
+	ErrVideoFPSRequired    = errors.New("video fps required for videochannel (set video.fps)")
+	ErrVideoCodecInvalid   = errors.New(
 		"invalid video codec for videochannel (set video.codec to qrcode or tile)")
 	ErrTileCodecDimensions     = errors.New("tile codec requires video.width: 1080 and video.height: 1080")
 	ErrVP8FPSRequired          = errors.New("vp8 fps required for vp8channel (set vp8.fps)")
@@ -100,8 +93,6 @@ type VideoConfig struct {
 	Width      int
 	Height     int
 	FPS        int
-	Bitrate    string
-	HW         string
 	QRSize     int
 	QRRecovery string
 	Codec      string
@@ -127,8 +118,8 @@ type SEIConfig struct {
 type Config struct {
 	Mode                  string
 	Transport             string
-	Auth                  string
-	AuthToken             string
+	Provider              string
+	ProviderToken         string
 	Engine                string
 	URL                   string
 	Token                 string
@@ -158,7 +149,7 @@ type Config struct {
 	Amount                int
 }
 
-// RegisterDefaults registers built-in carriers and transports.
+// RegisterDefaults registers built-in providers and transports.
 func RegisterDefaults() {
 	enginebuiltin.RegisterDefaults()
 	transport.Register("datachannel", datachannel.New)

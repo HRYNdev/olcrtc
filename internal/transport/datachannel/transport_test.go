@@ -45,7 +45,7 @@ func (s *stubSession) SubscriberCanSend() bool           { return s.canSend }
 func (s *stubSession) GetBufferedAmount() uint64         { return 0 }
 func (s *stubSession) Reconnect(string)                  {}
 
-func registerCarrier(name string, sess engine.Session, err error) {
+func registerProvider(name string, sess engine.Session, err error) {
 	enginebuiltin.Register(name, func(context.Context, enginebuiltin.Config) (engine.Session, error) {
 		if err != nil {
 			return nil, err
@@ -56,9 +56,9 @@ func registerCarrier(name string, sess engine.Session, err error) {
 
 func TestNewAndFeatures(t *testing.T) {
 	sess := &stubSession{canSend: true}
-	registerCarrier("datachannel-test-new-and-features", sess, nil)
+	registerProvider("datachannel-test-new-and-features", sess, nil)
 
-	tr, err := New(context.Background(), transport.Config{Carrier: "datachannel-test-new-and-features"})
+	tr, err := New(context.Background(), transport.Config{Provider: "datachannel-test-new-and-features"})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -96,8 +96,8 @@ func TestNewAndFeatures(t *testing.T) {
 }
 
 func TestNewErrorPaths(t *testing.T) {
-	registerCarrier("datachannel-fail-create", nil, errDCBoom)
-	_, err := New(context.Background(), transport.Config{Carrier: "datachannel-fail-create"})
+	registerProvider("datachannel-fail-create", nil, errDCBoom)
+	_, err := New(context.Background(), transport.Config{Provider: "datachannel-fail-create"})
 	if err == nil || err.Error() != "open engine session: boom" {
 		t.Fatalf("New() error = %v", err)
 	}

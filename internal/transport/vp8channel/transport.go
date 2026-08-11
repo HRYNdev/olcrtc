@@ -12,7 +12,7 @@
 // # Peer restart detection
 //
 // A client latches onto the first peer epoch it sees and normally keeps it
-// until the carrier reconnects. When a frame arrives from a different epoch
+// until the provider reconnects. When a frame arrives from a different epoch
 // after the latched peer has been silent longer than peerRestartGrace, that
 // COULD mean the server restarted and rejoined the SFU with a fresh epoch -
 // but in a shared room it just as easily means an unrelated participant (a
@@ -23,12 +23,12 @@
 // client's own control-plane liveness loop through NotifyLinkHealth. A real
 // server restart kills that session-specific link almost immediately, so
 // genuine restarts still recover fast, while a stranger's epoch with our own
-// control plane healthy is ignored and no longer tears down a working carrier.
+// control plane healthy is ignored and no longer tears down a working provider.
 //
-// Recovery runs the full carrier rebuild (stream.Reconnect), the same path
+// Recovery runs the full provider rebuild (stream.Reconnect), the same path
 // control-liveness loss uses, rather than a bare re-handshake: the restarted
 // server is a fresh SFU participant, so re-handshaking over the old media
-// path only times out. The carrier's reconnect callback then rotates our
+// path only times out. The provider's reconnect callback then rotates our
 // epoch, resets the peer latch and drives a fresh handshake. Acting on the
 // epoch change recovers in seconds instead of waiting out the relaxed
 // control-liveness window (~70s, issue #105). The rebuild fires exactly once
@@ -80,13 +80,13 @@ const (
 )
 
 var (
-	// ErrVideoTrackUnsupported is returned when a carrier cannot expose video tracks.
+	// ErrVideoTrackUnsupported is returned when a provider cannot expose video tracks.
 	ErrVideoTrackUnsupported = common.ErrVideoTrackUnsupported
 	// ErrTransportClosed is returned when operations are attempted on a closed transport.
 	ErrTransportClosed = errors.New("vp8channel transport closed")
 )
 
-// videoSession is the carrier contract vp8channel needs. The control plane
+// videoSession is the provider contract vp8channel needs. The control plane
 // must be able to send as soon as the subscriber PC is up, which is what the
 // subscriber-aware extension adds on top of the shared video session.
 type videoSession = common.SubscriberVideoSession
@@ -144,7 +144,7 @@ type streamTransport struct {
 	peerEpoch    atomic.Uint32
 
 	// lastPeerFrameNano stamps the wall-clock time of the most recent frame
-	// from the latched peer epoch, peerRestarting guards the carrier rebuild
+	// from the latched peer epoch, peerRestarting guards the provider rebuild
 	// from firing more than once per restart, and peerRestartGrace is the
 	// silence the watchdog demands. linkUnhealthy is the corroborating signal
 	// pushed in by the control-plane liveness loop. See "Peer restart
@@ -168,7 +168,7 @@ type streamTransport struct {
 	peers peerTable
 }
 
-// New creates a vp8channel transport backed by a carrier engine.
+// New creates a vp8channel transport backed by a provider engine.
 func New(ctx context.Context, cfg transport.Config) (transport.Transport, error) {
 	opts, err := optionsFrom(cfg)
 	if err != nil {
@@ -177,7 +177,7 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 
 	// Payloads ride the video track, so the engine stays in pure-video mode:
 	// no data callbacks, otherwise it would gate readiness on a bridge this
-	// transport never uses and deliver carrier bytes behind our back.
+	// transport never uses and deliver provider bytes behind our back.
 	engineCfg := cfg
 	engineCfg.OnData = nil
 	engineCfg.OnPeerData = nil
@@ -258,7 +258,7 @@ func newStreamTransport(
 	return tr
 }
 
-// Connect brings up the carrier, both KCP planes and the paced writer.
+// Connect brings up the provider, both KCP planes and the paced writer.
 func (p *streamTransport) Connect(ctx context.Context) error {
 	connectCtx, cancel := context.WithTimeout(ctx, defaultConnectTimeout)
 	defer cancel()
@@ -354,7 +354,7 @@ func (p *streamTransport) SupportsPeerRouting() bool {
 	return p.serverMode
 }
 
-// Close tears down both planes, every peer session and the carrier.
+// Close tears down both planes, every peer session and the provider.
 func (p *streamTransport) Close() error {
 	if p.closed.CompareAndSwap(false, true) {
 		close(p.closeCh)
@@ -377,7 +377,7 @@ func (p *streamTransport) Close() error {
 var _ transport.PeerResetter = (*streamTransport)(nil)
 
 // ResetPeer drops queued KCP traffic and starts a fresh KCP state machine while
-// keeping the carrier connection alive. The client/server liveness layer calls
+// keeping the provider connection alive. The client/server liveness layer calls
 // this before rebuilding smux so replacement handshakes are not parsed behind
 // stale bytes from streams that were active when the old session died.
 func (p *streamTransport) ResetPeer() {
@@ -402,7 +402,7 @@ func (p *streamTransport) NotifyLinkHealth(unhealthy bool) {
 	p.linkUnhealthy.Store(unhealthy)
 }
 
-// SetReconnectCallback registers reconnect handling. A carrier reconnect
+// SetReconnectCallback registers reconnect handling. A provider reconnect
 // rotates our epoch and restarts both KCP planes before the upper layer runs.
 func (p *streamTransport) SetReconnectCallback(cb func()) {
 	p.stream.SetReconnectCallback(func() {
@@ -431,9 +431,9 @@ func (p *streamTransport) WaitForPeer(ctx context.Context) error {
 }
 
 // ready is the shape every CanSend variant shares: the transport is open, the
-// KCP session exists and the carrier accepts writes.
-func (p *streamTransport) ready(rt *kcpRuntime, carrierReady func() bool) bool {
-	return !p.closed.Load() && rt != nil && carrierReady()
+// KCP session exists and the provider accepts writes.
+func (p *streamTransport) ready(rt *kcpRuntime, providerReady func() bool) bool {
+	return !p.closed.Load() && rt != nil && providerReady()
 }
 
 // CanSend reports whether the bulk data plane is ready and its queue has room.

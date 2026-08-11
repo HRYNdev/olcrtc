@@ -18,8 +18,8 @@ const peerWaitTimeout = handshake.DefaultTimeout
 
 func (c *Client) bringUpLink(ctx context.Context, cfg Config, cancel context.CancelFunc) error {
 	linkCfg := tunnelcore.BuildTransportConfig(tunnelcore.LinkConfig{
-		Carrier: cfg.Carrier, RoomURL: cfg.RoomURL, Engine: cfg.Engine,
-		URL: cfg.URL, Token: cfg.Token, AuthToken: cfg.AuthToken,
+		Provider: cfg.Provider, RoomURL: cfg.RoomURL, Engine: cfg.Engine,
+		URL: cfg.URL, Token: cfg.Token, ProviderToken: cfg.ProviderToken,
 		ChannelID: cfg.ChannelID, DNSServer: cfg.DNSServer,
 		Options: cfg.TransportOptions, Traffic: cfg.Traffic,
 	}, tunnelcore.LinkRoleConfig{
@@ -38,7 +38,7 @@ func (c *Client) bringUpLink(ctx context.Context, cfg Config, cancel context.Can
 	link.SetShouldReconnect(func() bool { return ctx.Err() == nil })
 	link.SetReconnectCallback(func() {
 		if ctx.Err() == nil {
-			c.handleReconnect(ctx, cfg, cancel, reconnectCarrier)
+			c.handleReconnect(ctx, cfg, cancel, reconnectProvider)
 		}
 	})
 	if connectErr := link.Connect(ctx); connectErr != nil {
@@ -211,7 +211,7 @@ func (c *Client) scheduleLivenessFallback(ctx context.Context, cfg Config, cance
 		if c.sessionEstablished() {
 			return
 		}
-		logger.Warnf("client reconnect: no carrier callback within %s - re-establishing session", delay)
+		logger.Warnf("client reconnect: no provider callback within %s - re-establishing session", delay)
 		c.reconnectMu.Lock()
 		defer c.reconnectMu.Unlock()
 		if ctx.Err() == nil && !c.sessionEstablished() {
@@ -261,7 +261,7 @@ func (c *Client) retryHandshake(ctx context.Context, cfg Config, cancel context.
 
 func maxHandshakeAttempts(reason string) int {
 	switch reason {
-	case reconnectCarrier:
+	case reconnectProvider:
 		return 5
 	case reconnectFallback:
 		return 3

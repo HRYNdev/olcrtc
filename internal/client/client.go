@@ -38,7 +38,7 @@ var (
 )
 
 const (
-	reconnectCarrier  = "carrier"
+	reconnectProvider = "provider"
 	reconnectLiveness = "liveness"
 	reconnectFallback = "liveness-fallback"
 )
@@ -85,7 +85,7 @@ type HealthFunc func(control.Status)
 // Config holds runtime configuration for [Run] and [RunWithReady].
 type Config struct {
 	Transport        string
-	Carrier          string
+	Provider         string
 	RoomURL          string
 	ChannelID        string
 	KeyHex           string
@@ -98,7 +98,7 @@ type Config struct {
 	Engine           string
 	URL              string
 	Token            string
-	AuthToken        string
+	ProviderToken    string
 	Liveness         control.Config
 	Traffic          transport.TrafficConfig
 	DeviceID         string

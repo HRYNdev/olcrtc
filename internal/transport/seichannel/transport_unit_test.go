@@ -87,7 +87,7 @@ func TestNewConnectCallbacksAndFeatures(t *testing.T) {
 	})
 
 	trIface, err := New(t.Context(), transport.Config{
-		Carrier: name,
+		Provider: name,
 		Options: Options{
 			FPS:          40,
 			BatchSize:    3,
@@ -143,7 +143,7 @@ func TestNewErrorPaths(t *testing.T) {
 	enginebuiltin.Register("seichannel-create-fails", func(context.Context, enginebuiltin.Config) (engine.Session, error) {
 		return nil, errBoom
 	})
-	_, err := New(context.Background(), transport.Config{Carrier: "seichannel-create-fails"})
+	_, err := New(context.Background(), transport.Config{Provider: "seichannel-create-fails"})
 	if err == nil || err.Error() != "open engine session: boom" {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -151,7 +151,7 @@ func TestNewErrorPaths(t *testing.T) {
 	enginebuiltin.Register("seichannel-no-video", func(context.Context, enginebuiltin.Config) (engine.Session, error) {
 		return &noVideoEngineSession{Session: &fakeEngineSession{stream: &fakeVideoStream{}}}, nil
 	})
-	_, err = New(context.Background(), transport.Config{Carrier: "seichannel-no-video"})
+	_, err = New(context.Background(), transport.Config{Provider: "seichannel-no-video"})
 	if !errors.Is(err, ErrVideoTrackUnsupported) {
 		t.Fatalf("New() error = %v, want %v", err, ErrVideoTrackUnsupported)
 	}

@@ -16,6 +16,8 @@ This document describes a **convention for developers of client applications** t
 
 The current `olcrtc` does not parse such a URI automatically. If a client application wants to use this notation, it must parse the string itself and pass the resulting fields into the `olcrtc` YAML config.
 
+This convention has no in-band version field. The schema below is URI format v1. Renaming the first placeholder to `Provider` does not change serialized URIs because provider names already occupied that position.
+
 The main client that consumes this URI format is [owenewans/owenclave](https://github.com/owenewans/owenclave) ([src.owenewans.org/owenrtc](https://src.owenewans.org/owenrtc)) - an Android proxy client (fork of exclave) supporting all common protocols (vless, hysteria2, mieru, trojan, vmess, tuic, shadowsocks, socks ...) plus `olcrtc` and subscriptions.
 
 ---
@@ -23,8 +25,8 @@ The main client that consumes this URI format is [owenewans/owenclave](https://g
 ## Format
 
 ```text
-olcrtc://<Auth>?<Transport>@<RoomID>#<EncryptionKey>$<MIMO>
-olcrtc://<Auth>?<Transport><key=value&key=value>@<RoomID>#<EncryptionKey>$<MIMO>
+olcrtc://<Provider>?<Transport>@<RoomID>#<EncryptionKey>$<MIMO>
+olcrtc://<Provider>?<Transport><key=value&key=value>@<RoomID>#<EncryptionKey>$<MIMO>
 ```
 
 Everything after `olcrtc://` is considered part of the client convention.
@@ -37,10 +39,10 @@ The `<key=value&...>` block is the transport parameter payload in angle brackets
 
 | Field | Meaning |
 |------|----------|
-| `<Auth>` | Auth provider name, e.g. `telemost`, `wbstream`, `jitsi` |
+| `<Provider>` | Provider name, e.g. `telemost`, `wbstream`, `jitsi` |
 | `<Transport>` | Transport name, e.g. `datachannel`, `vp8channel`, `seichannel`, `videochannel` |
 | payload | Transport parameters in `<key=value&...>`. Keys match the YAML fields. The block is dropped when defaults are used |
-| `<RoomID>` | Room identifier or auth-specific room URL/ID |
+| `<RoomID>` | Room identifier or provider-specific room URL/ID |
 | `<EncryptionKey>` | Encryption key in hex, usually 64 chars (`32` bytes) |
 | `<MIMO>` | Free-form comment for UI/metadata, e.g. `RU / olc free sub / IPv6` |
 
@@ -75,8 +77,6 @@ No payload.
 | `video-w` | `video.width` | Width in pixels |
 | `video-h` | `video.height` | Height in pixels |
 | `video-fps` | `video.fps` | FPS |
-| `video-bitrate` | `video.bitrate` | Bitrate, e.g. `5000k` or `2M` |
-| `video-hw` | `video.hw` | Hardware acceleration: `none` or `nvenc` |
 | `video-codec` | `video.codec` | `qrcode` or `tile` |
 | `video-qr-size` | `video.qr_size` | QR fragment size in bytes |
 | `video-qr-recovery` | `video.qr_recovery` | Error correction: `low` / `medium` / `high` / `highest` |
@@ -89,7 +89,7 @@ No payload.
 
 | URI field | YAML field |
 |----------|-----------|
-| `<Auth>` | `auth.provider` |
+| `<Provider>` | `auth.provider` |
 | `<Transport>` | `net.transport` |
 | payload | matching transport YAML fields |
 | `<RoomID>` | `room.id` |
@@ -97,6 +97,8 @@ No payload.
 | `<MIMO>` | Not passed to `olcrtc`. Client comment only |
 
 `data: data` is not encoded in this format, because it is a local runtime setting of a specific run.
+
+The key in the URI is used by the current OLC2 record layer. OLC2 has no fallback to the old crypto format, so both endpoints must run compatible builds. `seichannel` and `videochannel` also require OLVC frame version 4 on both endpoints.
 
 ---
 
@@ -190,7 +192,7 @@ sei:
 ### telemost + videochannel
 
 ```text
-olcrtc://telemost?videochannel<video-w=1080&video-h=1080&video-fps=60&video-bitrate=5000k&video-hw=none&video-codec=qrcode>@room-01#d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799$MIMO
+olcrtc://telemost?videochannel<video-w=1080&video-h=1080&video-fps=60&video-codec=qrcode>@room-01#d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799$MIMO
 ```
 
 ### YAML equivalent
@@ -209,8 +211,6 @@ video:
   width: 1080
   height: 1080
   fps: 30
-  bitrate: "5000k"
-  hw: none
   codec: qrcode
 ```
 
@@ -222,7 +222,7 @@ video:
 olcrtc://jitsi?datachannel@https://meet.example.org/myroom#d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799$RU / olc free sub
 ```
 
-`<RoomID>` for jitsi is the full room URL in the form `https://host/room` (or `host/room`). Any self-hosted Jitsi Meet instance without authentication is supported; for public instances see [`docs/examples/jitsi.instances.yaml`](./examples/jitsi.instances.yaml) (or `meet.jit.si`). **Be sure to check which server is reachable in your network.**
+`<RoomID>` for jitsi is the full room URL in the form `https://host/room` (or `host/room`). Any self-hosted Jitsi Meet instance without authentication is supported; for public instances see [`docs/jitsi.instances.yaml`](./jitsi.instances.yaml) (or `meet.jit.si`). **Be sure to check which server is reachable in your network.**
 
 ### YAML equivalent
 
@@ -231,7 +231,7 @@ mode: cnc
 auth:
   provider: jitsi
 room:
-  # Instances: see docs/examples/jitsi.instances.yaml
+  # Instances: see docs/jitsi.instances.yaml
   id: "https://meet.example.org/myroom"
 crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
@@ -249,4 +249,4 @@ Do as you wish, but personally I would be against it.
 
 Subscription format (server list): [sub.md](sub.md)
 
-Compatibility matrix for auth + transport: [settings.md](settings.md)
+Compatibility matrix for provider + transport: [settings.md](settings.md)

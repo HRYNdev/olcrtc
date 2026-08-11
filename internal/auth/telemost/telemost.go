@@ -58,7 +58,3 @@ func (p Provider) Issue(ctx context.Context, cfg auth.Config) (auth.Credentials,
 		},
 	}, nil
 }
-
-func init() { //nolint:gochecknoinits // auth registration is the canonical Go pattern for plugins
-	auth.Register("telemost", Provider{})
-}

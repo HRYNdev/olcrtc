@@ -9,7 +9,7 @@ import (
 )
 
 // corruptPump forwards packets from `from` into `to.deliver`, flipping a byte
-// in the KCP body of a fraction of them. It models a carrier (an SFU that may
+// in the KCP body of a fraction of them. It models a provider (an SFU that may
 // transcode our fake-VP8 stream) that perturbs payload bytes without dropping
 // the packet outright. KCP runs with block=nil, so before the wire CRC was
 // added a corrupt-but-parseable segment rode through as valid in-order data
@@ -51,12 +51,12 @@ func corruptPump(
 	}
 }
 
-// TestKCPDropsCarrierCorruptedPackets is the issue #109 regression guard. With
+// TestKCPDropsProviderCorruptedPackets is the issue #109 regression guard. With
 // ~15% of packets corrupted in flight, every message must still arrive intact:
 // the wire CRC drops the corrupt segments and KCP retransmits them. Without the
 // CRC, corrupt bytes reach the receiver and checkMessages fails - exactly the
 // "chacha20poly1305: message authentication failed" path one layer up.
-func TestKCPDropsCarrierCorruptedPackets(t *testing.T) {
+func TestKCPDropsProviderCorruptedPackets(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integrity chaos test in -short mode")
 	}

@@ -92,10 +92,10 @@ cd olcrtc
 ./script/srv.sh --branch=dev --no-cache  # ветка dev, без кеша
 ```
 
-### Carrier (на каком сервисе передавать трафик)
+### Provider (на каком сервисе передавать трафик)
 
 ```
-Select carrier:
+Select provider:
   1) jitsi
   2) telemost
   3) wbstream
@@ -123,16 +123,16 @@ Enter choice [1-4, default: 1]:
 
 **Рекомендуемая комбинация: `jitsi + datachannel`**. Альтернатива: `wbstream + vp8channel`.
 
-### Jitsi-сервер (только для carrier jitsi)
+### Jitsi-сервер (только для provider jitsi)
 
 ```
 Введите URL Jitsi-комнаты (https://HOST/ROOM).
-Выберите HOST из docs/examples/jitsi.instances.yaml и проверьте, что он открывается в браузере.
+Выберите HOST из docs/jitsi.instances.yaml и проверьте, что он открывается в браузере.
 ```
 
 Выбери тот сервер, который **открывается в твоём браузере**. Подойдёт любой публичный или self-hosted Jitsi Meet.
 
-### Room (только для carrier jitsi)
+### Room (только для provider jitsi)
 
 ```
 Room options:
@@ -174,7 +174,7 @@ Enter choice [1-2, default: 1]:
 - **qrcode** - QR-коды, настраиваемое разрешение, стабильный, медленный.
 - **tile** - тайловый кодек, только 1080x1080, поддержка Reed-Solomon, быстрее, но менее стабилен.
 
-Дальше скрипт спросит ширину/высоту, коррекцию ошибок QR, размер фрагмента (или параметры tile), FPS, битрейт и аппаратное ускорение (`none`/`nvenc`). Для значений по умолчанию жми Enter.
+Дальше скрипт спросит ширину/высоту, коррекцию ошибок QR, размер фрагмента (или параметры tile) и FPS. Для значений по умолчанию жми Enter.
 
 ### Параметры транспорта (только vp8channel)
 
@@ -206,13 +206,13 @@ Enter a comment for the config (default: olc - t.me/openlibrecommunity):
 
 ### Результат
 
-После запуска скрипт выведет имя контейнера, carrier, transport, Room ID, **ключ шифрования** и готовый `olcrtc://` URI:
+После запуска скрипт выведет имя контейнера, provider, transport, Room ID, **ключ шифрования** и готовый `olcrtc://` URI:
 
 ```
 [+] Server started successfully!
 
 Container name: olcrtc-server-xxxxxxxx
-Carrier:        jitsi
+Provider:        jitsi
 Transport:      datachannel
 Room ID/URL:    https://meet.example.org/olcrtc-xxxxxxxx
 Encryption key: d823fa01cb3e0609b67322f7cf984c4ee2e294936fc24ef38c9e59f4799...
@@ -262,7 +262,7 @@ SOCKS5 username (leave empty to disable auth):
 [+] Client started successfully!
 
 Container name: olcrtc-client-xxxxxxxx
-Auth:           jitsi
+Provider:       jitsi
 Transport:      datachannel
 Room ID/URL:    https://meet.example.org/olcrtc-xxxxxxxx
 SOCKS5 proxy:   127.0.0.1:8808

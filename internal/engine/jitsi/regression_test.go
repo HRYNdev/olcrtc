@@ -137,7 +137,7 @@ func TestSetTrickleCancelCancelsReplacedLoop(t *testing.T) {
 
 // TestCallbackSettersAreRaceFree hammers the callback setters against the
 // goroutines that read them. Before the fix these were plain fields written by
-// the carrier and read from the supervisor and keepalive goroutines.
+// the provider and read from the supervisor and keepalive goroutines.
 func TestCallbackSettersAreRaceFree(t *testing.T) {
 	js := newSilentSession(t)
 

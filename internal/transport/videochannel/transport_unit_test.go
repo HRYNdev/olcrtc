@@ -46,7 +46,7 @@ func (s *fakeVideoStream) SetTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.R
 
 // fakeEngineSession adapts fakeVideoStream so it satisfies engine.Session and
 // engine.VideoTrackCapable, the two interfaces the videochannel transport
-// looks up after the carrier-layer collapse.
+// looks up after the provider-layer collapse.
 type fakeEngineSession struct {
 	stream *fakeVideoStream
 }
@@ -81,12 +81,11 @@ func TestNewCallbacksFeaturesAndClose(t *testing.T) {
 	})
 
 	trIface, err := New(context.Background(), transport.Config{
-		Carrier: name,
+		Provider: name,
 		Options: Options{
 			Width:      320,
 			Height:     240,
 			FPS:        30,
-			Bitrate:    "1M",
 			Codec:      "qrcode",
 			TileModule: -1,
 			TileRS:     -1,
@@ -130,7 +129,7 @@ func TestNewErrorPaths(t *testing.T) {
 			return nil, errVideoUnitBoom
 		},
 	)
-	_, err := New(context.Background(), transport.Config{Carrier: "videochannel-create-fails"})
+	_, err := New(context.Background(), transport.Config{Provider: "videochannel-create-fails"})
 	if err == nil || err.Error() != "open engine session: boom" {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -138,7 +137,7 @@ func TestNewErrorPaths(t *testing.T) {
 	enginebuiltin.Register("videochannel-no-video", func(context.Context, enginebuiltin.Config) (engine.Session, error) {
 		return &noVideoEngineSession{Session: &fakeEngineSession{stream: &fakeVideoStream{}}}, nil
 	})
-	_, err = New(context.Background(), transport.Config{Carrier: "videochannel-no-video"})
+	_, err = New(context.Background(), transport.Config{Provider: "videochannel-no-video"})
 	if !errors.Is(err, ErrVideoTrackUnsupported) {
 		t.Fatalf("New() error = %v, want %v", err, ErrVideoTrackUnsupported)
 	}
@@ -295,7 +294,7 @@ func TestZeroOptionsGetDefaultsAndWriterSurvives(t *testing.T) {
 		return &fakeEngineSession{stream: stream}, nil
 	})
 
-	trIface, err := New(context.Background(), transport.Config{Carrier: name})
+	trIface, err := New(context.Background(), transport.Config{Provider: name})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}

@@ -4,7 +4,7 @@
 // units, so an SFU that only inspects the video bitstream forwards them
 // untouched. Framing, fragment acknowledgement and the retransmit loop are
 // the shared ones in internal/transport/common; this package owns the H264
-// carrier and the FPS-paced writer.
+// provider and the FPS-paced writer.
 package seichannel
 
 import (
@@ -39,7 +39,7 @@ const (
 )
 
 var (
-	// ErrVideoTrackUnsupported is returned when a carrier cannot expose video tracks.
+	// ErrVideoTrackUnsupported is returned when a provider cannot expose video tracks.
 	ErrVideoTrackUnsupported = common.ErrVideoTrackUnsupported
 	// ErrAckTimeout is returned when the peer does not acknowledge a payload in time.
 	ErrAckTimeout = errors.New("seichannel ack timeout")
@@ -72,7 +72,7 @@ type streamTransport struct {
 	shaper        *transport.Shaper
 }
 
-// New creates a seichannel transport backed by a carrier.
+// New creates a seichannel transport backed by a provider.
 func New(ctx context.Context, cfg transport.Config) (transport.Transport, error) {
 	opts, err := optionsFrom(cfg)
 	if err != nil {
@@ -81,7 +81,7 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 
 	// Payloads ride the video track, so the engine stays in pure-video mode:
 	// no data callbacks, otherwise it would gate readiness on a bridge this
-	// transport never uses and deliver carrier bytes behind our back.
+	// transport never uses and deliver provider bytes behind our back.
 	engineCfg := cfg
 	engineCfg.OnData = nil
 	engineCfg.OnPeerData = nil

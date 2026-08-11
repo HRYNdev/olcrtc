@@ -13,7 +13,7 @@ import (
 
 // wireCRCLen is the size of the CRC32 trailer appended to every KCP packet
 // on the wire. KCP is handed to kcp-go with block=nil (no FEC, no checksum),
-// so the vp8channel carrier - a video stream an SFU may transcode or reorder -
+// so the vp8channel provider - a video stream an SFU may transcode or reorder -
 // has no integrity protection at all. A real UDP datagram carries a checksum
 // and is dropped on mismatch; without an equivalent, a single flipped byte
 // rides through KCP as valid in-order data and corrupts the encrypted muxconn
@@ -34,7 +34,7 @@ func fakeUDPAddr() *net.UDPAddr {
 }
 
 // kcpConn is a net.PacketConn implementation that bridges kcp-go on top of
-// the vp8channel byte-message carrier.
+// the vp8channel byte-message provider.
 //
 //	kcp.UDPSession  ──Write──▶  WriteTo  ──▶ outbound chan  ──▶ VP8 wire
 //	kcp.UDPSession  ◀──Read──   ReadFrom  ◀── inbound (deliver) ◀── VP8 wire
@@ -141,7 +141,7 @@ func newKCPConn(out chan<- *packetBuffer, inboundCap int, epochHdr [epochHdrLen]
 }
 
 // deliver hands an incoming wire payload to the KCP read loop. The trailing
-// CRC32 is verified and stripped first: a mismatch means the carrier corrupted
+// CRC32 is verified and stripped first: a mismatch means the provider corrupted
 // the packet, so we drop it (KCP retransmits via SACK) instead of feeding
 // garbage into KCP and, ultimately, the muxconn AEAD (issue #109). Drops on
 // overflow are intentional - KCP will detect the loss via SACK and retransmit -

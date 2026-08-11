@@ -15,11 +15,11 @@ import (
 
 // ValidateGen validates that the config contains enough fields to run gen mode.
 func ValidateGen(cfg Config) error {
-	if cfg.Auth == "" {
-		return ErrAuthRequired
+	if cfg.Provider == "" {
+		return ErrProviderRequired
 	}
-	if !slices.Contains(enginebuiltin.Available(), cfg.Auth) {
-		return fmt.Errorf("%w: %s (available: %v)", ErrUnsupportedCarrier, cfg.Auth, enginebuiltin.Available())
+	if !slices.Contains(enginebuiltin.Available(), cfg.Provider) {
+		return fmt.Errorf("%w: %s (available: %v)", ErrUnsupportedProvider, cfg.Provider, enginebuiltin.Available())
 	}
 	if cfg.DNSServer == "" && cfg.Resolver == nil {
 		return ErrDNSServerRequired
@@ -27,12 +27,12 @@ func ValidateGen(cfg Config) error {
 	if cfg.Amount < 1 {
 		return ErrAmountRequired
 	}
-	provider, err := auth.Get(cfg.Auth)
+	provider, err := auth.Get(cfg.Provider)
 	if err != nil {
-		return fmt.Errorf("%w: %s", ErrUnsupportedCarrier, cfg.Auth)
+		return fmt.Errorf("%w: %s", ErrUnsupportedProvider, cfg.Provider)
 	}
 	if _, ok := provider.(auth.RoomCreator); !ok {
-		return errNoRoomCreation(cfg.Auth)
+		return errNoRoomCreation(cfg.Provider)
 	}
 	return nil
 }
@@ -41,13 +41,13 @@ func errNoRoomCreation(name string) error {
 	creators := auth.RoomCreators()
 	if len(creators) == 0 {
 		return fmt.Errorf(
-			"%w: %s does not support room generation, and no registered auth provider does "+
+			"%w: %s does not support room generation, and no registered provider does "+
 				"(pass an existing room with -url instead of -mode gen)",
-			ErrUnsupportedCarrier, name)
+			ErrUnsupportedProvider, name)
 	}
 	return fmt.Errorf(
 		"%w: %s does not support room generation (providers that do: %s)",
-		ErrUnsupportedCarrier, name, strings.Join(creators, ", "))
+		ErrUnsupportedProvider, name, strings.Join(creators, ", "))
 }
 
 const (
@@ -77,13 +77,13 @@ func genRetry(ctx context.Context, fn func(context.Context) error) error {
 // Gen creates cfg.Amount rooms and writes each room ID to out.
 func Gen(ctx context.Context, cfg Config, out func(string)) error {
 	cfg.Resolver = tunnelcore.Resolver(cfg.Resolver, cfg.DNSServer)
-	provider, err := auth.Get(cfg.Auth)
+	provider, err := auth.Get(cfg.Provider)
 	if err != nil {
-		return fmt.Errorf("%w: %s", ErrUnsupportedCarrier, cfg.Auth)
+		return fmt.Errorf("%w: %s", ErrUnsupportedProvider, cfg.Provider)
 	}
 	creator, ok := provider.(auth.RoomCreator)
 	if !ok {
-		return errNoRoomCreation(cfg.Auth)
+		return errNoRoomCreation(cfg.Provider)
 	}
 	for i := range cfg.Amount {
 		var roomID string

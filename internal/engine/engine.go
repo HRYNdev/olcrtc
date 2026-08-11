@@ -12,6 +12,8 @@ import (
 	"context"
 	"errors"
 	"net"
+	"slices"
+	"sync"
 
 	"github.com/pion/webrtc/v4"
 )
@@ -76,7 +78,7 @@ type Session interface {
 	GetBufferedAmount() uint64
 	// Reconnect asks the engine to tear down and re-establish the underlying
 	// SFU connection. Used by upper layers when a liveness probe declares the
-	// carrier dead before the engine has noticed (e.g. silent packet loss on
+	// provider dead before the engine has noticed (e.g. silent packet loss on
 	// a video track). Implementations should be best-effort and idempotent;
 	// reason is logged for diagnostics.
 	Reconnect(reason string)
@@ -109,16 +111,25 @@ type VideoTrackCapable interface {
 // Factory creates a new engine session.
 type Factory func(ctx context.Context, cfg Config) (Session, error)
 
-var registry = make(map[string]Factory) //nolint:gochecknoglobals // package-level state intentional
+//nolint:gochecknoglobals // process-wide engine registry
+var (
+	registryMu sync.RWMutex
+	registry   = make(map[string]Factory)
+)
 
 // Register adds an engine factory to the registry.
 func Register(name string, factory Factory) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+
 	registry[name] = factory
 }
 
 // New creates an engine session by name.
 func New(ctx context.Context, name string, cfg Config) (Session, error) {
+	registryMu.RLock()
 	factory, ok := registry[name]
+	registryMu.RUnlock()
 	if !ok {
 		return nil, ErrEngineNotFound
 	}
@@ -127,9 +138,13 @@ func New(ctx context.Context, name string, cfg Config) (Session, error) {
 
 // Available returns the list of registered engine names.
 func Available() []string {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+
 	names := make([]string, 0, len(registry))
 	for name := range registry {
 		names = append(names, name)
 	}
+	slices.Sort(names)
 	return names
 }

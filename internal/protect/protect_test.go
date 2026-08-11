@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -24,6 +26,12 @@ type rawConnStub struct {
 	controlFn func(func(uintptr)) error
 }
 
+func restoreProtector(t *testing.T) {
+	t.Helper()
+	old := protector.Load()
+	t.Cleanup(func() { protector.Store(old) })
+}
+
 func (r rawConnStub) Control(fn func(uintptr)) error {
 	if r.controlFn != nil {
 		return r.controlFn(fn)
@@ -35,9 +43,8 @@ func (r rawConnStub) Read(func(uintptr) bool) error  { return nil }
 func (r rawConnStub) Write(func(uintptr) bool) error { return nil }
 
 func TestControlFuncWithoutProtector(t *testing.T) {
-	old := Protector
-	Protector = nil
-	t.Cleanup(func() { Protector = old })
+	restoreProtector(t)
+	SetProtector(nil)
 
 	if err := controlFunc("tcp4", "", rawConnStub{}); err != nil {
 		t.Fatalf("controlFunc() error = %v", err)
@@ -45,25 +52,24 @@ func TestControlFuncWithoutProtector(t *testing.T) {
 }
 
 func TestControlFuncWithProtector(t *testing.T) {
-	old := Protector
-	t.Cleanup(func() { Protector = old })
+	restoreProtector(t)
 
 	called := 0
-	Protector = func(fd int) bool {
+	SetProtector(func(fd int) bool {
 		called++
 		if fd != 42 {
-			t.Fatalf("Protector fd = %d, want 42", fd)
+			t.Fatalf("protector fd = %d, want 42", fd)
 		}
 		return true
-	}
+	})
 	if err := controlFunc("tcp4", "", rawConnStub{}); err != nil {
 		t.Fatalf("controlFunc() error = %v", err)
 	}
 	if called != 1 {
-		t.Fatalf("Protector calls = %d, want 1", called)
+		t.Fatalf("protector calls = %d, want 1", called)
 	}
 
-	Protector = func(int) bool { return false }
+	SetProtector(func(int) bool { return false })
 	err := controlFunc("tcp4", "", rawConnStub{})
 	var opErr *net.OpError
 	if !errors.As(err, &opErr) || opErr.Op != "protect" {
@@ -72,9 +78,8 @@ func TestControlFuncWithProtector(t *testing.T) {
 }
 
 func TestControlFuncWrapsControlError(t *testing.T) {
-	old := Protector
-	Protector = func(int) bool { return true }
-	t.Cleanup(func() { Protector = old })
+	restoreProtector(t)
+	SetProtector(func(int) bool { return true })
 
 	err := controlFunc("tcp4", "", rawConnStub{
 		controlFn: func(func(uintptr)) error { return errProtectBoom },
@@ -82,6 +87,58 @@ func TestControlFuncWrapsControlError(t *testing.T) {
 	if err == nil || err.Error() != "control failed: boom" {
 		t.Fatalf("controlFunc() error = %v", err)
 	}
+}
+
+func TestControlFuncSnapshotsProtector(t *testing.T) {
+	restoreProtector(t)
+	var firstCalls atomic.Int64
+	var secondCalls atomic.Int64
+	SetProtector(func(int) bool {
+		firstCalls.Add(1)
+		return true
+	})
+	err := controlFunc("tcp4", "", rawConnStub{controlFn: func(call func(uintptr)) error {
+		SetProtector(func(int) bool {
+			secondCalls.Add(1)
+			return true
+		})
+		call(42)
+		return nil
+	}})
+	if err != nil {
+		t.Fatalf("controlFunc() error = %v", err)
+	}
+	if firstCalls.Load() != 1 || secondCalls.Load() != 0 {
+		t.Fatalf("protector calls = %d/%d, want 1/0", firstCalls.Load(), secondCalls.Load())
+	}
+}
+
+func TestConcurrentSetClearAndDialControl(t *testing.T) {
+	restoreProtector(t)
+	var calls atomic.Int64
+	protectFunc := func(int) bool {
+		calls.Add(1)
+		return true
+	}
+	var wg sync.WaitGroup
+	for worker := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for iteration := range 500 {
+				if (worker+iteration)%3 == 0 {
+					SetProtector(nil)
+				} else {
+					SetProtector(protectFunc)
+				}
+				if err := controlFunc("tcp4", "", rawConnStub{}); err != nil {
+					t.Errorf("controlFunc() error = %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 func TestNewDialerAndHTTPClient(t *testing.T) {

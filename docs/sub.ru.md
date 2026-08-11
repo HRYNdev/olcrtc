@@ -23,6 +23,8 @@ https://killpeople.freegore.xyz/sub
 
 Важно: это соглашение **для клиентских приложений**. Сам `olcrtc` такой файл не читает и не обрабатывает.
 
+В схеме подписки нет поля версии внутри файла. Она описана как subscription format v1, а строки URI используют позицию `Provider` из URI format v1. Требования совместимости OLC2 и видеокадров OLVC v4 применяются к каждому endpoint в списке.
+
 ---
 
 ## Назначение
@@ -94,8 +96,8 @@ olcrtc://...
 Каждая строка сервера содержит один `olcrtc`-URI в формате из [uri.md](uri.ru.md):
 
 ```text
-olcrtc://<Auth>?<Transport>@<RoomID>#<EncryptionKey>$<MIMO>
-olcrtc://<Auth>?<Transport><key=value&key=value>@<RoomID>#<EncryptionKey>$<MIMO>
+olcrtc://<Provider>?<Transport>@<RoomID>#<EncryptionKey>$<MIMO>
+olcrtc://<Provider>?<Transport><key=value&key=value>@<RoomID>#<EncryptionKey>$<MIMO>
 ```
 
 Одна строка = один сервер/одна запись подписки.
@@ -167,4 +169,4 @@ olcrtc://wbstream?datachannel@abc123xyz#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 URI-формат для отдельного сервера: [uri.md](uri.ru.md)
 
-Матрица совместимости auth + transport: [settings.md](settings.ru.md)
+Матрица совместимости provider + transport: [settings.md](settings.ru.md)

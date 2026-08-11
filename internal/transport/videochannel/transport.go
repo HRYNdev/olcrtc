@@ -42,7 +42,7 @@ const (
 )
 
 var (
-	// ErrVideoTrackUnsupported is returned when a carrier cannot expose video tracks.
+	// ErrVideoTrackUnsupported is returned when a provider cannot expose video tracks.
 	ErrVideoTrackUnsupported = common.ErrVideoTrackUnsupported
 	// ErrAckTimeout is returned when the peer does not acknowledge a payload in time.
 	ErrAckTimeout = errors.New("videochannel ack timeout")
@@ -87,7 +87,7 @@ type streamTransport struct {
 	shaper          *transport.Shaper
 }
 
-// New creates a visual videochannel transport backed by a carrier engine.
+// New creates a visual videochannel transport backed by a provider engine.
 func New(ctx context.Context, cfg transport.Config) (transport.Transport, error) {
 	opts, err := optionsFrom(cfg)
 	if err != nil {
@@ -96,7 +96,7 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 
 	// Payloads ride the video track, so the engine stays in pure-video mode:
 	// no data callbacks, otherwise it would gate readiness on a bridge this
-	// transport never uses and deliver carrier bytes behind our back.
+	// transport never uses and deliver provider bytes behind our back.
 	engineCfg := cfg
 	engineCfg.OnData = nil
 	engineCfg.OnPeerData = nil
@@ -111,7 +111,7 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		return nil, fmt.Errorf("open video session: %w", err)
 	}
 
-	// Every carrier negotiates VP8 outbound; inbound follows whatever the
+	// Every provider negotiates VP8 outbound; inbound follows whatever the
 	// remote announces (see codecSpecForMime).
 	codec := vp8CodecSpec()
 	track, err := common.NewVideoTrack(codec.capability, "videochannel")

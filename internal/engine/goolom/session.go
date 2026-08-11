@@ -294,7 +294,7 @@ func (s *Session) GetBufferedAmount() uint64 {
 
 // SubscriberCanSend reports whether the subscriber PC is connected.
 // Unlike CanSend, it does not require publisherReady, so it returns true
-// as soon as SFU data can arrive — before the publisher PC negotiates.
+// as soon as SFU data can arrive - before the publisher PC negotiates.
 func (s *Session) SubscriberCanSend() bool {
 	return !s.closed.Load() && s.subscriberReady.Load()
 }
@@ -360,8 +360,4 @@ func (s *Session) drainPublisherRTCP(sender *webrtc.RTPSender) {
 		return
 	}
 	go engine.DrainRTCP(sender)
-}
-
-func init() { //nolint:gochecknoinits // engine registration is the canonical Go pattern for plugins
-	engine.Register("goolom", New)
 }

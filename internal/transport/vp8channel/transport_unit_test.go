@@ -112,7 +112,7 @@ func (s *fakeVideoStream) SetTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.R
 
 // fakeEngineSession adapts fakeVideoStream so it satisfies engine.Session and
 // engine.VideoTrackCapable, the two interfaces the vp8channel transport
-// looks up after the carrier-layer collapse.
+// looks up after the provider-layer collapse.
 type fakeEngineSession struct {
 	stream *fakeVideoStream
 }
@@ -147,7 +147,7 @@ func TestNewConnectSendCallbacksFeaturesAndClose(t *testing.T) {
 	})
 
 	trIface, err := New(context.Background(), transport.Config{
-		Carrier:  name,
+		Provider: name,
 		DeviceID: "client",
 		Options:  Options{FPS: 30, BatchSize: 1},
 	})
@@ -210,7 +210,7 @@ func TestNewErrorPaths(t *testing.T) {
 	enginebuiltin.Register("vp8channel-create-fails", func(context.Context, enginebuiltin.Config) (engine.Session, error) {
 		return nil, errVP8UnitBoom
 	})
-	_, err := New(context.Background(), transport.Config{Carrier: "vp8channel-create-fails"})
+	_, err := New(context.Background(), transport.Config{Provider: "vp8channel-create-fails"})
 	if err == nil || err.Error() != "open engine session: boom" {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -218,7 +218,7 @@ func TestNewErrorPaths(t *testing.T) {
 	enginebuiltin.Register("vp8channel-no-video", func(context.Context, enginebuiltin.Config) (engine.Session, error) {
 		return &noVideoEngineSession{Session: &fakeEngineSession{stream: &fakeVideoStream{}}}, nil
 	})
-	_, err = New(context.Background(), transport.Config{Carrier: "vp8channel-no-video"})
+	_, err = New(context.Background(), transport.Config{Provider: "vp8channel-no-video"})
 	if !errors.Is(err, ErrVideoTrackUnsupported) {
 		t.Fatalf("New() error = %v, want %v", err, ErrVideoTrackUnsupported)
 	}
@@ -443,12 +443,12 @@ func mkPeerFrame(token, epoch uint32, payload []byte) []byte {
 }
 
 // below, peer-restart-corroboration PR (rest of the test predates it).
-// TestPeerRestartRebuildsCarrierAfterGrace guards issue #105: when the latched
+// TestPeerRestartRebuildsProviderAfterGrace guards issue #105: when the latched
 // peer goes silent past peerRestartGrace and a frame from a fresh epoch
-// arrives, the transport rebuilds the carrier (stream.Reconnect) so the client
+// arrives, the transport rebuilds the provider (stream.Reconnect) so the client
 // re-handshakes against the restarted server instead of stalling for the full
 // control-liveness window.
-func TestPeerRestartRebuildsCarrierAfterGrace(t *testing.T) {
+func TestPeerRestartRebuildsProviderAfterGrace(t *testing.T) {
 	stream := &fakeVideoStream{canSend: true}
 	tr := &streamTransport{
 		stream:           stream,
@@ -468,15 +468,15 @@ func TestPeerRestartRebuildsCarrierAfterGrace(t *testing.T) {
 		t.Fatalf("peer epoch = 0x%08x, want 0x200", tr.peerEpoch.Load())
 	}
 
-	// A different epoch inside the grace window must NOT rebuild the carrier.
+	// A different epoch inside the grace window must NOT rebuild the provider.
 	tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x300, []byte("early")))
 	time.Sleep(10 * time.Millisecond)
 	if got := stream.reconnects.Load(); got != 0 {
-		t.Fatalf("carrier rebuilt inside grace window: got %d, want 0", got)
+		t.Fatalf("provider rebuilt inside grace window: got %d, want 0", got)
 	}
 
 	// After the latched peer has been silent past the grace window, a frame
-	// from the new epoch is read as a restart and rebuilds the carrier - but
+	// from the new epoch is read as a restart and rebuilds the provider - but
 	// only once the control-plane liveness loop has corroborated trouble.
 	time.Sleep(15 * time.Millisecond)
 	tr.NotifyLinkHealth(true)
@@ -486,7 +486,7 @@ func TestPeerRestartRebuildsCarrierAfterGrace(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	if got := stream.reconnects.Load(); got != 1 {
-		t.Fatalf("carrier rebuilds after grace = %d, want 1", got)
+		t.Fatalf("provider rebuilds after grace = %d, want 1", got)
 	}
 	if !tr.peerRestarting.Load() {
 		t.Fatal("peerRestarting flag not set after restart detection")
@@ -518,7 +518,7 @@ func TestPeerRestartRebuildsOnlyOnce(t *testing.T) {
 	}
 	time.Sleep(50 * time.Millisecond)
 	if got := stream.reconnects.Load(); got != 1 {
-		t.Fatalf("carrier rebuilt %d times, want exactly 1", got)
+		t.Fatalf("provider rebuilt %d times, want exactly 1", got)
 	}
 }
 
@@ -553,7 +553,7 @@ func TestLivePeerKeepsLatchFresh(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if got := stream.reconnects.Load(); got != 0 {
-		t.Fatalf("carrier rebuilt %d times for a live peer, want 0", got)
+		t.Fatalf("provider rebuilt %d times for a live peer, want 0", got)
 	}
 }
 
@@ -561,7 +561,7 @@ func TestLivePeerKeepsLatchFresh(t *testing.T) {
 // scenario directly: a second, unrelated room participant's epoch shows up
 // after the latched peer's silence exceeds peerRestartGrace, but the client's
 // own control-plane liveness never reported trouble. The heuristic must not
-// tear down a perfectly healthy carrier over unrelated room noise.
+// tear down a perfectly healthy provider over unrelated room noise.
 func TestPeerRestartSuppressedWhenControlHealthy(t *testing.T) {
 	stream := &fakeVideoStream{canSend: true}
 	tr := &streamTransport{
@@ -587,14 +587,14 @@ func TestPeerRestartSuppressedWhenControlHealthy(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	if got := stream.reconnects.Load(); got != 0 {
-		t.Fatalf("carrier rebuilt %d times for an unrelated peer with healthy control plane, want 0", got)
+		t.Fatalf("provider rebuilt %d times for an unrelated peer with healthy control plane, want 0", got)
 	}
 }
 
 // TestPeerRestartFiresOnceCorroborated confirms NotifyLinkHealth(true) is a
 // gate, not a permanent disable: with corroborating evidence the client's own
 // link is down, the same foreign-epoch frame still triggers the fast-path
-// carrier rebuild.
+// provider rebuild.
 func TestPeerRestartFiresOnceCorroborated(t *testing.T) {
 	stream := &fakeVideoStream{canSend: true}
 	tr := &streamTransport{
@@ -619,7 +619,7 @@ func TestPeerRestartFiresOnceCorroborated(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	if got := stream.reconnects.Load(); got != 1 {
-		t.Fatalf("carrier rebuilds when corroborated = %d, want 1", got)
+		t.Fatalf("provider rebuilds when corroborated = %d, want 1", got)
 	}
 }
 
