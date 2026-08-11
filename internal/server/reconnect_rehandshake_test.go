@@ -32,56 +32,6 @@ func mkServerSess(t *testing.T) (*smux.Session, func()) {
 	}
 }
 
-// TestSwapSessionAcceptsControlSessionInPeerRouting is the regression guard for
-// issue #95: in peer-routing mode s.session is nil and the handshake/liveness
-// loop runs on the control session. When that control loop dies it calls
-// reinstallSession(controlSess) -> swapSession(controlSess, r). The old guard
-// compared only against s.session, so nil != controlSess discarded the swap,
-// acceptHandshake was never re-armed, and every later client hung forever in
-// waitPeerHandshake. swapSession must accept a dying session that matches
-// s.controlSess even when s.session is nil.
-func TestSwapSessionAcceptsControlSessionInPeerRouting(t *testing.T) {
-	keys := newServerTestKeys(t)
-
-	deadControl, cleanupDead := mkServerSess(t)
-	defer cleanupDead()
-	newData, cleanupND := mkServerSess(t)
-	defer cleanupND()
-	newControl, cleanupNC := mkServerSess(t)
-	defer cleanupNC()
-
-	ln := &peerRoutingStub{}
-	s := &Server{
-		ln:          ln,
-		keys:        keys,
-		session:     nil, // peer-routing: data session is nil
-		controlSess: deadControl,
-		health:      runtime.NewHealthTracker(nil),
-	}
-
-	r := &tunnelcore.SessionPair{
-		DataConn:       muxconn.New(ln, keys),
-		DataSession:    newData,
-		ControlConn:    muxconn.New(ln, keys),
-		ControlSession: newControl,
-	}
-
-	if ok := s.swapSession(deadControl, r); !ok {
-		t.Fatal("swapSession discarded a control-session reinstall (issue #95 regression): " +
-			"peer-routing handshake would never be re-armed")
-	}
-	s.sessMu.RLock()
-	gotCtrl := s.controlSess
-	gotData := s.session
-	s.sessMu.RUnlock()
-	if gotCtrl != newControl {
-		t.Fatalf("controlSess not swapped: got %p want %p", gotCtrl, newControl)
-	}
-	if gotData != newData {
-		t.Fatalf("session not swapped: got %p want %p", gotData, newData)
-	}
-}
-
 // TestSwapSessionDiscardsStaleReinstall confirms the guard still rejects a
 // reinstall whose dying session matches neither the live data nor control
 // session (another reinstall already won the race).

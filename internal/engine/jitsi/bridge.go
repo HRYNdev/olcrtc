@@ -249,7 +249,9 @@ func (s *Session) deliverBridgeMessageGen(gen uint64, msg j.BridgeMessage, ok bo
 	if !accepted {
 		return true
 	}
-	s.latchPeerEndpoint(msg.From)
+	if !s.requireTargetedPeer || s.peerEpoch.Load() != 0 {
+		s.latchPeerEndpoint(msg.From)
+	}
 	if len(data) == 0 {
 		return true
 	}

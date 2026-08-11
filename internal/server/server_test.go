@@ -746,7 +746,7 @@ func TestReinstallSessionClosesOldConnBeforeSwap(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		s.reinstallSession(sess)
+		s.reinstallSession(context.Background(), sess)
 	}()
 
 	// Give reinstallSession a moment to close the old conn.
@@ -793,7 +793,7 @@ func TestAcceptHandshakeReturnsResultWithoutTouchingServerFields(t *testing.T) {
 		if err != nil {
 			return
 		}
-		_, _ = handshake.Client(stream, "device-A", nil)
+		_, _, _ = handshake.Client(stream, "device-A", nil)
 	}()
 
 	stream, res, ok := s.acceptHandshake(context.Background(), serverSess)
@@ -837,7 +837,7 @@ func TestAcceptSingletonHandshakeStoresServerFields(t *testing.T) {
 		if err != nil {
 			return
 		}
-		_, _ = handshake.Client(stream, "device-B", nil)
+		_, _, _ = handshake.Client(stream, "device-B", nil)
 	}()
 
 	if !s.acceptSingletonHandshake(ctx, serverSess) {

@@ -44,9 +44,6 @@ func (c *Client) bringUpLink(ctx context.Context, cfg Config, cancel context.Can
 	if connectErr := link.Connect(ctx); connectErr != nil {
 		return fmt.Errorf("failed to connect link: %w", connectErr)
 	}
-	if waitErr := waitForPeer(ctx, link); waitErr != nil {
-		return waitErr
-	}
 	c.conn = muxconn.New(link, c.keys)
 	c.controlConn = muxconn.NewControl(link, c.keys)
 	pair, err := tunnelcore.NewSessionPairWithConns(
@@ -58,10 +55,18 @@ func (c *Client) bringUpLink(ctx context.Context, cfg Config, cancel context.Can
 		}
 		return fmt.Errorf("create smux sessions: %w", err)
 	}
-	control, sessionID, err := openControlStream(ctx, pair.ControlSession, c.deviceID, c.claims)
+	control, sessionID, peerID, err := openControlStream(ctx, pair.ControlSession, c.deviceID, c.claims)
 	if err != nil {
 		_ = pair.Close()
 		return fmt.Errorf("handshake: %w", err)
+	}
+	if err := confirmPeer(link, peerID); err != nil {
+		_ = pair.Close()
+		return err
+	}
+	if waitErr := waitForPeer(ctx, link); waitErr != nil {
+		_ = pair.Close()
+		return waitErr
 	}
 	logger.Infof("session %s opened (device=%s)", sessionID, c.deviceID)
 	c.sessMu.Lock()
@@ -89,12 +94,26 @@ func waitForPeer(ctx context.Context, link transport.Transport) error {
 	return nil
 }
 
+func confirmPeer(link transport.Transport, peerID string) error {
+	if peerID == "" {
+		return nil
+	}
+	identity, ok := link.(transport.PeerIdentity)
+	if !ok {
+		return fmt.Errorf("confirm peer: %w", transport.ErrPeerIdentityUnsupported)
+	}
+	if err := identity.ConfirmPeer(peerID); err != nil {
+		return fmt.Errorf("confirm peer: %w", err)
+	}
+	return nil
+}
+
 func openControlStream(
 	ctx context.Context,
 	session *smux.Session,
 	deviceID string,
 	claims map[string]any,
-) (*smux.Stream, string, error) {
+) (*smux.Stream, string, string, error) {
 	return openControlStreamTimeout(ctx, session, deviceID, claims, handshake.DefaultTimeout)
 }
 
@@ -104,10 +123,10 @@ func openControlStreamTimeout(
 	deviceID string,
 	claims map[string]any,
 	timeout time.Duration,
-) (*smux.Stream, string, error) {
+) (*smux.Stream, string, string, error) {
 	stream, err := session.OpenStream()
 	if err != nil {
-		return nil, "", fmt.Errorf("open control stream: %w", err)
+		return nil, "", "", fmt.Errorf("open control stream: %w", err)
 	}
 	done := make(chan struct{})
 	go func() {
@@ -119,16 +138,16 @@ func openControlStreamTimeout(
 	}()
 	defer close(done)
 	_ = stream.SetDeadline(time.Now().Add(timeout))
-	sessionID, err := handshake.Client(stream, deviceID, claims)
+	sessionID, peerID, err := handshake.Client(stream, deviceID, claims)
 	_ = stream.SetDeadline(time.Time{})
 	if err != nil {
 		_ = stream.Close()
 		if ctx.Err() != nil {
-			return nil, "", fmt.Errorf("handshake client: %w", ctx.Err())
+			return nil, "", "", fmt.Errorf("handshake client: %w", ctx.Err())
 		}
-		return nil, "", fmt.Errorf("handshake client: %w", err)
+		return nil, "", "", fmt.Errorf("handshake client: %w", err)
 	}
-	return stream, sessionID, nil
+	return stream, sessionID, peerID, nil
 }
 
 func (c *Client) handleReconnect(ctx context.Context, cfg Config, cancel context.CancelFunc, reason string) {
@@ -298,16 +317,21 @@ func (c *Client) tryReopenSession(
 		}
 		return false
 	}
-	if waitErr := waitForPeer(ctx, c.ln); waitErr != nil {
-		logger.Warnf("wait for peer on reconnect failed (attempt %d): %v", attempt, waitErr)
-		_ = pair.Close()
-		return false
-	}
-	control, sessionID, err := openControlStreamTimeout(
+	control, sessionID, peerID, err := openControlStreamTimeout(
 		ctx, pair.ControlSession, c.deviceID, c.claims, handshake.DefaultTimeout,
 	)
 	if err != nil {
 		logger.Warnf("handshake on reconnect failed (attempt %d): %v", attempt, err)
+		_ = pair.Close()
+		return false
+	}
+	if err := confirmPeer(c.ln, peerID); err != nil {
+		logger.Warnf("peer confirmation on reconnect failed (attempt %d): %v", attempt, err)
+		_ = pair.Close()
+		return false
+	}
+	if waitErr := waitForPeer(ctx, c.ln); waitErr != nil {
+		logger.Warnf("wait for peer on reconnect failed (attempt %d): %v", attempt, waitErr)
 		_ = pair.Close()
 		return false
 	}

@@ -11,10 +11,10 @@
 //
 // # Peer restart detection
 //
-// A client latches onto the first peer epoch it sees and normally keeps it
-// until the provider reconnects. When a frame arrives from a different epoch
-// after the latched peer has been silent longer than peerRestartGrace, that
-// COULD mean the server restarted and rejoined the SFU with a fresh epoch -
+// A client binds to the server epoch authenticated by the encrypted handshake
+// and normally keeps it until the provider reconnects. When a frame arrives
+// from a different epoch after the bound peer has been silent longer than
+// peerRestartGrace, that COULD mean the server restarted and rejoined the SFU -
 // but in a shared room it just as easily means an unrelated participant (a
 // second olcrtc client) joined or reconnected and the SFU is broadcasting its
 // epoch to everyone. Epoch churn alone cannot tell the two apart.
@@ -232,20 +232,6 @@ func newStreamTransport(
 		peerRestartGrace: defaultPeerRestartGrace,
 	}
 
-	// In single-peer mode, confirm the peer epoch on first successful KCP
-	// delivery. This ensures we latch on the server (which completes
-	// handshake) rather than another client whose frames arrive first.
-	if cfg.OnData != nil && !tr.serverMode {
-		inner := cfg.OnData
-		tr.onData = func(data []byte) {
-			if !tr.peerConfirmed.Swap(true) {
-				epoch := tr.peerEpoch.Load()
-				logger.Infof("vp8channel: peer confirmed epoch=0x%08x", epoch)
-			}
-			inner(data)
-		}
-	}
-
 	tr.data = newKCPPlane(outboundQueueSize, func(data []byte) {
 		if tr.onData != nil {
 			tr.onData(data)
@@ -354,6 +340,32 @@ func (p *streamTransport) SupportsPeerRouting() bool {
 	return p.serverMode
 }
 
+// LocalPeerID returns the local data epoch in the transport routing format.
+func (p *streamTransport) LocalPeerID() string {
+	return formatPeerID(p.localEpochValue())
+}
+
+// ConfirmPeer binds the single-peer data plane to an authenticated remote epoch.
+func (p *streamTransport) ConfirmPeer(peerID string) error {
+	epoch, err := parsePeerID(peerID)
+	if err != nil {
+		return fmt.Errorf("vp8channel: confirm peer: %w", err)
+	}
+	if epoch == 0 || epoch&controlEpochFlag != 0 {
+		return fmt.Errorf("vp8channel: %w: data epoch 0x%08x", transport.ErrInvalidPeerID, epoch)
+	}
+
+	if rt := p.data.get(); rt != nil {
+		rt.setHeader(buildEpochHeaderTo(p.bindingToken, p.localEpochValue(), epoch))
+	}
+	p.peerEpoch.Store(epoch)
+	p.lastPeerFrameNano.Store(time.Now().UnixNano())
+	p.peerRestarting.Store(false)
+	p.peerConfirmed.Store(true)
+	logger.Infof("vp8channel: authenticated peer epoch=0x%08x", epoch)
+	return nil
+}
+
 // Close tears down both planes, every peer session and the provider.
 func (p *streamTransport) Close() error {
 	if p.closed.CompareAndSwap(false, true) {
@@ -413,13 +425,13 @@ func (p *streamTransport) SetReconnectCallback(cb func()) {
 	})
 }
 
-// WaitForPeer blocks until the remote peer has been observed (first epoch
-// frame received), or ctx is cancelled.
+// WaitForPeer blocks until the remote peer has been authenticated by the
+// encrypted handshake, or ctx is cancelled.
 // Implements transport.PeerReadyTransport.
 func (p *streamTransport) WaitForPeer(ctx context.Context) error {
 	const pollInterval = 50 * time.Millisecond
 	for {
-		if p.peerEpoch.Load() != 0 {
+		if p.peerConfirmed.Load() {
 			return nil
 		}
 		select {

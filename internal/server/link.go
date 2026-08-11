@@ -7,6 +7,7 @@ import (
 	"github.com/xtaci/smux"
 
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
+	"github.com/openlibrecommunity/olcrtc/internal/muxconn"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
 	"github.com/openlibrecommunity/olcrtc/internal/tunnelcore"
 )
@@ -37,14 +38,14 @@ func (s *Server) bringUpLink(ctx context.Context, cfg Config, cancel context.Can
 	ln.SetShouldReconnect(func() bool { return ctx.Err() == nil })
 	ln.SetReconnectCallback(func() {
 		if ctx.Err() == nil {
-			s.handleReconnect()
+			s.handleReconnect(ctx)
 		}
 	})
 	logger.Infof("Connecting transport=%s provider=%s ...", cfg.Transport, cfg.Provider)
 	if s.peerLn == nil {
 		s.installSession()
 	} else {
-		s.installControlSession()
+		s.installControlSession(ctx)
 	}
 	if err := ln.Connect(ctx); err != nil {
 		return fmt.Errorf("failed to connect link: %w", err)
@@ -77,7 +78,7 @@ func (s *Server) installSession() {
 	}
 }
 
-func (s *Server) installControlSession() {
+func (s *Server) installControlSession(ctx context.Context) {
 	if peerControl, ok := s.ln.(transport.PeerControlPlane); ok {
 		s.installPeerControlPlane(peerControl)
 		return
@@ -94,19 +95,27 @@ func (s *Server) installControlSession() {
 	s.controlConn = conn
 	s.controlSess = session
 	s.sessMu.Unlock()
-	go s.acceptSingletonHandshake(s.baseCtx, session)
+	go s.acceptSingletonHandshake(ctx, session)
 }
 
-func (s *Server) handleReconnect() {
+func (s *Server) handleReconnect(ctx context.Context) {
 	s.health.RecordReconnect()
 	logger.Infof("server reconnect reason=provider - tearing down smux session")
+	if s.peerLn != nil {
+		s.reinstallPeerRouting(ctx)
+		return
+	}
 	s.sessMu.RLock()
 	current := s.session
 	s.sessMu.RUnlock()
-	s.reinstallSession(current)
+	s.reinstallSession(ctx, current)
 }
 
-func (s *Server) reinstallSession(dead *smux.Session) {
+func (s *Server) reinstallSession(ctx context.Context, dead *smux.Session) {
+	if s.peerLn != nil {
+		s.reinstallPeerRouting(ctx)
+		return
+	}
 	s.reinstallMu.Lock()
 	defer s.reinstallMu.Unlock()
 	s.sessMu.RLock()
@@ -133,7 +142,70 @@ func (s *Server) reinstallSession(dead *smux.Session) {
 		return
 	}
 	if replacement.HasIsolatedControl() {
-		go s.acceptSingletonHandshake(s.baseCtx, replacement.ControlSession)
+		go s.acceptSingletonHandshake(ctx, replacement.ControlSession)
+	}
+}
+
+type peerRoutingTeardown struct {
+	pair           *tunnelcore.SessionPair
+	conn           *muxconn.Conn
+	session        *smux.Session
+	controlConn    *muxconn.Conn
+	controlSession *smux.Session
+	controlStream  *smux.Stream
+	controlStop    context.CancelFunc
+	peers          map[string]*peerSession
+	sessionID      string
+}
+
+func (s *Server) reinstallPeerRouting(ctx context.Context) {
+	s.reinstallMu.Lock()
+	defer s.reinstallMu.Unlock()
+	teardown := s.detachPeerRouting()
+	s.closePeerRouting(teardown)
+	s.installControlSession(ctx)
+}
+
+func (s *Server) detachPeerRouting() peerRoutingTeardown {
+	s.sessMu.Lock()
+	defer s.sessMu.Unlock()
+	teardown := peerRoutingTeardown{
+		pair: s.pair, conn: s.conn, session: s.session,
+		controlConn: s.controlConn, controlSession: s.controlSess,
+		controlStream: s.controlStrm, controlStop: s.controlStop,
+		peers: s.peerSessions, sessionID: s.sessionID,
+	}
+	s.peerSessions = make(map[string]*peerSession)
+	s.pair, s.conn, s.session = nil, nil, nil
+	s.controlConn, s.controlSess = nil, nil
+	s.controlStrm, s.controlStop = nil, nil
+	s.sessionID, s.deviceID = "", ""
+	return teardown
+}
+
+func (s *Server) closePeerRouting(teardown peerRoutingTeardown) {
+	tunnelcore.NotifyControlClose(teardown.controlStream)
+	if teardown.controlStop != nil {
+		teardown.controlStop()
+	}
+	if teardown.controlStream != nil {
+		_ = teardown.controlStream.Close()
+	}
+	closeServerPair(teardown.pair, teardown.session, teardown.controlSession)
+	if teardown.pair == nil {
+		if teardown.conn != nil {
+			_ = teardown.conn.Close()
+		}
+		if teardown.controlConn != nil {
+			_ = teardown.controlConn.Close()
+		}
+	}
+	if teardown.sessionID != "" {
+		s.onClose(teardown.sessionID, "reconnect")
+		s.trackPeerClose(teardown.sessionID, "reconnect")
+	}
+	for _, peer := range teardown.peers {
+		s.closePeerSession(peer, "reconnect")
 	}
 }
 
@@ -143,6 +215,11 @@ func (s *Server) staleReinstall(dead *smux.Session) bool {
 
 func (s *Server) swapSession(dead *smux.Session, replacement *tunnelcore.SessionPair) bool {
 	s.sessMu.Lock()
+	if s.peerLn != nil {
+		s.sessMu.Unlock()
+		_ = replacement.Close()
+		return false
+	}
 	if s.staleReinstall(dead) {
 		s.sessMu.Unlock()
 		_ = replacement.Close()

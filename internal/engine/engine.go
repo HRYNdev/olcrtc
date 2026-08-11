@@ -21,6 +21,8 @@ import (
 var (
 	// ErrEngineNotFound is returned when a requested engine is not registered.
 	ErrEngineNotFound = errors.New("engine not found")
+	// ErrInvalidPeerID is returned when an authenticated routing peer ID is malformed.
+	ErrInvalidPeerID = errors.New("invalid peer id")
 )
 
 // Credentials are produced by an auth provider - duplicated here to avoid an
@@ -95,6 +97,13 @@ type PeerSession interface {
 // epoch frame from a remote participant is received, or ctx is cancelled.
 type PeerReadySession interface {
 	WaitForPeer(ctx context.Context) error
+}
+
+// PeerIdentity is implemented by engines that expose and confirm routing
+// identities carried inside the encrypted tunnel handshake.
+type PeerIdentity interface {
+	LocalPeerID() string
+	ConfirmPeer(peerID string) error
 }
 
 // PeerResetter is implemented by engines that retain a remote peer binding.

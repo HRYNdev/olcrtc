@@ -55,13 +55,12 @@ func (p *streamTransport) acceptsDst(dst uint32) bool {
 	return dst == le || dst == (le|controlEpochFlag)
 }
 
-// handleSinglePeerData delivers a data frame in single-peer (client) mode. It
-// latches the first peer epoch seen; a frame from any other epoch is handed to
-// the restart watchdog instead of being delivered.
+// handleSinglePeerData delivers only frames from the peer authenticated by the
+// encrypted handshake. Broadcast traffic cannot establish this binding.
 func (p *streamTransport) handleSinglePeerData(src uint32, kcpPayload []byte) {
 	switch {
 	case !p.peerConfirmed.Load():
-		p.handleFirstPeer(src)
+		return
 	case src != p.peerEpoch.Load():
 		p.maybePeerRestart(src)
 		return
@@ -73,24 +72,6 @@ func (p *streamTransport) handleSinglePeerData(src uint32, kcpPayload []byte) {
 		return
 	}
 	deliverKCPPayload(p.data.get(), kcpPayload)
-}
-
-func (p *streamTransport) handleFirstPeer(peerEpoch uint32) {
-	p.peerEpoch.Store(peerEpoch)
-	p.peerConfirmed.Store(true)
-	// Arm the restart watchdog against this fresh latch and clear any pending
-	// restart flag so a later silence can re-trigger detection (issue #105).
-	p.lastPeerFrameNano.Store(time.Now().UnixNano())
-	p.peerRestarting.Store(false)
-	// Re-point our data KCP at the server so subsequent uplink frames are
-	// addressed (dst=serverEpoch) instead of broadcast. The SFU forwards
-	// every frame to every participant, so without a dst the server cannot
-	// tell which client a frame belongs to and other clients would ingest
-	// our KCP packets (issue #95 multi-client cross-talk).
-	if rt := p.data.get(); rt != nil {
-		rt.setHeader(buildEpochHeaderTo(p.bindingToken, p.localEpochValue(), peerEpoch))
-	}
-	logger.Infof("vp8channel: peer latched epoch=0x%08x", peerEpoch)
 }
 
 // maybePeerRestart reads a frame from a non-latched epoch as a possible server

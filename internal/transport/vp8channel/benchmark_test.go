@@ -27,9 +27,12 @@ func BenchmarkBatchSampleFrom12KiB(b *testing.B) {
 		for _, frame := range frames[1:] {
 			src <- frame
 		}
-		sample := tr.batchSampleFrom(src, frames[0], scratch[:0])
+		sample, pending := tr.batchSampleFrom(src, frames[0], scratch[:0])
 		if len(sample) == 0 {
 			b.Fatal("batchSampleFrom() returned an empty sample")
+		}
+		if pending != nil {
+			b.Fatal("batchSampleFrom() unexpectedly left a pending packet")
 		}
 		scratch = sample[:0]
 	}

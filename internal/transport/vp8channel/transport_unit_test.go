@@ -392,10 +392,14 @@ func TestHandleIncomingFrameEpochFilteringAndReconnect(t *testing.T) {
 		t.Fatal("filtered frames changed peer state")
 	}
 
-	// Keepalive (nil payload) latches peer immediately.
+	// Neither a keepalive nor a non-empty broadcast may bind the peer.
 	tr.handleIncomingFrame(mkFrame(tr.bindingToken, 1, nil))
-	if !tr.peerConfirmed.Load() {
-		t.Fatal("first frame should confirm peer")
+	tr.handleIncomingFrame(mkFrame(tr.bindingToken, 2, []byte("foreign-data")))
+	if tr.peerConfirmed.Load() || tr.peerEpoch.Load() != 0 {
+		t.Fatal("unauthenticated frames changed peer state")
+	}
+	if err := tr.ConfirmPeer("00000001"); err != nil {
+		t.Fatalf("ConfirmPeer() error = %v", err)
 	}
 	if tr.peerEpoch.Load() != 1 {
 		t.Fatalf("peer epoch not stored: got %d want 1", tr.peerEpoch.Load())
@@ -415,17 +419,36 @@ func TestHandleIncomingFrameEpochFilteringAndReconnect(t *testing.T) {
 		t.Fatalf("stream reconnect did not reset/callback: reconnected=%v kcp=%v", reconnected, tr.data.get())
 	}
 	reconnected = false
-	// After reconnect, peerConfirmed is reset so the next frame re-latches
-	// the peer epoch. This allows the server to restart with a new epoch.
+	// After reconnect, only the next authenticated welcome can bind a peer.
 	if tr.peerConfirmed.Load() {
 		t.Fatal("reconnect should reset peerConfirmed")
 	}
 	tr.handleIncomingFrame(mkFrame(tr.bindingToken, 2, []byte("new-peer-after-reconnect")))
-	if !tr.peerConfirmed.Load() {
-		t.Fatal("frame after reconnect should re-latch peer")
+	if tr.peerConfirmed.Load() || tr.peerEpoch.Load() != 0 {
+		t.Fatal("frame after reconnect bound an unauthenticated peer")
+	}
+	if err := tr.ConfirmPeer("00000002"); err != nil {
+		t.Fatalf("ConfirmPeer() after reconnect error = %v", err)
 	}
 	if tr.peerEpoch.Load() != 2 {
 		t.Fatalf("peer epoch not re-latched: got %d want 2", tr.peerEpoch.Load())
+	}
+}
+
+func TestClientsCannotBindEachOtherBeforeServerWelcome(t *testing.T) {
+	token := bindingToken("shared-room")
+	first := &streamTransport{bindingToken: token, localEpoch: 0x101}
+	second := &streamTransport{bindingToken: token, localEpoch: 0x202}
+
+	first.handleIncomingFrame(mkPeerFrame(token, second.localEpochValue(), nil))
+	first.handleIncomingFrame(mkPeerFrame(token, second.localEpochValue(), []byte("client-two")))
+	second.handleIncomingFrame(mkPeerFrame(token, first.localEpochValue(), nil))
+	second.handleIncomingFrame(mkPeerFrame(token, first.localEpochValue(), []byte("client-one")))
+
+	for name, client := range map[string]*streamTransport{"first": first, "second": second} {
+		if client.peerConfirmed.Load() || client.peerEpoch.Load() != 0 {
+			t.Fatalf("%s client bound to another unauthenticated client", name)
+		}
 	}
 }
 
@@ -462,8 +485,9 @@ func TestPeerRestartRebuildsProviderAfterGrace(t *testing.T) {
 	}
 	defer func() { _ = tr.Close() }()
 
-	// Latch the original server epoch.
-	tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x200, []byte("hello")))
+	if err := tr.ConfirmPeer("00000200"); err != nil {
+		t.Fatalf("ConfirmPeer() error = %v", err)
+	}
 	if tr.peerEpoch.Load() != 0x200 {
 		t.Fatalf("peer epoch = 0x%08x, want 0x200", tr.peerEpoch.Load())
 	}
@@ -510,7 +534,9 @@ func TestPeerRestartRebuildsOnlyOnce(t *testing.T) {
 	}
 	defer func() { _ = tr.Close() }()
 
-	tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x200, []byte("hello")))
+	if err := tr.ConfirmPeer("00000200"); err != nil {
+		t.Fatalf("ConfirmPeer() error = %v", err)
+	}
 	time.Sleep(15 * time.Millisecond)
 	tr.NotifyLinkHealth(true)
 	for range 5 {
@@ -544,7 +570,9 @@ func TestLivePeerKeepsLatchFresh(t *testing.T) {
 		t.Fatal("linkUnhealthy should default to false")
 	}
 
-	tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x200, nil))
+	if err := tr.ConfirmPeer("00000200"); err != nil {
+		t.Fatalf("ConfirmPeer() error = %v", err)
+	}
 	// Keep the latched peer alive with frequent keepalives while a foreign
 	// epoch repeatedly shows up. The latch stays fresh, so no rebuild fires.
 	for range 8 {
@@ -576,9 +604,11 @@ func TestPeerRestartSuppressedWhenControlHealthy(t *testing.T) {
 	}
 	defer func() { _ = tr.Close() }()
 
-	// Latch the real server epoch, then let it go quiet past the grace
+	// Bind the real server epoch, then let it go quiet past the grace
 	// window - a normal, brief silence, not a real restart.
-	tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x200, []byte("hello")))
+	if err := tr.ConfirmPeer("00000200"); err != nil {
+		t.Fatalf("ConfirmPeer() error = %v", err)
+	}
 	time.Sleep(15 * time.Millisecond)
 
 	// A second olcbox client joins the same Telemost room; the SFU broadcasts
@@ -609,7 +639,9 @@ func TestPeerRestartFiresOnceCorroborated(t *testing.T) {
 	}
 	defer func() { _ = tr.Close() }()
 
-	tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x200, []byte("hello")))
+	if err := tr.ConfirmPeer("00000200"); err != nil {
+		t.Fatalf("ConfirmPeer() error = %v", err)
+	}
 	time.Sleep(15 * time.Millisecond)
 	tr.NotifyLinkHealth(true)
 	tr.handleIncomingFrame(mkPeerFrame(tr.bindingToken, 0x300, []byte("restart")))

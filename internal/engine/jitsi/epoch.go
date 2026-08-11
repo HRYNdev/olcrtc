@@ -5,9 +5,11 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"strconv"
 	"sync/atomic"
 	"time"
 
+	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 )
 
@@ -116,16 +118,18 @@ func (s *Session) acceptEpochFrame(payload []byte) ([]byte, bool) {
 	}
 	senderEpoch, receiverEpoch := frame.senderEpoch, frame.receiverEpoch
 
-	// The first frame after connect or reconnect is a broadcast because the
-	// sender has not learned our epoch yet. Accept it while unlatched, then
-	// reject broadcasts from other epochs when targeted-peer mode is enabled.
-	if s.requireTargetedPeer && s.onPeerData == nil && receiverEpoch != s.localEpoch.Load() {
-		knownPeerEpoch := s.peerEpoch.Load()
-		if knownPeerEpoch != 0 && senderEpoch != knownPeerEpoch {
+	if s.requireTargetedPeer && s.onPeerData == nil {
+		if receiverEpoch != s.localEpoch.Load() {
 			logger.Debugf("jitsi: drop untargeted bridge frame senderEpoch=0x%08x localEpoch=0x%08x",
 				senderEpoch, s.localEpoch.Load())
 			return nil, false
 		}
+		if confirmed := s.peerEpoch.Load(); confirmed != 0 && senderEpoch != confirmed {
+			logger.Debugf("jitsi: drop frame from unauthenticated peer senderEpoch=0x%08x peerEpoch=0x%08x",
+				senderEpoch, confirmed)
+			return nil, false
+		}
+		return frame.body, true
 	}
 
 	// A peer epoch change identifies fresh peer state, not a reason to
@@ -144,6 +148,25 @@ func (s *Session) acceptEpochFrame(payload []byte) ([]byte, bool) {
 		}
 	}
 	return frame.body, true
+}
+
+// LocalPeerID returns the local bridge epoch carried in routing frames.
+func (s *Session) LocalPeerID() string {
+	return fmt.Sprintf("%08x", s.localEpoch.Load())
+}
+
+// ConfirmPeer binds targeted single-peer traffic to an authenticated epoch.
+func (s *Session) ConfirmPeer(peerID string) error {
+	value, err := strconv.ParseUint(peerID, 16, 32)
+	if err != nil {
+		return fmt.Errorf("parse peer id %q: %w", peerID, err)
+	}
+	epoch := uint32(value)
+	if epoch == 0 {
+		return fmt.Errorf("%w: epoch 0x%08x", engine.ErrInvalidPeerID, epoch)
+	}
+	s.peerEpoch.Store(epoch)
+	return nil
 }
 
 func (s *Session) inReconnectGrace() bool {
@@ -180,7 +203,7 @@ func (s *Session) resetPeerEpochs() {
 	s.peerEpochMu.Unlock()
 }
 
-// WaitForPeer blocks until a remote participant has announced an epoch.
+// WaitForPeer blocks until the encrypted handshake has confirmed a peer epoch.
 func (s *Session) WaitForPeer(ctx context.Context) error {
 	const pollInterval = 50 * time.Millisecond
 	for {

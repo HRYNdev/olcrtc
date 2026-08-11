@@ -13,6 +13,7 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/framing"
 	"github.com/openlibrecommunity/olcrtc/internal/handshake"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
+	"github.com/openlibrecommunity/olcrtc/internal/transport"
 	"github.com/openlibrecommunity/olcrtc/internal/tunnelcore"
 )
 
@@ -98,7 +99,7 @@ func (s *Server) handleAcceptError(ctx context.Context, session *smux.Session, e
 	}
 	hadSession := s.handshakeReady()
 	logger.Infof("server: AcceptStream(data) error - reinstalling session: %v", err)
-	s.reinstallSession(session)
+	s.reinstallSession(ctx, session)
 	if hadSession && s.ln != nil {
 		s.ln.Reconnect("liveness")
 	}
@@ -144,11 +145,11 @@ func (s *Server) acceptHandshake(
 			}
 			logger.Infof("server: AcceptStream(control) error - reinstalling session: %v", err)
 			tunnelcore.ResetPeer(s.ln)
-			s.reinstallSession(session)
+			s.reinstallSession(ctx, session)
 			return nil, handshakeResult{}, false
 		}
 		_ = stream.SetDeadline(time.Now().Add(handshake.DefaultTimeout))
-		hello, sessionID, err := handshake.Server(stream, s.authHook)
+		hello, sessionID, err := handshake.Server(stream, s.authHook, s.localPeerID())
 		_ = stream.SetDeadline(time.Time{})
 		if err != nil {
 			_ = stream.Close()
@@ -158,7 +159,7 @@ func (s *Server) acceptHandshake(
 			}
 			logger.Warnf("handshake failed: %v", err)
 			tunnelcore.ResetPeer(s.ln)
-			s.reinstallSession(session)
+			s.reinstallSession(ctx, session)
 			return nil, handshakeResult{}, false
 		}
 		s.health.RecordSession(sessionID)
@@ -168,6 +169,14 @@ func (s *Server) acceptHandshake(
 		return stream, handshakeResult{sessionID: sessionID, deviceID: hello.DeviceID}, true
 	}
 	return nil, handshakeResult{}, false
+}
+
+func (s *Server) localPeerID() string {
+	identity, ok := s.ln.(transport.PeerIdentity)
+	if !ok {
+		return ""
+	}
+	return identity.LocalPeerID()
 }
 
 func (s *Server) acceptSingletonHandshake(ctx context.Context, session *smux.Session) bool {

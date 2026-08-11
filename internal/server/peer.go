@@ -27,17 +27,39 @@ type peerStat struct {
 
 // peerSession holds one client's independently synchronized peer-routing state.
 type peerSession struct {
-	peerID       string
-	sessionReady chan struct{}
-	mu           sync.Mutex
-	conn         *muxconn.Conn
-	session      *smux.Session
-	controlConn  *muxconn.Conn
-	controlSess  *smux.Session
-	controlStrm  *smux.Stream
-	controlStop  context.CancelFunc
-	sessionID    string
-	deviceID     string
+	peerID        string
+	sessionReady  chan struct{}
+	readyOnce     sync.Once
+	handshakeOnce sync.Once
+	closeOnce     sync.Once
+	mu            sync.Mutex
+	conn          *muxconn.Conn
+	session       *smux.Session
+	controlConn   *muxconn.Conn
+	controlSess   *smux.Session
+	controlStrm   *smux.Stream
+	controlStop   context.CancelFunc
+	sessionID     string
+	deviceID      string
+	closed        bool
+}
+
+func newPeerSession(peerID string, needsControl bool) *peerSession {
+	peer := &peerSession{peerID: peerID}
+	if needsControl {
+		peer.sessionReady = make(chan struct{})
+	}
+	return peer
+}
+
+func (ps *peerSession) signalReady() {
+	if ps.sessionReady != nil {
+		ps.readyOnce.Do(func() { close(ps.sessionReady) })
+	}
+}
+
+func (ps *peerSession) startHandshake(start func()) {
+	ps.handshakeOnce.Do(start)
 }
 
 func (ps *peerSession) sid() string {
@@ -46,18 +68,26 @@ func (ps *peerSession) sid() string {
 	return ps.sessionID
 }
 
-func (ps *peerSession) setHandshake(result handshakeResult) {
+func (ps *peerSession) setHandshake(result handshakeResult) bool {
 	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	if ps.closed {
+		return false
+	}
 	ps.sessionID = result.sessionID
 	ps.deviceID = result.deviceID
-	ps.mu.Unlock()
+	return true
 }
 
-func (ps *peerSession) attachData(conn *muxconn.Conn, session *smux.Session) {
+func (ps *peerSession) attachData(conn *muxconn.Conn, session *smux.Session) bool {
 	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	if ps.closed || ps.conn != nil || ps.session != nil {
+		return false
+	}
 	ps.conn = conn
 	ps.session = session
-	ps.mu.Unlock()
+	return true
 }
 
 func (ps *peerSession) dataConn() *muxconn.Conn {
@@ -78,11 +108,26 @@ func (ps *peerSession) controlPlane() (*muxconn.Conn, *smux.Session) {
 	return ps.controlConn, ps.controlSess
 }
 
-func (ps *peerSession) setControl(stream *smux.Stream, stop context.CancelFunc) {
+func (ps *peerSession) attachControl(conn *muxconn.Conn, session *smux.Session) bool {
 	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	if ps.closed || ps.controlConn != nil || ps.controlSess != nil {
+		return false
+	}
+	ps.controlConn = conn
+	ps.controlSess = session
+	return true
+}
+
+func (ps *peerSession) setControl(stream *smux.Stream, stop context.CancelFunc) bool {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	if ps.closed {
+		return false
+	}
 	ps.controlStrm = stream
 	ps.controlStop = stop
-	ps.mu.Unlock()
+	return true
 }
 
 type teardown struct {
@@ -95,9 +140,10 @@ type teardown struct {
 	sessionID   string
 }
 
-func (ps *peerSession) snapshot() teardown {
+func (ps *peerSession) closeSnapshot() teardown {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
+	ps.closed = true
 	return teardown{
 		conn: ps.conn, session: ps.session, controlConn: ps.controlConn,
 		controlSess: ps.controlSess, controlStrm: ps.controlStrm,
@@ -120,15 +166,22 @@ func (s *Server) onPeerControlData(peerID string, data []byte) {
 }
 
 func (s *Server) getOrCreatePeerControlSession(peerID string) *peerSession {
+	if peerID == "" {
+		return nil
+	}
+	_, supportsControl := s.ln.(transport.PeerControlPlane)
+	if !supportsControl {
+		return nil
+	}
 	s.sessMu.Lock()
 	peer := s.peerSessions[peerID]
 	if peer != nil {
-		s.sessMu.Unlock()
-		return peer
-	}
-	if _, ok := s.ln.(transport.PeerControlPlane); !ok {
-		s.sessMu.Unlock()
-		return nil
+		if conn, _ := peer.controlPlane(); conn != nil {
+			s.sessMu.Unlock()
+			return peer
+		}
+	} else {
+		peer = newPeerSession(peerID, true)
 	}
 	conn := muxconn.NewPeerControlUnbound(s.ln, s.keys, peerID)
 	if conn == nil {
@@ -144,18 +197,22 @@ func (s *Server) getOrCreatePeerControlSession(peerID string) *peerSession {
 		s.sessMu.Unlock()
 		return nil
 	}
-	peer = &peerSession{
-		peerID: peerID, sessionReady: make(chan struct{}),
-		controlConn: conn, controlSess: session,
+	if !peer.attachControl(conn, session) {
+		_ = session.Close()
+		_ = conn.Close()
+		s.sessMu.Unlock()
+		return peer
 	}
 	s.peerSessions[peerID] = peer
 	s.sessMu.Unlock()
 	logger.Infof("server: peer control session created peerID=%s", peerID)
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		s.acceptPeerHandshake(s.baseCtx, peer)
-	}()
+	peer.startHandshake(func() {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.acceptPeerHandshake(s.streamContext(), peer)
+		}()
+	})
 	return peer
 }
 
@@ -187,10 +244,16 @@ func (s *Server) getPeerSession(peerID string) *peerSession {
 		return nil
 	}
 	if peer == nil {
-		peer = &peerSession{peerID: peerID}
+		_, needsControl := s.ln.(transport.PeerControlPlane)
+		peer = newPeerSession(peerID, needsControl)
 		s.peerSessions[peerID] = peer
 	}
-	peer.attachData(conn, session)
+	if !peer.attachData(conn, session) {
+		_ = session.Close()
+		_ = conn.Close()
+		s.sessMu.Unlock()
+		return peer
+	}
 	s.sessMu.Unlock()
 	s.wg.Add(1)
 	go func() {
@@ -211,12 +274,12 @@ func (s *Server) acceptPeerHandshake(ctx context.Context, peer *peerSession) {
 		if err != nil {
 			if ctx.Err() == nil {
 				logger.Infof("server: AcceptStream(peer control=%s) error: %v", peer.peerID, err)
-				s.removePeerSession(peer.peerID, "handshake failed")
+				s.removePeer(peer, "handshake failed")
 			}
 			return
 		}
 		_ = stream.SetDeadline(time.Now().Add(handshake.DefaultTimeout))
-		hello, sessionID, err := handshake.Server(stream, s.authHook)
+		hello, sessionID, err := handshake.Server(stream, s.authHook, s.localPeerID())
 		_ = stream.SetDeadline(time.Time{})
 		if err != nil {
 			_ = stream.Close()
@@ -225,13 +288,14 @@ func (s *Server) acceptPeerHandshake(ctx context.Context, peer *peerSession) {
 				continue
 			}
 			logger.Warnf("handshake peer=%s failed: %v", peer.peerID, err)
-			s.removePeerSession(peer.peerID, "handshake failed")
+			s.removePeer(peer, "handshake failed")
 			return
 		}
-		peer.setHandshake(handshakeResult{sessionID: sessionID, deviceID: hello.DeviceID})
-		if peer.sessionReady != nil {
-			close(peer.sessionReady)
+		if !peer.setHandshake(handshakeResult{sessionID: sessionID, deviceID: hello.DeviceID}) {
+			_ = stream.Close()
+			return
 		}
+		peer.signalReady()
 		s.health.RecordSession(sessionID)
 		s.onOpen(sessionID, hello.DeviceID, hello.Claims)
 		s.trackPeerOpen(sessionID, hello.DeviceID)
@@ -243,11 +307,15 @@ func (s *Server) acceptPeerHandshake(ctx context.Context, peer *peerSession) {
 
 func (s *Server) startPeerControlLoop(ctx context.Context, peer *peerSession, stream *smux.Stream) {
 	controlCtx, stop := context.WithCancel(ctx)
-	peer.setControl(stream, stop)
+	if !peer.setControl(stream, stop) {
+		stop()
+		_ = stream.Close()
+		return
+	}
 	runner := tunnelcore.ControlRunner{
 		Transport: s.ln, Config: s.liveness, Health: s.health,
 		LogFields: func() string { return "role=server peer=" + peer.peerID },
-		OnDeath:   func(error) { s.removePeerSession(peer.peerID, "liveness") },
+		OnDeath:   func(error) { s.removePeer(peer, "liveness") },
 	}
 	s.wg.Add(1)
 	go func() {
@@ -275,7 +343,7 @@ func (s *Server) servePeer(peer *peerSession) {
 		if err != nil {
 			if !s.stopping() {
 				logger.Infof("server: AcceptStream(peer=%s) error - closing peer session: %v", peer.peerID, err)
-				s.removePeerSession(peer.peerID, "closed")
+				s.removePeer(peer, "closed")
 			}
 			return
 		}
@@ -305,10 +373,13 @@ func (s *Server) establishPeerSession(peer *peerSession) bool {
 	ctx := s.streamContext()
 	stream, result, ok := s.acceptHandshake(ctx, session)
 	if !ok {
-		s.removePeerSession(peer.peerID, "handshake failed")
+		s.removePeer(peer, "handshake failed")
 		return false
 	}
-	peer.setHandshake(result)
+	if !peer.setHandshake(result) {
+		_ = stream.Close()
+		return false
+	}
 	s.startPeerControlLoop(ctx, peer, stream)
 	return true
 }
@@ -321,46 +392,54 @@ func (s *Server) waitPeerHandshake(peer *peerSession) bool {
 	case <-peer.sessionReady:
 		return peer.sid() != ""
 	case <-s.done:
-		s.removePeerSession(peer.peerID, "closed")
+		s.removePeer(peer, "closed")
 		return false
 	}
 }
 
-func (s *Server) removePeerSession(peerID, reason string) {
+func (s *Server) removePeer(peer *peerSession, reason string) {
+	if peer == nil {
+		return
+	}
 	s.sessMu.Lock()
-	peer := s.peerSessions[peerID]
-	delete(s.peerSessions, peerID)
+	current := s.peerSessions[peer.peerID] == peer
+	if current {
+		delete(s.peerSessions, peer.peerID)
+	}
 	s.sessMu.Unlock()
-	if peer != nil {
+	if current {
 		s.closePeerSession(peer, reason)
 	}
 }
 
 func (s *Server) closePeerSession(peer *peerSession, reason string) {
-	teardown := peer.snapshot()
-	tunnelcore.NotifyControlClose(teardown.controlStrm)
-	if teardown.controlStop != nil {
-		teardown.controlStop()
-	}
-	if teardown.controlStrm != nil {
-		_ = teardown.controlStrm.Close()
-	}
-	if teardown.controlSess != nil {
-		_ = teardown.controlSess.Close()
-	}
-	if teardown.controlConn != nil {
-		_ = teardown.controlConn.Close()
-	}
-	if teardown.session != nil {
-		_ = teardown.session.Close()
-	}
-	if teardown.conn != nil {
-		_ = teardown.conn.Close()
-	}
-	if teardown.sessionID != "" {
-		s.onClose(teardown.sessionID, reason)
-		s.trackPeerClose(teardown.sessionID, reason)
-	}
+	peer.closeOnce.Do(func() {
+		teardown := peer.closeSnapshot()
+		peer.signalReady()
+		tunnelcore.NotifyControlClose(teardown.controlStrm)
+		if teardown.controlStop != nil {
+			teardown.controlStop()
+		}
+		if teardown.controlStrm != nil {
+			_ = teardown.controlStrm.Close()
+		}
+		if teardown.controlSess != nil {
+			_ = teardown.controlSess.Close()
+		}
+		if teardown.controlConn != nil {
+			_ = teardown.controlConn.Close()
+		}
+		if teardown.session != nil {
+			_ = teardown.session.Close()
+		}
+		if teardown.conn != nil {
+			_ = teardown.conn.Close()
+		}
+		if teardown.sessionID != "" {
+			s.onClose(teardown.sessionID, reason)
+			s.trackPeerClose(teardown.sessionID, reason)
+		}
+	})
 }
 
 func (s *Server) trackPeerOpen(sessionID, deviceID string) {

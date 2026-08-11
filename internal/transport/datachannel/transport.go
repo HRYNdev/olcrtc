@@ -15,6 +15,9 @@ const defaultMaxPayloadSize = 12 * 1024
 // PeerResetter is satisfied so upper layers can clear the peer binding.
 var _ transport.PeerResetter = (*streamTransport)(nil)
 
+// PeerIdentity is satisfied when the underlying engine exposes routing epochs.
+var _ transport.PeerIdentity = (*streamTransport)(nil)
+
 type streamTransport struct {
 	common.Lifecycle
 
@@ -77,6 +80,27 @@ func (p *streamTransport) sendTo(peerID string, data []byte) error {
 func (p *streamTransport) SupportsPeerRouting() bool {
 	_, ok := p.session.(engine.PeerSession)
 	return ok
+}
+
+// LocalPeerID returns the underlying engine's local routing identity, if any.
+func (p *streamTransport) LocalPeerID() string {
+	identity, ok := p.session.(engine.PeerIdentity)
+	if !ok {
+		return ""
+	}
+	return identity.LocalPeerID()
+}
+
+// ConfirmPeer authenticates the underlying engine's remote routing identity.
+func (p *streamTransport) ConfirmPeer(peerID string) error {
+	identity, ok := p.session.(engine.PeerIdentity)
+	if !ok {
+		return fmt.Errorf("confirm engine peer: %w", transport.ErrPeerIdentityUnsupported)
+	}
+	if err := identity.ConfirmPeer(peerID); err != nil {
+		return fmt.Errorf("confirm engine peer: %w", err)
+	}
+	return nil
 }
 
 // Close terminates the transport.

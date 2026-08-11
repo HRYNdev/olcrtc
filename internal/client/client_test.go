@@ -546,7 +546,7 @@ func TestOpenControlStreamStopsOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() {
-		_, _, err := openControlStreamTimeout(ctx, clientSess, "dev", nil, time.Hour)
+		_, _, _, err := openControlStreamTimeout(ctx, clientSess, "dev", nil, time.Hour)
 		errCh <- err
 	}()
 

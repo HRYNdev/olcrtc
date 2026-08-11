@@ -128,7 +128,10 @@ func TestBatchSampleCarriesMultipleKCPPackets(t *testing.T) {
 	tr.data.out <- packet("three")
 	tr.data.out <- packet("four")
 
-	sample := tr.batchSampleFrom(tr.data.out, packet("one"), nil)
+	sample, pending := tr.batchSampleFrom(tr.data.out, packet("one"), nil)
+	if pending != nil {
+		t.Fatal("batchSampleFrom() returned an unexpected pending packet")
+	}
 	if !bytes.Equal(sample[:epochHdrLen], hdr[:]) {
 		t.Fatalf("sample epoch header = %x, want %x", sample[:epochHdrLen], hdr[:])
 	}
@@ -159,9 +162,15 @@ func TestBatchSampleReusesWriterBuffer(t *testing.T) {
 	tr := &streamTransport{batchSize: 2}
 
 	src <- &packetBuffer{data: frame}
-	first := tr.batchSampleFrom(src, &packetBuffer{data: frame}, nil)
+	first, pending := tr.batchSampleFrom(src, &packetBuffer{data: frame}, nil)
+	if pending != nil {
+		t.Fatal("first batch returned an unexpected pending packet")
+	}
 	src <- &packetBuffer{data: frame}
-	second := tr.batchSampleFrom(src, &packetBuffer{data: frame}, first[:0])
+	second, pending := tr.batchSampleFrom(src, &packetBuffer{data: frame}, first[:0])
+	if pending != nil {
+		t.Fatal("second batch returned an unexpected pending packet")
+	}
 	if &first[0] != &second[0] {
 		t.Fatal("batchSampleFrom() did not reuse writer-owned storage")
 	}
@@ -174,6 +183,54 @@ func TestBatchSampleReusesWriterBuffer(t *testing.T) {
 	})
 	if count != 2 {
 		t.Fatalf("batched payload count = %d, want 2", count)
+	}
+}
+
+func TestBatchSamplePreservesOverflowPacket(t *testing.T) {
+	hdr := testEpochHdr(1)
+	packet := func(size int, fill byte, pool *sync.Pool) *packetBuffer {
+		frame := make([]byte, epochHdrLen+size)
+		copy(frame, hdr[:])
+		for i := epochHdrLen; i < len(frame); i++ {
+			frame[i] = fill
+		}
+		return &packetBuffer{data: frame, pool: pool}
+	}
+
+	firstSize := defaultMaxPayloadSize - epochHdrLen - len(kcpBatchMagic) - 2 - 4
+	var pool sync.Pool
+	overflow := packet(8, 'b', &pool)
+	src := make(chan *packetBuffer, 1)
+	src <- overflow
+	tr := &streamTransport{batchSize: 2}
+
+	first, pending := tr.batchSampleFrom(src, packet(firstSize, 'a', nil), nil)
+	if pending != overflow {
+		t.Fatalf("pending packet = %p, want overflow packet %p", pending, overflow)
+	}
+	if len(first) > defaultMaxPayloadSize {
+		t.Fatalf("first batch size = %d, max %d", len(first), defaultMaxPayloadSize)
+	}
+	if got := pool.Get(); got != nil {
+		t.Fatal("overflow packet was released before the next batch")
+	}
+
+	second, next := tr.batchSampleFrom(src, pending, nil)
+	if next != nil {
+		t.Fatal("second batch returned an unexpected pending packet")
+	}
+	var payloads [][]byte
+	splitKCPPayload(second[epochHdrLen:], func(payload []byte) {
+		payloads = append(payloads, append([]byte(nil), payload...))
+	})
+	if len(payloads) != 1 || len(payloads[0]) != 8 || payloads[0][0] != 'b' {
+		t.Fatalf("second batch payloads = %q, want one overflow packet", payloads)
+	}
+	if got := pool.Get(); got != overflow {
+		t.Fatalf("released packet = %p, want %p", got, overflow)
+	}
+	if got := pool.Get(); got != nil {
+		t.Fatal("overflow packet was released more than once")
 	}
 }
 

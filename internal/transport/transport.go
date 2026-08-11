@@ -26,6 +26,12 @@ var ErrTransportNotFound = errors.New("transport not found")
 // ErrOptionsTypeMismatch is returned when a transport receives options of the wrong type.
 var ErrOptionsTypeMismatch = errors.New("transport options type mismatch")
 
+// ErrPeerIdentityUnsupported is returned when a transport cannot confirm routing peers.
+var ErrPeerIdentityUnsupported = errors.New("peer identity unsupported")
+
+// ErrInvalidPeerID is returned when an authenticated routing peer ID is malformed.
+var ErrInvalidPeerID = errors.New("invalid peer id")
+
 // Features describes the delivery semantics of a transport.
 //
 // It used to also advertise Reliable/Ordered/MessageOriented. All four
@@ -101,6 +107,13 @@ type PeerControlPlane interface {
 // is confirmed ready (first epoch frame received), or ctx is cancelled.
 type PeerReadyTransport interface {
 	WaitForPeer(ctx context.Context) error
+}
+
+// PeerIdentity is implemented by transports that authenticate a routing peer
+// through the encrypted handshake before accepting its data-plane frames.
+type PeerIdentity interface {
+	LocalPeerID() string
+	ConfirmPeer(peerID string) error
 }
 
 // LinkHealthObserver is implemented by transports whose peer-restart

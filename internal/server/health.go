@@ -23,7 +23,7 @@ func (s *Server) startControlLoop(ctx context.Context, session *smux.Session, st
 			s.health.RecordReconnect()
 			logger.Infof("server reconnect reason=liveness - reinstalling smux session")
 			tunnelcore.ResetPeer(s.ln)
-			s.reinstallSession(session)
+			s.reinstallSession(ctx, session)
 			if s.ln != nil {
 				s.ln.Reconnect("liveness")
 			}

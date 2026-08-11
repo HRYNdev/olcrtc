@@ -18,7 +18,17 @@ type writerState struct {
 	// pendingControl holds a control frame that failed WriteSample and must be
 	// retried on the next tick before consuming more frames.
 	pendingControl *packetBuffer
+	pendingData    *packetBuffer
 	batchBuf       []byte
+}
+
+func (w *writerState) releasePending() {
+	if w.pendingControl != nil {
+		w.pendingControl.release()
+	}
+	if w.pendingData != nil {
+		w.pendingData.release()
+	}
 }
 
 func (w *writerState) writeSample(data []byte) bool {
@@ -94,25 +104,33 @@ func (w *writerState) drainControl() bool {
 
 // drainData sends one batched data frame, or a keepalive when idle.
 func (w *writerState) drainData() {
-	select {
-	case frame := <-w.p.data.out:
-		w.idleTicks = 0
-		if !w.p.canBatch(frame.data) {
-			_ = w.writeSample(frame.data)
-			frame.release()
-			return
+	frame := w.pendingData
+	w.pendingData = nil
+	if frame == nil {
+		select {
+		case frame = <-w.p.data.out:
+		default:
 		}
-		sample := w.p.batchSampleFrom(w.p.data.out, frame, w.batchBuf[:0])
-		_ = w.writeSample(sample)
-		w.batchBuf = sample[:0]
-	default:
+	}
+	if frame == nil {
 		w.idleTicks++
 		if w.idleTicks >= w.keepaliveEvery {
 			w.idleTicks = 0
 			hdr := w.p.epochHeader()
 			_ = w.writeSample(hdr[:])
 		}
+		return
 	}
+	w.idleTicks = 0
+	if !w.p.canBatch(frame.data) {
+		_ = w.writeSample(frame.data)
+		frame.release()
+		return
+	}
+	sample, pending := w.p.batchSampleFrom(w.p.data.out, frame, w.batchBuf[:0])
+	w.pendingData = pending
+	_ = w.writeSample(sample)
+	w.batchBuf = sample[:0]
 }
 
 func (p *streamTransport) writerLoop() {
@@ -126,6 +144,7 @@ func (p *streamTransport) writerLoop() {
 		keepaliveEvery:      max(int(keepaliveIdlePeriod/p.frameInterval), 1),
 		forceKeepaliveEvery: max(int(forceKeepalivePeriod/p.frameInterval), 1),
 	}
+	defer w.releasePending()
 
 	for {
 		select {
@@ -166,6 +185,12 @@ func (p *streamTransport) peerWriterPump(out chan *packetBuffer) {
 	keyframeEvery := max(int(forceKeepalivePeriod/p.frameInterval), 1)
 	ticksSinceKeyframe := 0
 	var batchBuf []byte
+	var pending *packetBuffer
+	defer func() {
+		if pending != nil {
+			pending.release()
+		}
+	}()
 
 	for {
 		select {
@@ -178,21 +203,30 @@ func (p *streamTransport) peerWriterPump(out chan *packetBuffer) {
 				hdr := p.epochHeader()
 				_ = p.writeSampleLocked(hdr[:])
 			}
-			select {
-			case frame, ok := <-out:
-				if !ok {
-					return
+			frame := pending
+			pending = nil
+			if frame == nil {
+				select {
+				case next, ok := <-out:
+					if !ok {
+						return
+					}
+					frame = next
+				default:
 				}
-				if !p.canBatch(frame.data) {
-					_ = p.writeSampleLocked(frame.data)
-					frame.release()
-					continue
-				}
-				sample := p.batchSampleFrom(out, frame, batchBuf[:0])
-				_ = p.writeSampleLocked(sample)
-				batchBuf = sample[:0]
-			default:
 			}
+			if frame == nil {
+				continue
+			}
+			if !p.canBatch(frame.data) {
+				_ = p.writeSampleLocked(frame.data)
+				frame.release()
+				continue
+			}
+			var sample []byte
+			sample, pending = p.batchSampleFrom(out, frame, batchBuf[:0])
+			_ = p.writeSampleLocked(sample)
+			batchBuf = sample[:0]
 		}
 	}
 }
@@ -206,9 +240,13 @@ func (p *streamTransport) canBatch(frame []byte) bool {
 // drains the single-peer outbound queue; per-peer pumps drain their own queue
 // through the same batching so the server->client path is built identically to
 // the client.
-func (p *streamTransport) batchSampleFrom(src <-chan *packetBuffer, first *packetBuffer, dst []byte) []byte {
+func (p *streamTransport) batchSampleFrom(
+	src <-chan *packetBuffer,
+	first *packetBuffer,
+	dst []byte,
+) ([]byte, *packetBuffer) {
 	if !p.canBatch(first.data) {
-		return first.data
+		return first.data, nil
 	}
 
 	sample := p.prepareBatchBuffer(dst, src, first.data)
@@ -219,23 +257,25 @@ func (p *streamTransport) batchSampleFrom(src <-chan *packetBuffer, first *packe
 
 	for packets := 1; packets < p.batchSize; packets++ {
 		select {
-		case frame := <-src:
+		case frame, ok := <-src:
+			if !ok {
+				return sample, nil
+			}
 			if len(frame.data) <= epochHdrLen {
 				frame.release()
 				continue
 			}
 			payload := frame.data[epochHdrLen:]
 			if len(sample)+2+len(payload) > defaultMaxPayloadSize {
-				frame.release()
-				return sample
+				return sample, frame
 			}
 			sample = appendBatchPacket(sample, payload)
 			frame.release()
 		default:
-			return sample
+			return sample, nil
 		}
 	}
-	return sample
+	return sample, nil
 }
 
 func (p *streamTransport) prepareBatchBuffer(dst []byte, src <-chan *packetBuffer, first []byte) []byte {
