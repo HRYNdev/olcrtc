@@ -2,14 +2,83 @@ package goolom
 
 import (
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pion/interceptor"
 	"github.com/pion/webrtc/v4"
 
+	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 )
+
+func (s *Session) setupPeerConnections(config webrtc.Configuration) error {
+	api, err := newWebRTCAPI(s.resolver)
+	if err != nil {
+		return err
+	}
+
+	sub, err := api.NewPeerConnection(config)
+	if err != nil {
+		return fmt.Errorf("new sub pc: %w", err)
+	}
+	sub.OnConnectionStateChange(s.onSubscriberConnectionStateChange)
+	sub.OnTrack(s.onSubscriberTrack)
+	s.pcSub.Store(sub)
+
+	pub, err := api.NewPeerConnection(config)
+	if err != nil {
+		return fmt.Errorf("new pub pc: %w", err)
+	}
+	pub.OnConnectionStateChange(s.onPublisherConnectionStateChange)
+	s.pcPub.Store(pub)
+
+	return s.attachPendingVideoTracks(pub)
+}
+
+// newWebRTCAPI builds a pion API with IPv4-only ICE and default interceptors.
+func newWebRTCAPI(resolver *net.Resolver) (*webrtc.API, error) {
+	settingEngine := webrtc.SettingEngine{}
+	apply, err := engine.NewPionSettings(engine.PionSettingsOptions{
+		Resolver:         resolver,
+		LoggerFactory:    logger.NewPionLoggerFactory(),
+		IPv4Only:         true,
+		ProxyDialer:      true,
+		DisableMulticast: true,
+	})
+	if err != nil {
+		return nil, err //nolint:wrapcheck // shared builder already adds protected-net context
+	}
+	apply(&settingEngine)
+
+	mediaEngine := &webrtc.MediaEngine{}
+	if err := mediaEngine.RegisterDefaultCodecs(); err != nil {
+		return nil, fmt.Errorf("register default codecs: %w", err)
+	}
+	interceptorRegistry := &interceptor.Registry{}
+	if err := webrtc.RegisterDefaultInterceptors(mediaEngine, interceptorRegistry); err != nil {
+		return nil, fmt.Errorf("register default interceptors: %w", err)
+	}
+	return webrtc.NewAPI(
+		webrtc.WithSettingEngine(settingEngine),
+		webrtc.WithMediaEngine(mediaEngine),
+		webrtc.WithInterceptorRegistry(interceptorRegistry),
+	), nil
+}
+
+func (s *Session) onSubscriberTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+	if track.Kind() != webrtc.RTPCodecTypeVideo {
+		return
+	}
+	logger.Infof("goolom remote video track: codec=%s stream=%s track=%s",
+		track.Codec().MimeType, track.StreamID(), track.ID())
+	if cb := s.videoTrackHandler(); cb != nil {
+		cb(track, receiver)
+	}
+	go engine.DrainRTCP(receiver)
+}
 
 func (s *Session) setupDataChannelHandlers(
 	dc *webrtc.DataChannel, dcReady chan struct{}, sessionCloseCh chan struct{},
@@ -265,35 +334,17 @@ func (s *Session) publisherTrackDescriptions() []map[string]any {
 	return tracks
 }
 
-// isICEURL reports whether url is a usable ICE server URL. It keeps every
-// standard ICE scheme - STUN and TURN alike. Earlier code stripped turn:/
-// turns: relays and kept only STUN, which left clients behind symmetric or
-// CGNAT carriers (e.g. mobile Tele2) with no working candidate pair: the
-// server-reflexive path comes up for a few seconds, then ICE consent can no
-// longer be refreshed without a relay and the SFU tears the session down
-// (issue #95). Keeping the advertised TURN relays restores a stable path.
-func isICEURL(url string) bool {
-	return strings.HasPrefix(url, "stun:") ||
-		strings.HasPrefix(url, "stuns:") ||
-		strings.HasPrefix(url, "turn:") ||
-		strings.HasPrefix(url, "turns:")
-}
-
 func parseICEURLs(server map[string]any) []string {
 	var urls []string
 	switch rawURLs := server["urls"].(type) {
 	case []any:
 		for _, rawURL := range rawURLs {
-			if url, ok := rawURL.(string); ok && isICEURL(url) {
+			if url, ok := rawURL.(string); ok {
 				urls = append(urls, url)
 			}
 		}
 	case []string:
-		for _, url := range rawURLs {
-			if isICEURL(url) {
-				urls = append(urls, url)
-			}
-		}
+		urls = append(urls, rawURLs...)
 	}
 	return urls
 }
@@ -314,7 +365,11 @@ func parseICEServer(rawServer any) (webrtc.ICEServer, bool) {
 	if credential, ok := server["credential"].(string); ok {
 		ice.Credential = credential
 	}
-	return ice, true
+	normalised := engine.NormaliseICEServers([]webrtc.ICEServer{ice})
+	if len(normalised) == 0 {
+		return webrtc.ICEServer{}, false
+	}
+	return normalised[0], true
 }
 
 func (s *Session) applyServerHelloConfig(serverHello map[string]any) {

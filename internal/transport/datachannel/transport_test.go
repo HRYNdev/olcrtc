@@ -5,8 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/pion/webrtc/v4"
-
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
@@ -20,7 +18,6 @@ var (
 )
 
 type stubSession struct {
-	caps          engine.Capabilities
 	connectErr    error
 	sendErr       error
 	closeErr      error
@@ -28,27 +25,25 @@ type stubSession struct {
 	connectCalled bool
 	sent          []byte
 	watched       bool
-	reconnectCB   func(*webrtc.DataChannel)
+	reconnectCB   func()
 	shouldFn      func() bool
 	endedCB       func(string)
 }
 
-func (s *stubSession) Capabilities() engine.Capabilities { return s.caps }
-func (s *stubSession) Connect(context.Context) error     { s.connectCalled = true; return s.connectErr }
+func (s *stubSession) Connect(context.Context) error { s.connectCalled = true; return s.connectErr }
 func (s *stubSession) Send(data []byte) error {
 	s.sent = append([]byte(nil), data...)
 	return s.sendErr
 }
-func (s *stubSession) Close() error                                      { return s.closeErr }
-func (s *stubSession) SetReconnectCallback(cb func(*webrtc.DataChannel)) { s.reconnectCB = cb }
-func (s *stubSession) SetShouldReconnect(fn func() bool)                 { s.shouldFn = fn }
-func (s *stubSession) SetEndedCallback(cb func(string))                  { s.endedCB = cb }
-func (s *stubSession) WatchConnection(context.Context)                   { s.watched = true }
-func (s *stubSession) CanSend() bool                                     { return s.canSend }
-func (s *stubSession) SubscriberCanSend() bool                           { return s.canSend }
-func (s *stubSession) GetSendQueue() chan []byte                         { return nil }
-func (s *stubSession) GetBufferedAmount() uint64                         { return 0 }
-func (s *stubSession) Reconnect(string)                                  {}
+func (s *stubSession) Close() error                      { return s.closeErr }
+func (s *stubSession) SetReconnectCallback(cb func())    { s.reconnectCB = cb }
+func (s *stubSession) SetShouldReconnect(fn func() bool) { s.shouldFn = fn }
+func (s *stubSession) SetEndedCallback(cb func(string))  { s.endedCB = cb }
+func (s *stubSession) WatchConnection(context.Context)   { s.watched = true }
+func (s *stubSession) CanSend() bool                     { return s.canSend }
+func (s *stubSession) SubscriberCanSend() bool           { return s.canSend }
+func (s *stubSession) GetBufferedAmount() uint64         { return 0 }
+func (s *stubSession) Reconnect(string)                  {}
 
 func registerCarrier(name string, sess engine.Session, err error) {
 	enginebuiltin.Register(name, func(context.Context, enginebuiltin.Config) (engine.Session, error) {
@@ -60,7 +55,7 @@ func registerCarrier(name string, sess engine.Session, err error) {
 }
 
 func TestNewAndFeatures(t *testing.T) {
-	sess := &stubSession{caps: engine.Capabilities{ByteStream: true}, canSend: true}
+	sess := &stubSession{canSend: true}
 	registerCarrier("datachannel-test-new-and-features", sess, nil)
 
 	tr, err := New(context.Background(), transport.Config{Carrier: "datachannel-test-new-and-features"})
@@ -106,18 +101,10 @@ func TestNewErrorPaths(t *testing.T) {
 	if err == nil || err.Error() != "open engine session: boom" {
 		t.Fatalf("New() error = %v", err)
 	}
-
-	nonByteStream := &stubSession{caps: engine.Capabilities{}}
-	registerCarrier("datachannel-no-stream", nonByteStream, nil)
-	_, err = New(context.Background(), transport.Config{Carrier: "datachannel-no-stream"})
-	if !errors.Is(err, ErrByteStreamUnsupported) {
-		t.Fatalf("New() error = %v, want %v", err, ErrByteStreamUnsupported)
-	}
 }
 
 func TestStreamTransportWrapsErrors(t *testing.T) {
 	tr := &streamTransport{session: &stubSession{
-		caps:       engine.Capabilities{ByteStream: true},
 		connectErr: errDCConnectBoom,
 		sendErr:    errDCSendBoom,
 		closeErr:   errDCCloseBoom,

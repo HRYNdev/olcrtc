@@ -1,4 +1,4 @@
-package jitsi
+package engine
 
 import (
 	"errors"
@@ -26,7 +26,7 @@ const (
 	defaultPortTLS  = "5349"
 )
 
-// normaliseICEServers rewrites ICE server URLs into the canonical
+// NormaliseICEServers rewrites ICE server URLs into the canonical
 // scheme:host:port?transport=proto form pion accepts, preserving as many
 // entries as possible.
 //
@@ -47,7 +47,7 @@ const (
 // "no turn server credentials"/"invalid turn server credentials". TURN/TURNS
 // URLs on such servers are therefore dropped while stun/stuns URLs on the
 // same server (which need no credentials) are retained.
-func normaliseICEServers(in []webrtc.ICEServer) []webrtc.ICEServer {
+func NormaliseICEServers(in []webrtc.ICEServer) []webrtc.ICEServer {
 	out := make([]webrtc.ICEServer, 0, len(in))
 	for _, srv := range in {
 		turnOK := hasPionTURNCredentials(srv)

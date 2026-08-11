@@ -1366,7 +1366,7 @@ func (s *Server) waitPeerHandshake(ps *peerSession) bool {
 // bringUpLink before anything can observe the Server, so no lock is taken here
 // - the same as every other s.ln reader.
 func (s *Server) resetLinkPeer() {
-	if resetter, ok := s.ln.(interface{ ResetPeer() }); ok {
+	if resetter, ok := s.ln.(transport.PeerResetter); ok {
 		resetter.ResetPeer()
 	}
 }

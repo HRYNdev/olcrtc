@@ -372,13 +372,9 @@ func (s *memoryStream) Close() error {
 	return nil
 }
 
-func (s *memoryStream) SetReconnectCallback(cb func(*webrtc.DataChannel)) {
+func (s *memoryStream) SetReconnectCallback(cb func()) {
 	s.mu.Lock()
-	if cb == nil {
-		s.reconnect = nil
-	} else {
-		s.reconnect = func() { cb(nil) }
-	}
+	s.reconnect = cb
 	s.mu.Unlock()
 }
 func (s *memoryStream) SetShouldReconnect(func() bool) {}
@@ -392,12 +388,8 @@ func (s *memoryStream) WatchConnection(ctx context.Context) {
 }
 func (s *memoryStream) CanSend() bool             { return s.isConnected() }
 func (s *memoryStream) SubscriberCanSend() bool   { return s.isConnected() }
-func (s *memoryStream) GetSendQueue() chan []byte { return nil }
 func (s *memoryStream) GetBufferedAmount() uint64 { return 0 }
 func (s *memoryStream) Reconnect(string)          {}
-func (s *memoryStream) Capabilities() engine.Capabilities {
-	return engine.Capabilities{ByteStream: true, VideoTrack: true}
-}
 
 func (s *memoryStream) AddVideoTrack(track webrtc.TrackLocal) error {
 	s.mu.Lock()

@@ -3,10 +3,7 @@ package datachannel
 
 import (
 	"context"
-	"errors"
 	"fmt"
-
-	"github.com/pion/webrtc/v4"
 
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
@@ -14,9 +11,6 @@ import (
 )
 
 const defaultMaxPayloadSize = 12 * 1024
-
-// ErrByteStreamUnsupported is returned when a carrier engine cannot expose a byte stream.
-var ErrByteStreamUnsupported = errors.New("engine does not support byte stream")
 
 // PeerResetter is satisfied so upper layers can clear the peer binding.
 var _ transport.PeerResetter = (*streamTransport)(nil)
@@ -33,11 +27,6 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 	sess, err := cfg.OpenEngine(ctx)
 	if err != nil {
 		return nil, err
-	}
-
-	if !sess.Capabilities().ByteStream {
-		_ = sess.Close()
-		return nil, ErrByteStreamUnsupported
 	}
 
 	tr := &streamTransport{Lifecycle: common.NewLifecycle(sess), session: sess}
@@ -100,18 +89,14 @@ func (p *streamTransport) Close() error {
 
 // ResetPeer clears peer binding on engines that expose it.
 func (p *streamTransport) ResetPeer() {
-	if resetter, ok := p.session.(interface{ ResetPeer() }); ok {
+	if resetter, ok := p.session.(engine.PeerResetter); ok {
 		resetter.ResetPeer()
 	}
 }
 
 // SetReconnectCallback registers reconnect handling.
 func (p *streamTransport) SetReconnectCallback(cb func()) {
-	p.session.SetReconnectCallback(func(*webrtc.DataChannel) {
-		if cb != nil {
-			cb()
-		}
-	})
+	p.session.SetReconnectCallback(cb)
 }
 
 // CanSend reports whether transport is ready for sending.

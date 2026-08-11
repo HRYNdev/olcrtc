@@ -664,7 +664,7 @@ func maxHandshakeAttempts(reason string) int {
 // bringUpLink before anything can observe the Client, so no lock is taken here
 // - the same as every other c.ln reader.
 func (c *Client) resetLinkPeer() {
-	if resetter, ok := c.ln.(interface{ ResetPeer() }); ok {
+	if resetter, ok := c.ln.(transport.PeerResetter); ok {
 		resetter.ResetPeer()
 	}
 }

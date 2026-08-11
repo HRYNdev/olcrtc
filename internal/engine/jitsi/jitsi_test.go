@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/zarazaex69/j"
 
@@ -87,11 +86,7 @@ func TestNewSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer func() { _ = sess.Close() }()
-	caps := sess.Capabilities()
-	if !caps.ByteStream || !caps.VideoTrack {
-		t.Fatalf("Capabilities = %+v, want ByteStream && VideoTrack", caps)
-	}
+	t.Cleanup(func() { _ = sess.Close() })
 }
 
 func TestByteStreamWebSocketNegotiatesPeerConnectionWithoutRTCPKeepalive(t *testing.T) {
@@ -456,10 +451,8 @@ func TestDeliverBridgeMessagePeerEpochChangeAcceptsFrameNoReconnect(t *testing.T
 	if got := js.peerEpoch.Load(); got != 0x2222 {
 		t.Fatalf("peerEpoch.Load() = 0x%X, want 0x2222 (latch must update)", got)
 	}
-	select {
-	case <-js.reconnectCh:
+	if js.Drain() {
 		t.Fatal("peer epoch change must NOT enqueue a self-reconnect (causes ping-pong loop)")
-	case <-time.After(100 * time.Millisecond):
 	}
 }
 
@@ -484,9 +477,7 @@ func TestBridgeCloseRequestsReconnect(t *testing.T) {
 	if js.deliverBridgeMessage(j.BridgeMessage{}, false) {
 		t.Fatal("deliverBridgeMessage returned true on closed bridge")
 	}
-	select {
-	case <-js.reconnectCh:
-	case <-time.After(time.Second):
+	if !js.Drain() {
 		t.Fatal("bridge close did not request reconnect")
 	}
 	if ended != "" {

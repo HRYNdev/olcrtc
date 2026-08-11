@@ -3,15 +3,11 @@ package goolom
 import (
 	"context"
 	"fmt"
-	"net"
-	"runtime"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/pion/ice/v4"
-	"github.com/pion/interceptor"
 	"github.com/pion/webrtc/v4"
 
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
@@ -88,102 +84,6 @@ func (s *Session) waitForMediaReady(ctx context.Context, timeout time.Duration) 
 		return fmt.Errorf("connect context cancelled: %w", ctx.Err())
 	}
 	return nil
-}
-
-func (s *Session) setupPeerConnections(config webrtc.Configuration) error {
-	api, err := newWebRTCAPI(s.resolver)
-	if err != nil {
-		return err
-	}
-
-	sub, err := api.NewPeerConnection(config)
-	if err != nil {
-		return fmt.Errorf("new sub pc: %w", err)
-	}
-	sub.OnConnectionStateChange(s.onSubscriberConnectionStateChange)
-	sub.OnTrack(s.onSubscriberTrack)
-	s.pcSub.Store(sub)
-
-	pub, err := api.NewPeerConnection(config)
-	if err != nil {
-		return fmt.Errorf("new pub pc: %w", err)
-	}
-	pub.OnConnectionStateChange(s.onPublisherConnectionStateChange)
-	s.pcPub.Store(pub)
-
-	return s.attachPendingVideoTracks(pub)
-}
-
-// newWebRTCAPI builds a pion API with IPv4-only ICE and the default media
-// engine + interceptors. On Android 11+ SELinux denies netlink_route_socket
-// for untrusted apps (b/155595000), so ProtectedNet (getifaddrs-based) must
-// be installed even without a Protector.
-func newWebRTCAPI(resolver *net.Resolver) (*webrtc.API, error) {
-	settingEngine := webrtc.SettingEngine{}
-	if protect.Protector != nil || resolver != nil || runtime.GOOS == "android" {
-		pnet, err := protect.NewProtectedNet(resolver)
-		if err != nil {
-			return nil, fmt.Errorf("protected net: %w", err)
-		}
-		settingEngine.SetNet(pnet)
-		settingEngine.SetICEProxyDialer(protect.NewProxyDialer(resolver))
-		settingEngine.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
-	}
-	settingEngine.LoggerFactory = logger.NewPionLoggerFactory()
-
-	// Restrict ICE to UDP/IPv4. On hosts with many veth/docker interfaces the
-	// agent otherwise enumerates dozens of link-local IPv6 candidates that can
-	// never reach the SFU ("sendto: network is unreachable"). The flood of dead
-	// pairs starves ICE consent-freshness checks on the working pair, so the
-	// SFU stops receiving consent and tears down media after ~30-40 s. Limiting
-	// to IPv4 keeps the candidate set small and consent alive for the session.
-	settingEngine.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
-	settingEngine.SetIPFilter(func(ip net.IP) bool {
-		return ip.To4() != nil
-	})
-
-	// Register the default media engine + interceptors. Without the default
-	// interceptors pion never emits RTCP Receiver Reports (or NACK/TWCC) for
-	// the inbound tracks, so the SFU sees a silent subscriber and stops
-	// forwarding VP8 after ~40 s. Registering them keeps the subscriber path
-	// alive for the lifetime of the PC.
-	mediaEngine := &webrtc.MediaEngine{}
-	if err := mediaEngine.RegisterDefaultCodecs(); err != nil {
-		return nil, fmt.Errorf("register default codecs: %w", err)
-	}
-	interceptorRegistry := &interceptor.Registry{}
-	if err := webrtc.RegisterDefaultInterceptors(mediaEngine, interceptorRegistry); err != nil {
-		return nil, fmt.Errorf("register default interceptors: %w", err)
-	}
-	return webrtc.NewAPI(
-		webrtc.WithSettingEngine(settingEngine),
-		webrtc.WithMediaEngine(mediaEngine),
-		webrtc.WithInterceptorRegistry(interceptorRegistry),
-	), nil
-}
-
-// onSubscriberTrack handles a remote track arriving on the subscriber PC.
-func (s *Session) onSubscriberTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-	if track.Kind() != webrtc.RTPCodecTypeVideo {
-		return
-	}
-	logger.Infof("goolom remote video track: codec=%s stream=%s track=%s",
-		track.Codec().MimeType, track.StreamID(), track.ID())
-	if cb := s.videoTrackHandler(); cb != nil {
-		cb(track, receiver)
-	}
-	// Drain inbound RTCP on the receiver so the configured interceptors
-	// (Receiver Report / NACK / TWCC) keep running. Without an active reader
-	// the interceptor chain stalls and the SFU eventually stops forwarding
-	// the track.
-	go func() {
-		rtcpBuf := make([]byte, 1500)
-		for {
-			if _, _, err := receiver.Read(rtcpBuf); err != nil {
-				return
-			}
-		}
-	}()
 }
 
 func (s *Session) dialWebSocket() error {
@@ -386,58 +286,7 @@ func (s *Session) Close() error {
 
 // WatchConnection monitors the connection lifecycle and reconnects as needed.
 func (s *Session) WatchConnection(ctx context.Context) {
-	const maxReconnects = 10
-	const reconnectWindow = 5 * time.Minute
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-s.closeCh:
-			return
-		case <-s.reconnectCh:
-			if s.handleReconnectAttempt(ctx, maxReconnects, reconnectWindow) {
-				return
-			}
-		}
-	}
-}
-
-func (s *Session) handleReconnectAttempt(ctx context.Context, maxReconnects int, reconnectWindow time.Duration) bool {
-	if time.Since(s.lastReconnect) > reconnectWindow {
-		s.reconnectCount = 0
-	}
-	s.reconnectCount++
-	s.lastReconnect = time.Now()
-
-	if s.reconnectCount > maxReconnects {
-		s.signalEnded("reconnect limit reached")
-		return true
-	}
-
-	backoff := time.Duration(s.reconnectCount) * 2 * time.Second
-	if backoff > 30*time.Second {
-		backoff = 30 * time.Second
-	}
-	return s.retryReconnect(ctx, backoff)
-}
-
-func (s *Session) retryReconnect(ctx context.Context, backoff time.Duration) bool {
-	for {
-		if err := s.reconnect(ctx); err != nil {
-			logger.Debugf("reconnect failed: %v", err)
-			select {
-			case <-ctx.Done():
-				return true
-			case <-s.closeCh:
-				return true
-			case <-time.After(backoff):
-				continue
-			}
-		}
-		break
-	}
-	return false
+	s.Watch(ctx, s.closeCh)
 }
 
 func (s *Session) reconnect(ctx context.Context) error {
@@ -465,63 +314,22 @@ func (s *Session) reconnect(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reconnect refresh: %w", err)
 	}
-	s.applyRefreshedCredentials(creds)
+	engine.ApplyRefreshedCredentials(creds, &s.mediaServerURL, &s.peerID, map[string]*string{
+		credentialKeyRoomID:           &s.roomID,
+		credentialKeyCredentials:      &s.credentials,
+		credentialKeyRoomURL:          &s.roomURL,
+		credentialKeyTelemetryReferer: &s.telemetryReferer,
+	})
 
 	if err := s.Connect(ctx); err != nil {
 		return err
 	}
-	if s.onReconnect != nil {
-		s.onReconnect(s.dataChannel())
-	}
-	s.drainReconnectQueue()
+	s.NotifyReconnect()
 	return nil
 }
 
-func (s *Session) applyRefreshedCredentials(creds engine.Credentials) {
-	if creds.URL != "" {
-		s.mediaServerURL = creds.URL
-	}
-	if creds.Token != "" {
-		s.peerID = creds.Token
-	}
-	if creds.Extra == nil {
-		return
-	}
-	if v := creds.Extra[credentialKeyRoomID]; v != "" {
-		s.roomID = v
-	}
-	if v := creds.Extra[credentialKeyCredentials]; v != "" {
-		s.credentials = v
-	}
-	if v := creds.Extra[credentialKeyRoomURL]; v != "" {
-		s.roomURL = v
-	}
-	if v := creds.Extra[credentialKeyTelemetryReferer]; v != "" {
-		s.telemetryReferer = v
-	}
-}
-
-func (s *Session) drainReconnectQueue() {
-	for {
-		select {
-		case <-s.reconnectCh:
-		default:
-			return
-		}
-	}
-}
-
 func (s *Session) queueReconnect() {
-	if s.closed.Load() || s.reconnecting.Load() {
-		return
-	}
-	if s.shouldReconnect != nil && !s.shouldReconnect() {
-		return
-	}
-	select {
-	case s.reconnectCh <- struct{}{}:
-	default:
-	}
+	s.Request(s.closed.Load(), s.reconnecting.Load())
 }
 
 // Reconnect asks the goolom session to tear down its peer connections and
@@ -540,8 +348,8 @@ func (s *Session) Reconnect(reason string) {
 func (s *Session) stopSession() {
 	s.stopTelemetry()
 	s.sessionMu.Lock()
-	closeSignal(s.keepAliveCh)
-	closeSignal(s.sessionCloseCh)
+	engine.CloseSignal(s.keepAliveCh)
+	engine.CloseSignal(s.sessionCloseCh)
 	s.sessionMu.Unlock()
 }
 
@@ -564,7 +372,5 @@ func (s *Session) resetMediaState() {
 func (s *Session) signalEnded(reason string) {
 	s.closed.Store(true)
 	s.stopTelemetry()
-	if s.onEnded != nil {
-		s.onEnded(reason)
-	}
+	s.SignalEnded(reason)
 }

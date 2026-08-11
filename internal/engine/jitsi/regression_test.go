@@ -9,8 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pion/webrtc/v4"
 	"github.com/zarazaex69/j"
+
+	"github.com/openlibrecommunity/olcrtc/internal/engine"
 )
 
 // TestStaleRecvLoopDoesNotClearFreshBridge pins the reconnect flap: a recvLoop
@@ -72,7 +73,9 @@ func TestRequestReconnectKeepsBridgeReadyWhenNotClaimed(t *testing.T) {
 	js.SetShouldReconnect(func() bool { return true })
 
 	// Occupy the single reconnect slot.
-	js.reconnectCh <- struct{}{}
+	if got := js.Request(false, false); got != engine.ReconnectQueued {
+		t.Fatalf("reconnect request = %v, want queued", got)
+	}
 	js.markBridgeReady()
 
 	js.requestReconnect("second request")
@@ -149,7 +152,7 @@ func TestCallbackSettersAreRaceFree(t *testing.T) {
 			}
 			js.SetShouldReconnect(func() bool { return true })
 			js.SetEndedCallback(func(string) {})
-			js.SetReconnectCallback(func(*webrtc.DataChannel) {})
+			js.SetReconnectCallback(func() {})
 		}
 	})
 	wg.Go(func() {
@@ -223,51 +226,6 @@ func TestConcurrentCloseAndLaunch(t *testing.T) {
 	}
 	wg.Go(func() { _ = js.Close() })
 	wg.Wait()
-}
-
-// TestReconnectWindowExpiresFailureBudget covers the previously dead
-// reconnectWindow: a failure series older than the window must not count
-// against a session that has been healthy since. Without this the jitsi engine
-// (unlike goolom and livekit) never reset its window and eventually gave up on
-// a perfectly recoverable failure.
-func TestReconnectWindowExpiresFailureBudget(t *testing.T) {
-	js := newSilentSession(t)
-
-	js.reconnectMu.Lock()
-	js.reconnectCount = maxReconnects + 1
-	js.reconnectWindowStart = time.Now().Add(-2 * reconnectWindow)
-	js.reconnectMu.Unlock()
-
-	if got := js.takeFailureBudget(); got != 0 {
-		t.Fatalf("takeFailureBudget() = %d after the window expired, want 0", got)
-	}
-	js.reconnectMu.Lock()
-	defer js.reconnectMu.Unlock()
-	if !js.reconnectWindowStart.IsZero() {
-		t.Fatal("expired window was not cleared")
-	}
-}
-
-// TestReconnectWindowKeepsFreshFailureBudget is the counterpart: failures
-// inside the window keep counting, so the cap still protects against a
-// pathologically repeated failure.
-func TestReconnectWindowKeepsFreshFailureBudget(t *testing.T) {
-	js := newSilentSession(t)
-
-	start := time.Now().Add(-reconnectWindow / 2)
-	js.reconnectMu.Lock()
-	js.reconnectCount = maxReconnects + 1
-	js.reconnectWindowStart = start
-	js.reconnectMu.Unlock()
-
-	if got := js.takeFailureBudget(); got != maxReconnects+1 {
-		t.Fatalf("takeFailureBudget() = %d inside the window, want %d", got, maxReconnects+1)
-	}
-	js.reconnectMu.Lock()
-	defer js.reconnectMu.Unlock()
-	if !js.reconnectWindowStart.Equal(start) {
-		t.Fatal("live window was reset")
-	}
 }
 
 // TestWaitJSessionWakesOnInstall pins the send-loop signalling: waitJSession

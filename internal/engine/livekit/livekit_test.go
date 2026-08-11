@@ -165,7 +165,7 @@ func TestReconnectRefreshesCredentialsAndReplacesRoom(t *testing.T) {
 	s.connectRoom = connector.connect
 
 	reconnected := make(chan struct{}, 1)
-	s.SetReconnectCallback(func(*webrtc.DataChannel) {
+	s.SetReconnectCallback(func() {
 		reconnected <- struct{}{}
 	})
 
@@ -271,7 +271,7 @@ func TestDisconnectedEndsWhenReconnectDisallowed(t *testing.T) {
 
 func TestCanSendRequiresConnectedRoomAndQueueHeadroom(t *testing.T) {
 	s := &Session{
-		sendQueue: make(chan []byte, defaultSendQueueSize),
+		sendQueue: make(chan []byte, engine.DefaultSendQueueSize),
 		done:      make(chan struct{}),
 		closeCh:   make(chan struct{}),
 	}
@@ -291,7 +291,7 @@ func TestCanSendRequiresConnectedRoomAndQueueHeadroom(t *testing.T) {
 		t.Fatal("CanSend() = false for connected room")
 	}
 
-	for range defaultSendQueueCapHard {
+	for range engine.DefaultSendQueueCapHard {
 		s.sendQueue <- []byte("x")
 	}
 	if s.CanSend() {
@@ -310,19 +310,30 @@ func TestReconnectFailureRetriesUntilContextDone(t *testing.T) {
 			cancel()
 			return nil, errFakeConnect
 		},
-		reconnectCh: make(chan struct{}, 1),
-		closeCh:     make(chan struct{}),
-		sendQueue:   make(chan []byte, defaultSendQueueSize),
-		done:        make(chan struct{}),
+		closeCh:   make(chan struct{}),
+		sendQueue: make(chan []byte, engine.DefaultSendQueueSize),
+		done:      make(chan struct{}),
 	}
-	if terminal := s.handleReconnectAttempt(ctx); !terminal {
-		t.Fatal("handleReconnectAttempt() = false after context cancellation")
+	s.Configure(engine.ReconnectorConfig{
+		MaxAttempts: maxReconnects,
+		Reconnect:   s.reconnect,
+	})
+	finished := make(chan struct{})
+	go func() {
+		s.WatchConnection(ctx)
+		close(finished)
+	}()
+	s.queueReconnect()
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("WatchConnection did not stop after context cancellation")
 	}
 }
 
 func TestWaitForConnectedRoomIsBounded(t *testing.T) {
 	s := &Session{
-		sendQueue: make(chan []byte, defaultSendQueueSize),
+		sendQueue: make(chan []byte, engine.DefaultSendQueueSize),
 		done:      make(chan struct{}),
 		closeCh:   make(chan struct{}),
 		roomReady: 30 * time.Millisecond,
@@ -342,7 +353,7 @@ func TestWaitForConnectedRoomIsBounded(t *testing.T) {
 
 func TestWaitForConnectedRoomStopsOnShutdown(t *testing.T) {
 	s := &Session{
-		sendQueue: make(chan []byte, defaultSendQueueSize),
+		sendQueue: make(chan []byte, engine.DefaultSendQueueSize),
 		done:      make(chan struct{}),
 		closeCh:   make(chan struct{}),
 	}
@@ -362,7 +373,7 @@ func TestWaitForConnectedRoomStopsOnShutdown(t *testing.T) {
 
 func TestGetBufferedAmountTracksQueue(t *testing.T) {
 	s := &Session{
-		sendQueue: make(chan []byte, defaultSendQueueSize),
+		sendQueue: make(chan []byte, engine.DefaultSendQueueSize),
 		done:      make(chan struct{}),
 		closeCh:   make(chan struct{}),
 	}
@@ -378,10 +389,10 @@ func TestGetBufferedAmountTracksQueue(t *testing.T) {
 }
 
 func TestCloseSignalIsNilSafe(t *testing.T) {
-	closeSignal(nil)
+	engine.CloseSignal(nil)
 	ch := make(chan struct{})
-	closeSignal(ch)
-	closeSignal(ch)
+	engine.CloseSignal(ch)
+	engine.CloseSignal(ch)
 	select {
 	case <-ch:
 	default:

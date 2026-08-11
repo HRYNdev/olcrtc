@@ -107,69 +107,6 @@ func TestPeerEpochChangeDuringGraceAcceptsFrame(t *testing.T) {
 	}
 }
 
-// TestReconnectCounterIsConsecutiveFailures verifies the post-fix
-// counting semantics: the counter tracks consecutive failed reconnect
-// attempts, not the total number of reconnects. A long-running session
-// that successfully reconnects many times (peer churn, JVB restarts,
-// chaos cycles) must NOT eventually trip maxReconnects.
-//
-// We exercise the counter directly because the reconnect() function
-// hits the network. The handleReconnectAttempt loop's contract is that
-// success resets the counter and failure increments it; this test
-// asserts both halves of that contract independently of the network.
-func TestReconnectCounterIsConsecutiveFailures(t *testing.T) {
-	js := newSilentSession(t)
-
-	// Simulate many "successful" reconnects: every time we finish, the
-	// counter should be zero and the window cleared.
-	js.reconnectMu.Lock()
-	js.reconnectCount = 4
-	js.reconnectWindowStart = time.Now()
-	js.reconnectMu.Unlock()
-
-	// Mimic the success branch of handleReconnectAttempt:
-	js.reconnectMu.Lock()
-	js.reconnectCount = 0
-	js.reconnectWindowStart = time.Time{}
-	js.reconnectMu.Unlock()
-
-	js.reconnectMu.Lock()
-	count := js.reconnectCount
-	wst := js.reconnectWindowStart
-	js.reconnectMu.Unlock()
-	if count != 0 || !wst.IsZero() {
-		t.Fatalf("after success: count=%d window=%v, want 0/zero", count, wst)
-	}
-
-	// Now simulate consecutive failures: counter must climb each time.
-	for i := 1; i <= 3; i++ {
-		js.reconnectMu.Lock()
-		js.reconnectCount++
-		if js.reconnectWindowStart.IsZero() {
-			js.reconnectWindowStart = time.Now()
-		}
-		got := js.reconnectCount
-		js.reconnectMu.Unlock()
-		if got != i {
-			t.Fatalf("after failure %d: counter=%d, want %d", i, got, i)
-		}
-	}
-
-	// A subsequent success resets again — a single recovery erases
-	// the entire failure history. This is the property the chaos test
-	// relies on for an infinite reconnect budget under healthy churn.
-	js.reconnectMu.Lock()
-	js.reconnectCount = 0
-	js.reconnectWindowStart = time.Time{}
-	js.reconnectMu.Unlock()
-
-	js.reconnectMu.Lock()
-	if js.reconnectCount != 0 {
-		t.Fatalf("after success-after-failures: count=%d, want 0", js.reconnectCount)
-	}
-	js.reconnectMu.Unlock()
-}
-
 // TestTeardownPCCancelsPCContext verifies the rtcpKeepalive lifetime fix:
 // teardownPC must cancel pcCtx so that any goroutines bound to it (rtcp
 // keepalive specifically) exit before the supervisor swaps in a fresh PC.
@@ -294,15 +231,11 @@ func TestRequestReconnectIdempotent(t *testing.T) {
 	wg.Wait()
 
 	// At most one slot consumed.
-	select {
-	case <-js.reconnectCh:
-	case <-time.After(time.Second):
+	if !js.Drain() {
 		t.Fatal("expected exactly one reconnect to be enqueued")
 	}
-	select {
-	case <-js.reconnectCh:
+	if js.Drain() {
 		t.Fatal("more than one reconnect enqueued — duplicate-suppression broken")
-	default:
 	}
 }
 
@@ -357,20 +290,9 @@ func TestXMPPDomainTargetsVirtualhost(t *testing.T) {
 }
 
 func drainReconnectChNonBlocking(s *Session) {
-	for {
-		select {
-		case <-s.reconnectCh:
-		default:
-			return
-		}
-	}
+	s.Drain()
 }
 
 func reconnectQueued(s *Session) bool {
-	select {
-	case <-s.reconnectCh:
-		return true
-	default:
-		return false
-	}
+	return s.Drain()
 }

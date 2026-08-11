@@ -1,4 +1,4 @@
-package jitsi
+package engine
 
 import (
 	"reflect"
@@ -112,7 +112,7 @@ func TestNormaliseICEServers(t *testing.T) {
 		},
 	}
 
-	got := normaliseICEServers(in)
+	got := NormaliseICEServers(in)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("normaliseICEServers mismatch:\n got: %+v\nwant: %+v", got, want)
 	}
@@ -230,7 +230,7 @@ func TestNormaliseICEServersTURNCredentialGating(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := normaliseICEServers(tc.in)
+			got := NormaliseICEServers(tc.in)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("normaliseICEServers mismatch:\n got: %+v\nwant: %+v", got, tc.want)
 			}
@@ -239,7 +239,7 @@ func TestNormaliseICEServersTURNCredentialGating(t *testing.T) {
 }
 
 func TestNormaliseICEServersEmpty(t *testing.T) {
-	if got := normaliseICEServers(nil); len(got) != 0 {
+	if got := NormaliseICEServers(nil); len(got) != 0 {
 		t.Fatalf("normaliseICEServers(nil) = %+v, want empty", got)
 	}
 }
@@ -271,7 +271,7 @@ func TestNormalisedICEServersAcceptedByPion(t *testing.T) {
 	all := make([]webrtc.ICEServer, 0, len(raw)+len(bad))
 	all = append(all, raw...)
 	all = append(all, bad...)
-	normalised := normaliseICEServers(all)
+	normalised := NormaliseICEServers(all)
 	// raw survives intact, the first two bad servers vanish, and the third
 	// keeps only its STUN URL.
 	wantLen := len(raw) + 1

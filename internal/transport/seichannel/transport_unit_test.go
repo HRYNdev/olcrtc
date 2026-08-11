@@ -54,26 +54,13 @@ func (s *fakeVideoStream) SetTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.R
 // it can be returned by enginebuiltin.Open in tests. It wraps a fakeVideoStream
 // for the video-track methods the real engine session exposes.
 type fakeEngineSession struct {
-	stream  *fakeVideoStream
-	noVideo bool
+	stream *fakeVideoStream
 }
 
-func (s *fakeEngineSession) Capabilities() engine.Capabilities {
-	if s.noVideo {
-		return engine.Capabilities{}
-	}
-	return engine.Capabilities{VideoTrack: true}
-}
 func (s *fakeEngineSession) Connect(ctx context.Context) error { return s.stream.Connect(ctx) }
 func (s *fakeEngineSession) Send([]byte) error                 { return nil }
 func (s *fakeEngineSession) Close() error                      { return s.stream.Close() }
-func (s *fakeEngineSession) SetReconnectCallback(cb func(*webrtc.DataChannel)) {
-	s.stream.SetReconnectCallback(func() {
-		if cb != nil {
-			cb(nil)
-		}
-	})
-}
+func (s *fakeEngineSession) SetReconnectCallback(cb func())    { s.stream.SetReconnectCallback(cb) }
 func (s *fakeEngineSession) SetShouldReconnect(fn func() bool) { s.stream.SetShouldReconnect(fn) }
 func (s *fakeEngineSession) SetEndedCallback(cb func(string))  { s.stream.SetEndedCallback(cb) }
 func (s *fakeEngineSession) WatchConnection(ctx context.Context) {
@@ -81,12 +68,15 @@ func (s *fakeEngineSession) WatchConnection(ctx context.Context) {
 }
 func (s *fakeEngineSession) CanSend() bool                           { return s.stream.CanSend() }
 func (s *fakeEngineSession) SubscriberCanSend() bool                 { return s.stream.SubscriberCanSend() }
-func (s *fakeEngineSession) GetSendQueue() chan []byte               { return nil }
 func (s *fakeEngineSession) GetBufferedAmount() uint64               { return 0 }
 func (s *fakeEngineSession) Reconnect(string)                        {}
 func (s *fakeEngineSession) AddVideoTrack(t webrtc.TrackLocal) error { return s.stream.AddTrack(t) }
 func (s *fakeEngineSession) SetVideoTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver)) {
 	s.stream.SetTrackHandler(cb)
+}
+
+type noVideoEngineSession struct {
+	engine.Session
 }
 
 func TestNewConnectCallbacksAndFeatures(t *testing.T) {
@@ -159,7 +149,7 @@ func TestNewErrorPaths(t *testing.T) {
 	}
 
 	enginebuiltin.Register("seichannel-no-video", func(context.Context, enginebuiltin.Config) (engine.Session, error) {
-		return &fakeEngineSession{stream: &fakeVideoStream{}, noVideo: true}, nil
+		return &noVideoEngineSession{Session: &fakeEngineSession{stream: &fakeVideoStream{}}}, nil
 	})
 	_, err = New(context.Background(), transport.Config{Carrier: "seichannel-no-video"})
 	if !errors.Is(err, ErrVideoTrackUnsupported) {

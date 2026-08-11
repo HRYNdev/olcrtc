@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pion/webrtc/v4"
-
 	"github.com/openlibrecommunity/olcrtc/internal/auth"
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	"github.com/openlibrecommunity/olcrtc/pkg/olcrtc"
@@ -29,21 +27,17 @@ type stubSession struct {
 
 func newStubSession() *stubSession { return &stubSession{watchBlock: make(chan struct{})} }
 
-func (s *stubSession) Connect(_ context.Context) error                  { s.connected = true; return nil }
-func (s *stubSession) Send(_ []byte) error                              { return nil }
-func (s *stubSession) Close() error                                     { return nil }
-func (s *stubSession) SetReconnectCallback(_ func(*webrtc.DataChannel)) {}
-func (s *stubSession) SetShouldReconnect(_ func() bool)                 {}
-func (s *stubSession) SetEndedCallback(cb func(string))                 { s.onEnded = cb }
-func (s *stubSession) WatchConnection(_ context.Context)                { <-s.watchBlock }
-func (s *stubSession) CanSend() bool                                    { return s.connected }
-func (s *stubSession) GetSendQueue() chan []byte                        { return nil }
-func (s *stubSession) GetBufferedAmount() uint64                        { return 0 }
-func (s *stubSession) Reconnect(_ string)                               {}
-func (s *stubSession) Capabilities() engine.Capabilities {
-	return engine.Capabilities{ByteStream: true}
-}
-func (s *stubSession) SubscriberCanSend() bool { return s.connected }
+func (s *stubSession) Connect(_ context.Context) error   { s.connected = true; return nil }
+func (s *stubSession) Send(_ []byte) error               { return nil }
+func (s *stubSession) Close() error                      { return nil }
+func (s *stubSession) SetReconnectCallback(_ func())     {}
+func (s *stubSession) SetShouldReconnect(_ func() bool)  {}
+func (s *stubSession) SetEndedCallback(cb func(string))  { s.onEnded = cb }
+func (s *stubSession) WatchConnection(_ context.Context) { <-s.watchBlock }
+func (s *stubSession) CanSend() bool                     { return s.connected }
+func (s *stubSession) GetBufferedAmount() uint64         { return 0 }
+func (s *stubSession) Reconnect(_ string)                {}
+func (s *stubSession) SubscriberCanSend() bool           { return s.connected }
 
 // Compile-time check: stubSession must satisfy engine.Session.
 var _ engine.Session = (*stubSession)(nil)

@@ -137,7 +137,7 @@ func readPairedConfig(t *testing.T) *pairedConfig {
 		cfg.chaosInterval = d
 	}
 	if v := strings.TrimSpace(os.Getenv(envPairedVerbose)); v != "" {
-		cfg.verbose = v != "0" && strings.ToLower(v) != "false"
+		cfg.verbose = v != "0" && !strings.EqualFold(v, "false")
 	}
 	return cfg
 }
@@ -276,8 +276,6 @@ type pairedStats struct {
 //     never re-establishes the bridge frame path).
 //   - Either side hits ErrSessionClosed at the engine level
 //     (the closed flag is the canonical "we gave up" signal).
-//
-//nolint:gocognit // chaos cycle structure naturally branches on phase + side
 func TestJitsiPairedChaosStress(t *testing.T) {
 	cfg := readPairedConfig(t)
 	infinite := cfg.duration == 0

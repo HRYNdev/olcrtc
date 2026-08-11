@@ -324,7 +324,6 @@ func TestDataChannelAccessorRaceFree(t *testing.T) {
 func newTestSession() *Session {
 	return &Session{
 		onData:         func([]byte) {},
-		reconnectCh:    make(chan struct{}, 1),
 		closeCh:        make(chan struct{}),
 		keepAliveCh:    make(chan struct{}),
 		sessionCloseCh: make(chan struct{}),

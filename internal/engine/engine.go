@@ -19,17 +19,7 @@ import (
 var (
 	// ErrEngineNotFound is returned when a requested engine is not registered.
 	ErrEngineNotFound = errors.New("engine not found")
-	// ErrByteStreamUnsupported is returned when an engine cannot expose a byte stream.
-	ErrByteStreamUnsupported = errors.New("engine does not support byte stream")
-	// ErrVideoTrackUnsupported is returned when an engine cannot exchange video tracks.
-	ErrVideoTrackUnsupported = errors.New("engine does not support video tracks")
 )
-
-// Capabilities describes the transport primitives an engine can expose.
-type Capabilities struct {
-	ByteStream bool
-	VideoTrack bool
-}
 
 // Credentials are produced by an auth provider - duplicated here to avoid an
 // import cycle between engine and auth.
@@ -75,7 +65,7 @@ type Session interface {
 	Connect(ctx context.Context) error
 	Send(data []byte) error
 	Close() error
-	SetReconnectCallback(cb func(*webrtc.DataChannel))
+	SetReconnectCallback(cb func())
 	SetShouldReconnect(fn func() bool)
 	SetEndedCallback(cb func(string))
 	WatchConnection(ctx context.Context)
@@ -83,9 +73,7 @@ type Session interface {
 	// SubscriberCanSend reports whether the subscriber PC is connected.
 	// Unlike CanSend, it does not require the publisher PC to be ready.
 	SubscriberCanSend() bool
-	GetSendQueue() chan []byte
 	GetBufferedAmount() uint64
-	Capabilities() Capabilities
 	// Reconnect asks the engine to tear down and re-establish the underlying
 	// SFU connection. Used by upper layers when a liveness probe declares the
 	// carrier dead before the engine has noticed (e.g. silent packet loss on
@@ -105,6 +93,11 @@ type PeerSession interface {
 // epoch frame from a remote participant is received, or ctx is cancelled.
 type PeerReadySession interface {
 	WaitForPeer(ctx context.Context) error
+}
+
+// PeerResetter is implemented by engines that retain a remote peer binding.
+type PeerResetter interface {
+	ResetPeer()
 }
 
 // VideoTrackCapable is implemented by engines that can exchange video tracks.

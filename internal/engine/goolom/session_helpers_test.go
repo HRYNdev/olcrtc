@@ -3,11 +3,12 @@ package goolom
 import (
 	"testing"
 	"time"
+
+	"github.com/openlibrecommunity/olcrtc/internal/engine"
 )
 
 func TestSessionReconnectAndEndedHelpers(t *testing.T) {
 	s := &Session{
-		reconnectCh:    make(chan struct{}, 2),
 		closeCh:        make(chan struct{}),
 		keepAliveCh:    make(chan struct{}),
 		sessionCloseCh: make(chan struct{}),
@@ -27,27 +28,25 @@ func TestSessionReconnectAndEndedHelpers(t *testing.T) {
 	}
 
 	s.queueReconnect()
-	select {
-	case <-s.reconnectCh:
-	default:
+	if !s.Drain() {
 		t.Fatal("queueReconnect() did not enqueue")
 	}
 
 	s.SetShouldReconnect(func() bool { return false })
 	s.queueReconnect()
-	select {
-	case <-s.reconnectCh:
+	if s.Drain() {
 		t.Fatal("queueReconnect() enqueued despite policy=false")
-	default:
 	}
 
-	s.reconnectCh <- struct{}{}
-	s.reconnectCh <- struct{}{}
-	s.drainReconnectQueue()
-	select {
-	case <-s.reconnectCh:
-		t.Fatal("drainReconnectQueue() left queued item")
-	default:
+	s.SetShouldReconnect(nil)
+	if got := s.Request(false, false); got != engine.ReconnectQueued {
+		t.Fatalf("first reconnect request = %v, want queued", got)
+	}
+	if got := s.Request(false, false); got != engine.ReconnectCoalesced {
+		t.Fatalf("second reconnect request = %v, want coalesced", got)
+	}
+	if !s.Drain() || s.Drain() {
+		t.Fatal("Drain() did not consume exactly one queued request")
 	}
 
 	s.telemetryActive.Store(true)

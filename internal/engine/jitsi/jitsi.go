@@ -26,14 +26,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/pion/ice/v4"
 	pioninterceptor "github.com/pion/interceptor"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
@@ -45,7 +43,6 @@ import (
 )
 
 const (
-	defaultSendQueueSize = 5000
 	// bridgeMaxMessageSize is the practical upper bound on a single colibri-ws
 	// payload. JVB enforces a max-message-size around 16 KiB; payloads above
 	// that cause the bridge to drop the websocket. The default datachannel
@@ -55,10 +52,6 @@ const (
 	defaultNick          = "olcrtc"
 	credentialKeyRoom    = "room"
 	maxReconnects        = 5
-	// reconnectWindow bounds the consecutive-failure budget: once the first
-	// failure of a series is older than this, the budget starts from zero
-	// again. Matches the goolom/livekit engines.
-	reconnectWindow = 5 * time.Minute
 	// jSessionWaitTimeout bounds how long sendLoop waits for a reconnect to
 	// install a fresh XMPP session. Waiting for the whole reconnect would
 	// stall the queue drain and overflow the 5000-entry send queue; frames
@@ -124,6 +117,9 @@ var (
 
 // Session is the Jitsi engine handle.
 type Session struct {
+	engine.Reconnector
+	engine.VideoTrackState
+
 	host       string
 	room       string
 	name       string
@@ -133,14 +129,7 @@ type Session struct {
 	onData              func([]byte)
 	onPeerData          func(peerID string, data []byte)
 	requireTargetedPeer bool
-	// Callbacks are set by the carrier at any time and read from the
-	// supervisor, keepalive and recv goroutines, so they are stored
-	// atomically instead of as plain fields.
-	onReconnect     atomic.Pointer[func(*webrtc.DataChannel)]
-	shouldReconnect atomic.Pointer[func() bool]
-	onEnded         atomic.Pointer[func(string)]
-
-	jSess atomic.Pointer[j.Session]
+	jSess               atomic.Pointer[j.Session]
 	// jSessReady is closed once a live XMPP session is installed and is
 	// replaced by a fresh open channel whenever the session is torn down.
 	// It lets sendLoop block on an event instead of polling.
@@ -172,10 +161,6 @@ type Session struct {
 	goMu     sync.Mutex
 	goClosed bool
 
-	reconnectCh          chan struct{}
-	reconnectMu          sync.Mutex // guards reconnectWindowStart, reconnectCount, lastReconnectAt
-	reconnectWindowStart time.Time
-	reconnectCount       int
 	// lastReconnectAt records when the last successful self-reconnect completed.
 	// During the grace period after a reconnect, peer-epoch changes are tolerated
 	// without triggering yet another reconnect (the peer is also recovering and
@@ -196,10 +181,6 @@ type Session struct {
 	cancel       context.CancelFunc
 	runCtx       context.Context //nolint:containedctx // engine owns the supervisor lifetime
 	wg           sync.WaitGroup
-
-	videoTrackMu sync.RWMutex
-	videoTracks  []webrtc.TrackLocal
-	onVideoTrack func(*webrtc.TrackRemote, *webrtc.RTPReceiver)
 
 	// peerVideoSSRC latches the SSRC of the first remote video track we
 	// surfaced to the carrier. JVB forwards every active video source in
@@ -246,15 +227,33 @@ func New(_ context.Context, cfg engine.Config) (engine.Session, error) {
 		onData:              cfg.OnData,
 		onPeerData:          cfg.OnPeerData,
 		requireTargetedPeer: cfg.RequireTargetedPeer,
-		sendQueue:           make(chan []byte, defaultSendQueueSize),
-		peerSendQueue:       make(chan bridgeOutbound, defaultSendQueueSize),
+		sendQueue:           make(chan []byte, engine.DefaultSendQueueSize),
+		peerSendQueue:       make(chan bridgeOutbound, engine.DefaultSendQueueSize),
 		peerEpochs:          make(map[string]uint32),
-		reconnectCh:         make(chan struct{}, 1),
 		jSessReady:          make(chan struct{}),
 		done:                make(chan struct{}),
 		cancel:              cancel,
 		runCtx:              runCtx,
 	}
+	s.Configure(engine.ReconnectorConfig{
+		MaxAttempts:   maxReconnects,
+		CountFailures: true,
+		Reconnect: func(ctx context.Context) error {
+			err := s.reconnect(ctx)
+			if errors.Is(err, errNoPeer) {
+				logger.Infof("jitsi: waiting for peer in room (not a failure)")
+			}
+			return err
+		},
+		IsNonFailure: func(err error) bool {
+			return errors.Is(err, errNoPeer)
+		},
+		OnError: func(err error) {
+			logger.Warnf("jitsi reconnect failed: %v", err)
+		},
+		OnLimit:     s.signalEnded,
+		LimitReason: "jitsi reconnect limit reached",
+	})
 	s.localEpoch.Store(randomEpoch())
 	return s, nil
 }
@@ -293,7 +292,7 @@ func sanitiseNick(raw string) string {
 			break
 		}
 		if isNickRune(r) {
-			b.WriteRune(r)
+			_, _ = b.WriteRune(r)
 			prevDash = false
 			continue
 		}
@@ -302,13 +301,13 @@ func sanitiseNick(raw string) string {
 				if b.Len() >= maxNickLen {
 					break
 				}
-				b.WriteRune(lr)
+				_, _ = b.WriteRune(lr)
 			}
 			prevDash = false
 			continue
 		}
 		if !prevDash && b.Len() > 0 {
-			b.WriteRune('-')
+			_, _ = b.WriteRune('-')
 			prevDash = true
 		}
 	}
@@ -371,11 +370,6 @@ func (s *Session) stopLaunching() {
 	s.goMu.Lock()
 	s.goClosed = true
 	s.goMu.Unlock()
-}
-
-// Capabilities reports what this engine can do.
-func (s *Session) Capabilities() engine.Capabilities {
-	return engine.Capabilities{ByteStream: true, VideoTrack: true}
 }
 
 // Connect joins the Jitsi MUC (non-blocking) and waits for the Jingle
@@ -557,9 +551,7 @@ func (s *Session) shouldNegotiatePC(needBridge bool) bool {
 }
 
 func (s *Session) shouldRequestVideo() bool {
-	s.videoTrackMu.RLock()
-	defer s.videoTrackMu.RUnlock()
-	return len(s.videoTracks) > 0 || s.onVideoTrack != nil
+	return s.WantsVideo()
 }
 
 // drainTrack reads and discards RTP from a TrackRemote we chose to ignore so
@@ -574,12 +566,6 @@ func drainTrack(track *webrtc.TrackRemote) {
 	}
 }
 
-func (s *Session) videoTrackHandler() func(*webrtc.TrackRemote, *webrtc.RTPReceiver) {
-	s.videoTrackMu.RLock()
-	defer s.videoTrackMu.RUnlock()
-	return s.onVideoTrack
-}
-
 // newSettingEngine builds the pion SettingEngine for a conference PC. When a
 // socket protector is set or we are on Android, it routes Pion sockets through
 // ProtectedNet and disables mDNS. On Android 11+ SELinux denies
@@ -588,106 +574,35 @@ func (s *Session) videoTrackHandler() func(*webrtc.TrackRemote, *webrtc.RTPRecei
 // a Protector. It fails closed instead of falling back to the default path.
 func newSettingEngine(resolver *net.Resolver) (webrtc.SettingEngine, error) {
 	settings := webrtc.SettingEngine{}
-	settings.LoggerFactory = logger.NewPionLoggerFactory()
-
-	// Restrict ICE to UDP/IPv4, mirroring goolom's newWebRTCAPI. Without this,
-	// pion enumerates every local interface (VPN/WireGuard, docker, veth,
-	// link-local IPv6, ...) as a host candidate. A dead candidate (e.g. a
-	// WireGuard interface with no route back to the SFU) starves ICE
-	// consent-freshness checks on the working pair, so the SFU stops
-	// receiving consent and tears down the session every ~30-60s.
-	settings.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
-	settings.SetIPFilter(func(ip net.IP) bool {
-		return ip.To4() != nil
+	apply, err := engine.NewPionSettings(engine.PionSettingsOptions{
+		Resolver:         resolver,
+		LoggerFactory:    logger.NewPionLoggerFactory(),
+		IPv4Only:         true,
+		DisableMulticast: true,
 	})
-
-	if protect.Protector == nil && resolver == nil && runtime.GOOS != "android" {
-		return settings, nil
-	}
-	pnet, err := protect.NewProtectedNet(resolver)
 	if err != nil {
-		return settings, fmt.Errorf("protected net: %w", err)
+		return settings, err //nolint:wrapcheck // shared builder already adds protected-net context
 	}
-	settings.SetNet(pnet)
-	settings.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+	apply(&settings)
 	return settings, nil
 }
 
-// negotiatePC builds the pion PeerConnection, applies Jicofo's offer,
-// answers it and registers all the per-side wiring (DTLS state, ICE
-// callbacks, transceiver direction). It's branchy on purpose - Jingle
-// negotiation has many discrete steps that can fail and each step
-// belongs to the same logical operation, so splitting it into helpers
-// would obscure the wire order rather than clarify it.
+// negotiatePC applies Jicofo's offer and registers the per-side wiring.
 //
-//nolint:cyclop // sequential Jingle negotiation steps; refactoring would hide ordering
+//nolint:contextcheck // peer connection lifetime follows runCtx, not negotiation timeout
 func (s *Session) negotiatePC(
 	ctx context.Context, jSess *j.Session, sctpBridge bool,
 ) error {
-	settings, err := newSettingEngine(s.resolver)
+	pc, err := s.newConferencePeerConnection(jSess)
 	if err != nil {
 		return err
 	}
 
-	// pion auto-registers a default interceptor chain (sender reports,
-	// receiver reports, NACK, etc.) when none is supplied. Several of
-	// those probe the DTLS transport on a tick - until DTLS comes up
-	// (which can take seconds against Jitsi's STUN-only path, or never
-	// in pathological cases) they spam logs with
-	// "the DTLS transport has not started yet". JVB performs its own
-	// RTCP feedback aggregation, so the conference PC does not need
-	// any of those interceptors. An empty registry silences the noise.
-	registry := &pioninterceptor.Registry{}
-	api := webrtc.NewAPI(
-		webrtc.WithSettingEngine(settings),
-		webrtc.WithInterceptorRegistry(registry),
-	)
-
-	// Jicofo emits Plan B style SDP. Explicit Plan B semantics match what
-	// the j library reference setup uses; source-add renegotiation drives
-	// reception of other participants' SSRCs on the same m=video section.
-	pcConfig := jSess.IceConfig()
-	// Some deployments advertise TURN/STUN services over XEP-0215 disco
-	// without a port or transport attribute; the resulting ICE URLs (e.g.
-	// "stun:host:") fail pion's validation inside NewPeerConnection with
-	// "invalid port" before any candidate is gathered. Normalise the list
-	// (default ports, canonical host:port, sane transport queries) so those
-	// relays stay usable, and drop only truly unsalvageable entries.
-	pcConfig.ICEServers = normaliseICEServers(pcConfig.ICEServers)
-	pcConfig.SDPSemantics = webrtc.SDPSemanticsPlanB
-
-	pc, err := api.NewPeerConnection(pcConfig)
-	if err != nil {
-		return fmt.Errorf("new pc: %w", err)
-	}
-
-	// Jicofo's session-initiate always includes m=audio. Without a matching
-	// audio transceiver, pion's answer rejects the audio m-line and JVB may
-	// not complete ICE for the second peer in the room.
-	if _, err := pc.AddTransceiverFromKind(
-		webrtc.RTPCodecTypeAudio,
-		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly},
-	); err != nil {
+	hasLocalTracks, trackErr := s.addVideoTransceivers(pc)
+	if trackErr != nil {
 		_ = pc.Close()
-		return fmt.Errorf("add audio recvonly: %w", err)
+		return trackErr
 	}
-
-	s.videoTrackMu.RLock()
-	hasLocalTracks := len(s.videoTracks) > 0
-	for _, track := range s.videoTracks {
-		dir := webrtc.RTPTransceiverDirectionSendonly
-		if s.wantsVideoReceive() {
-			dir = webrtc.RTPTransceiverDirectionSendrecv
-		}
-		if _, addErr := pc.AddTransceiverFromTrack(track,
-			webrtc.RTPTransceiverInit{Direction: dir},
-		); addErr != nil {
-			s.videoTrackMu.RUnlock()
-			_ = pc.Close()
-			return fmt.Errorf("add track: %w", addErr)
-		}
-	}
-	s.videoTrackMu.RUnlock()
 
 	kaTrack, err := s.setupVideoMLine(pc, hasLocalTracks)
 	if err != nil {
@@ -706,7 +621,7 @@ func (s *Session) negotiatePC(
 			go drainTrack(track)
 			return
 		}
-		if cb := s.videoTrackHandler(); cb != nil {
+		if cb := s.VideoTrackHandler(); cb != nil {
 			cb(track, recv)
 		}
 	})
@@ -796,6 +711,53 @@ func (s *Session) negotiatePC(
 	}
 
 	return nil
+}
+
+func (s *Session) newConferencePeerConnection(jSess *j.Session) (*webrtc.PeerConnection, error) {
+	settings, err := newSettingEngine(s.resolver)
+	if err != nil {
+		return nil, err
+	}
+	// JVB performs its own RTCP feedback aggregation, so an empty registry
+	// avoids default interceptor probes before DTLS starts.
+	registry := &pioninterceptor.Registry{}
+	api := webrtc.NewAPI(
+		webrtc.WithSettingEngine(settings),
+		webrtc.WithInterceptorRegistry(registry),
+	)
+	pcConfig := jSess.IceConfig()
+	pcConfig.ICEServers = engine.NormaliseICEServers(pcConfig.ICEServers)
+	pcConfig.SDPSemantics = webrtc.SDPSemanticsPlanB
+	pc, err := api.NewPeerConnection(pcConfig)
+	if err != nil {
+		return nil, fmt.Errorf("new pc: %w", err)
+	}
+	if _, err := pc.AddTransceiverFromKind(
+		webrtc.RTPCodecTypeAudio,
+		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly},
+	); err != nil {
+		_ = pc.Close()
+		return nil, fmt.Errorf("add audio recvonly: %w", err)
+	}
+	return pc, nil
+}
+
+func (s *Session) addVideoTransceivers(pc *webrtc.PeerConnection) (bool, error) {
+	var addErr error
+	hasLocalTracks := s.RangeVideoTracks(func(track webrtc.TrackLocal, wantsRemote bool) {
+		if addErr != nil {
+			return
+		}
+		direction := webrtc.RTPTransceiverDirectionSendonly
+		if wantsRemote {
+			direction = webrtc.RTPTransceiverDirectionSendrecv
+		}
+		_, err := pc.AddTransceiverFromTrack(track, webrtc.RTPTransceiverInit{Direction: direction})
+		if err != nil {
+			addErr = fmt.Errorf("add track: %w", err)
+		}
+	})
+	return hasLocalTracks, addErr
 }
 
 // negotiator is the subset of *peer.Negotiator we need. Defined as an
@@ -890,9 +852,7 @@ func (s *Session) addVideoOrKeepaliveTrack(pc *webrtc.PeerConnection) (*webrtc.T
 // video (a handler is registered). When false and there are no local tracks,
 // the session is a pure byte-stream and needs the RTP keepalive track.
 func (s *Session) wantsVideoReceive() bool {
-	s.videoTrackMu.RLock()
-	defer s.videoTrackMu.RUnlock()
-	return s.onVideoTrack != nil
+	return s.VideoTrackHandler() != nil
 }
 
 // newKeepaliveTrack builds a fresh sendonly VP8 track for the RTP keepalive.
@@ -1007,7 +967,7 @@ func (s *Session) xmppKeepalive() {
 			// and rejects the ping with not-allowed, leaving keepalive
 			// effectively dead.
 			ping := fmt.Sprintf(
-				`<iq type="get" to="%s" id="%s" xmlns="jabber:client"><ping xmlns="urn:xmpp:ping"/></iq>`,
+				`<iq type="get" to=%q id=%q xmlns="jabber:client"><ping xmlns="urn:xmpp:ping"/></iq>`,
 				xmppDomain(conn.JID(), conn.Host()), id,
 			)
 			if _, err := conn.SendIQWait(ping, id, xmppKeepaliveTimeout); err != nil {
@@ -1091,8 +1051,8 @@ type xmlCandidate struct {
 	Priority   string `xml:"priority,attr"`
 	Protocol   string `xml:"protocol,attr"`
 	Type       string `xml:"type,attr"`
-	RelAddr    string `xml:"rel-addr,attr"`
-	RelPort    string `xml:"rel-port,attr"`
+	RelAddr    string `xml:"rel-addr,attr"` //nolint:tagliatelle // XMPP uses hyphenated attribute names
+	RelPort    string `xml:"rel-port,attr"` //nolint:tagliatelle // XMPP uses hyphenated attribute names
 }
 
 // xmlTransportInfo is the minimal structure needed to extract candidates
@@ -1744,63 +1704,22 @@ func (s *Session) ResetPeer() {
 	s.resetPeerEpochs()
 }
 
-// SetReconnectCallback registers a callback for reconnection events.
-func (s *Session) SetReconnectCallback(cb func(*webrtc.DataChannel)) {
-	if cb == nil {
-		s.onReconnect.Store(nil)
-		return
-	}
-	s.onReconnect.Store(&cb)
-}
-
-// SetShouldReconnect stores the reconnect predicate.
-func (s *Session) SetShouldReconnect(fn func() bool) {
-	if fn == nil {
-		s.shouldReconnect.Store(nil)
-		return
-	}
-	s.shouldReconnect.Store(&fn)
-}
-
-// SetEndedCallback registers a function to call when the session ends.
-func (s *Session) SetEndedCallback(cb func(string)) {
-	if cb == nil {
-		s.onEnded.Store(nil)
-		return
-	}
-	s.onEnded.Store(&cb)
-}
-
 // notifyReconnect invokes the reconnect callback if one is registered. The
 // jitsi engine has no data channel to hand over: the bridge is colibri-ws or
 // SCTP and the carrier only needs the "we are back" edge.
 func (s *Session) notifyReconnect() {
-	if cb := s.onReconnect.Load(); cb != nil {
-		(*cb)(nil)
-	}
+	s.NotifyReconnect()
 }
 
 // reconnectAllowed reports whether the carrier still wants reconnects.
 func (s *Session) reconnectAllowed() bool {
-	fn := s.shouldReconnect.Load()
-	return fn == nil || (*fn)()
+	return s.ShouldReconnect()
 }
 
 // WatchConnection monitors bridge lifecycle and reconnects when JVB closes
 // the endpoint's colibri-ws without ending the XMPP conference.
 func (s *Session) WatchConnection(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-s.done:
-			return
-		case <-s.reconnectCh:
-			if s.handleReconnectAttempt(ctx) {
-				return
-			}
-		}
-	}
+	s.Watch(ctx, s.done)
 }
 
 // Reconnect asks the jitsi session to tear down its bridge connection and
@@ -1821,15 +1740,14 @@ func (s *Session) requestReconnect(reason string) {
 	if s.closed.Load() || s.reconnecting.Load() {
 		return
 	}
-	if !s.reconnectAllowed() {
+	request := s.Request(false, false)
+	if request == engine.ReconnectRejected {
 		s.signalEnded(reason)
 		return
 	}
 	logger.Infof("jitsi reconnect requested: %s", reason)
-	select {
-	case s.reconnectCh <- struct{}{}:
+	if request == engine.ReconnectQueued {
 		s.bridgeReady.Store(false)
-	default:
 	}
 }
 
@@ -1850,85 +1768,6 @@ func (s *Session) requestReconnectGen(gen uint64, reason string) {
 func (s *Session) markBridgeReady() {
 	s.bridgeGen.Add(1)
 	s.bridgeReady.Store(true)
-}
-
-func (s *Session) handleReconnectAttempt(ctx context.Context) bool {
-	// Counter semantics: we track *consecutive failures*, not the total
-	// number of reconnect attempts. A reconnect that ultimately succeeds
-	// resets the counter to zero. Without this, a long-running session
-	// that legitimately reconnects (peer leaves and rejoins, JVB restarts,
-	// network blips) eventually crosses maxReconnects on a perfectly
-	// recoverable failure and the supervisor permanently shuts the engine
-	// down. The cap is meant as a safety net against pathologically
-	// repeated failure, not as a budget on legitimate reconnect events.
-	for {
-		failures := s.takeFailureBudget()
-		if failures > maxReconnects {
-			s.signalEnded("jitsi reconnect limit reached")
-			return true
-		}
-
-		backoff := time.Duration(failures) * 2 * time.Second
-		if backoff > 30*time.Second {
-			backoff = 30 * time.Second
-		}
-
-		err := s.reconnect(ctx)
-		if err == nil {
-			s.reconnectMu.Lock()
-			s.reconnectCount = 0
-			s.reconnectWindowStart = time.Time{}
-			s.reconnectMu.Unlock()
-			s.drainReconnectQueue()
-			return false
-		}
-
-		// errNoPeer means we successfully rejoined the MUC but no peer
-		// is present yet. waitForJingle was restarted — don't burn
-		// reconnect budget, just return and wait for the next signal.
-		if errors.Is(err, errNoPeer) {
-			logger.Infof("jitsi: waiting for peer in room (not a failure)")
-			s.reconnectMu.Lock()
-			s.reconnectCount = 0
-			s.reconnectWindowStart = time.Time{}
-			s.reconnectMu.Unlock()
-			s.drainReconnectQueue()
-			return false
-		}
-
-		logger.Warnf("jitsi reconnect failed: %v", err)
-		s.reconnectMu.Lock()
-		s.reconnectCount++
-		if s.reconnectWindowStart.IsZero() {
-			s.reconnectWindowStart = time.Now()
-		}
-		s.reconnectMu.Unlock()
-
-		select {
-		case <-ctx.Done():
-			return true
-		case <-s.done:
-			return true
-		case <-time.After(backoff):
-		}
-	}
-}
-
-// takeFailureBudget reports how many consecutive reconnect failures are
-// counted inside the current window, expiring the window first.
-//
-// The budget only means something for failures that cluster together: once the
-// first failure of a series is older than reconnectWindow, the session has
-// been healthy long enough that the history is meaningless and the budget
-// starts from zero again. Same semantics as the goolom and livekit engines.
-func (s *Session) takeFailureBudget() int {
-	s.reconnectMu.Lock()
-	defer s.reconnectMu.Unlock()
-	if !s.reconnectWindowStart.IsZero() && time.Since(s.reconnectWindowStart) > reconnectWindow {
-		s.reconnectCount = 0
-		s.reconnectWindowStart = time.Time{}
-	}
-	return s.reconnectCount
 }
 
 func (s *Session) reconnect(ctx context.Context) error {
@@ -1983,7 +1822,7 @@ func (s *Session) reconnect(ctx context.Context) error {
 	// Wait for Jicofo to send session-initiate, but with a bounded
 	// timeout: if the recovery sits here forever the supervisor itself
 	// wedges and any subsequent reconnect requests pile up unhandled
-	// (handleReconnectAttempt is the single consumer of reconnectCh).
+	// (Reconnector is the single consumer of reconnect requests).
 	// Empirically Jicofo emits session-initiate within ~1 s once
 	// min-participants is reached; 30 s is a generous upper bound that
 	// still surfaces a stuck recovery before the chaos cycle below
@@ -2153,16 +1992,6 @@ func (s *Session) reconnectFull(ctx context.Context) error {
 	return nil
 }
 
-func (s *Session) drainReconnectQueue() {
-	for {
-		select {
-		case <-s.reconnectCh:
-		default:
-			return
-		}
-	}
-}
-
 func (s *Session) drainSendQueue() {
 	for {
 		select {
@@ -2215,15 +2044,12 @@ func (s *Session) CanSend() bool {
 // SubscriberCanSend reports whether the subscriber path is ready to send.
 func (s *Session) SubscriberCanSend() bool { return s.CanSend() }
 
-// GetSendQueue exposes the outbound queue for upstream metrics.
-func (s *Session) GetSendQueue() chan []byte { return s.sendQueue }
-
 // GetBufferedAmount returns a coarse estimate of bytes pending on the wire.
 //
 // The j library's bridge connection only exposes message-count depth, so we
 // approximate bytes by multiplying queue depth by the bridge max-message-size.
 // This is enough for upper-layer pacing heuristics; engines that need
-// byte-accurate pressure should consult GetSendQueue directly.
+// byte-accurate pressure need a bridge-level metric the j library does not expose.
 func (s *Session) GetBufferedAmount() uint64 {
 	jSess := s.jSess.Load()
 	if jSess == nil {
@@ -2244,9 +2070,7 @@ func (s *Session) GetBufferedAmount() uint64 {
 // source-add flow is not yet implemented in this engine, so late tracks
 // will only be visible on the next reconnect.
 func (s *Session) AddVideoTrack(track webrtc.TrackLocal) error {
-	s.videoTrackMu.Lock()
-	s.videoTracks = append(s.videoTracks, track)
-	s.videoTrackMu.Unlock()
+	s.StoreVideoTrack(track)
 
 	s.pcMu.Lock()
 	pc := s.pc
@@ -2260,19 +2084,9 @@ func (s *Session) AddVideoTrack(track webrtc.TrackLocal) error {
 	return nil
 }
 
-// SetVideoTrackHandler registers a callback invoked on every remote video
-// track received from the conference.
-func (s *Session) SetVideoTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver)) {
-	s.videoTrackMu.Lock()
-	defer s.videoTrackMu.Unlock()
-	s.onVideoTrack = cb
-}
-
 func (s *Session) signalEnded(reason string) {
 	s.bridgeReady.Store(false)
-	if cb := s.onEnded.Load(); cb != nil {
-		(*cb)(reason)
-	}
+	s.SignalEnded(reason)
 }
 
 func (s *Session) handlePeerConnectionState(state webrtc.PeerConnectionState) {

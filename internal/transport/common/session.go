@@ -50,7 +50,7 @@ type EngineVideoSession struct {
 // ErrVideoTrackUnsupported when the engine cannot expose video tracks.
 func NewEngineVideoSession(sess engine.Session) (*EngineVideoSession, error) {
 	vt, ok := sess.(engine.VideoTrackCapable)
-	if !ok || !sess.Capabilities().VideoTrack {
+	if !ok {
 		_ = sess.Close()
 		return nil, ErrVideoTrackUnsupported
 	}
@@ -75,11 +75,7 @@ func (v *EngineVideoSession) Close() error {
 
 // SetReconnectCallback registers cb for carrier reconnects.
 func (v *EngineVideoSession) SetReconnectCallback(cb func()) {
-	v.session.SetReconnectCallback(func(*webrtc.DataChannel) {
-		if cb != nil {
-			cb()
-		}
-	})
+	v.session.SetReconnectCallback(cb)
 }
 
 // SetShouldReconnect configures the reconnect policy.

@@ -22,6 +22,7 @@ import (
 	"github.com/pion/webrtc/v4"
 
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
+	"github.com/openlibrecommunity/olcrtc/internal/logger"
 )
 
 const (
@@ -29,9 +30,7 @@ const (
 	defaultSendDelayLow         = 2 * time.Millisecond
 	defaultSendDelayMax         = 12 * time.Millisecond
 	defaultTelemetryInterval    = 20 * time.Second
-	defaultSendQueueSize        = 5000
 	defaultBufferHighWaterMark  = 512 * 1024
-	defaultSendQueueCapHard     = 4000
 
 	wsReadTimeout      = 60 * time.Second
 	wsHandshakeTimeout = 15 * time.Second
@@ -87,6 +86,9 @@ type TrafficShape struct {
 
 // Session is the Goolom engine handle.
 type Session struct {
+	engine.Reconnector
+	engine.VideoTrackState
+
 	name             string
 	mediaServerURL   string
 	peerID           string
@@ -110,19 +112,13 @@ type Session struct {
 	pcPub atomic.Pointer[webrtc.PeerConnection]
 	dc    atomic.Pointer[webrtc.DataChannel]
 
-	onData          func([]byte)
-	onReconnect     func(*webrtc.DataChannel)
-	shouldReconnect func() bool
-	onEnded         func(string)
+	onData func([]byte)
 
-	reconnectCh    chan struct{}
 	closeCh        chan struct{}
 	closeOnce      sync.Once
 	keepAliveCh    chan struct{}
 	telemetryCh    chan struct{}
 	sessionCloseCh chan struct{}
-	lastReconnect  time.Time
-	reconnectCount int
 	sessionMu      sync.Mutex
 
 	sendQueue       chan []byte
@@ -136,9 +132,6 @@ type Session struct {
 
 	trafficShape TrafficShape
 
-	videoTrackMu    sync.RWMutex
-	videoTracks     []webrtc.TrackLocal
-	onVideoTrack    func(*webrtc.TrackRemote, *webrtc.RTPReceiver)
 	subscriberReady atomic.Bool
 	publisherReady  atomic.Bool
 
@@ -186,7 +179,7 @@ func (s *Session) dataChannel() *webrtc.DataChannel { return s.dc.Load() }
 // so a callback from a superseded PC cannot close an already-closed channel.
 func (s *Session) signalSubscriberConn() {
 	s.mediaMu.Lock()
-	closeSignal(s.subscriberConn)
+	engine.CloseSignal(s.subscriberConn)
 	s.mediaMu.Unlock()
 }
 
@@ -228,7 +221,7 @@ func New(_ context.Context, cfg engine.Config) (engine.Session, error) {
 		telemetryReferer = roomURL
 	}
 
-	return &Session{
+	s := &Session{
 		name:             cfg.Name,
 		mediaServerURL:   cfg.URL,
 		peerID:           peerID,
@@ -239,12 +232,11 @@ func New(_ context.Context, cfg engine.Config) (engine.Session, error) {
 		refresh:          cfg.Refresh,
 		resolver:         cfg.Resolver,
 		onData:           cfg.OnData,
-		reconnectCh:      make(chan struct{}, 1),
 		closeCh:          make(chan struct{}),
 		keepAliveCh:      make(chan struct{}),
 		sessionCloseCh:   make(chan struct{}),
 		telemetryCh:      make(chan struct{}, 1),
-		sendQueue:        make(chan []byte, defaultSendQueueSize),
+		sendQueue:        make(chan []byte, engine.DefaultSendQueueSize),
 		ackWaiters:       make(map[string]chan struct{}),
 		subscriberConn:   make(chan struct{}),
 		trafficShape: TrafficShape{
@@ -252,12 +244,17 @@ func New(_ context.Context, cfg engine.Config) (engine.Session, error) {
 			MinDelay:       defaultSendDelayLow,
 			MaxDelay:       defaultSendDelayMax,
 		},
-	}, nil
-}
-
-// Capabilities reports what this engine can do.
-func (s *Session) Capabilities() engine.Capabilities {
-	return engine.Capabilities{ByteStream: true, VideoTrack: true}
+	}
+	s.Configure(engine.ReconnectorConfig{
+		MaxAttempts: 10,
+		Reconnect:   s.reconnect,
+		OnError: func(err error) {
+			logger.Debugf("reconnect failed: %v", err)
+		},
+		OnLimit:     s.signalEnded,
+		LimitReason: "reconnect limit reached",
+	})
+	return s, nil
 }
 
 // SetTrafficShape adjusts the outgoing data-channel pacing.
@@ -287,9 +284,6 @@ func (s *Session) Send(data []byte) error {
 	}
 }
 
-// GetSendQueue returns the transmission queue.
-func (s *Session) GetSendQueue() chan []byte { return s.sendQueue }
-
 // GetBufferedAmount returns the WebRTC buffered amount.
 func (s *Session) GetBufferedAmount() uint64 {
 	if dc := s.dataChannel(); dc != nil {
@@ -297,15 +291,6 @@ func (s *Session) GetBufferedAmount() uint64 {
 	}
 	return 0
 }
-
-// SetEndedCallback sets the callback for connection termination.
-func (s *Session) SetEndedCallback(cb func(string)) { s.onEnded = cb }
-
-// SetReconnectCallback sets the callback for reconnection events.
-func (s *Session) SetReconnectCallback(cb func(*webrtc.DataChannel)) { s.onReconnect = cb }
-
-// SetShouldReconnect sets the policy for reconnection.
-func (s *Session) SetShouldReconnect(fn func() bool) { s.shouldReconnect = fn }
 
 // SubscriberCanSend reports whether the subscriber PC is connected.
 // Unlike CanSend, it does not require publisherReady, so it returns true
@@ -326,14 +311,12 @@ func (s *Session) CanSend() bool {
 	if dc := s.dataChannel(); dc == nil || dc.ReadyState() != webrtc.DataChannelStateOpen {
 		return false
 	}
-	return len(s.sendQueue) < defaultSendQueueCapHard
+	return len(s.sendQueue) < engine.DefaultSendQueueCapHard
 }
 
 // AddVideoTrack adds a video track to the publisher peer connection.
 func (s *Session) AddVideoTrack(track webrtc.TrackLocal) error {
-	s.videoTrackMu.Lock()
-	s.videoTracks = append(s.videoTracks, track)
-	s.videoTrackMu.Unlock()
+	s.StoreVideoTrack(track)
 
 	pub := s.pubPC()
 	if pub == nil {
@@ -345,37 +328,28 @@ func (s *Session) AddVideoTrack(track webrtc.TrackLocal) error {
 	return nil
 }
 
-// SetVideoTrackHandler registers a callback for remote video tracks.
-func (s *Session) SetVideoTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver)) {
-	s.videoTrackMu.Lock()
-	defer s.videoTrackMu.Unlock()
-	s.onVideoTrack = cb
-}
-
 func (s *Session) hasLocalVideoTracks() bool {
-	s.videoTrackMu.RLock()
-	defer s.videoTrackMu.RUnlock()
-	return len(s.videoTracks) > 0
+	return s.HasVideoTracks()
 }
 
 func (s *Session) videoTrackHandler() func(*webrtc.TrackRemote, *webrtc.RTPReceiver) {
-	s.videoTrackMu.RLock()
-	defer s.videoTrackMu.RUnlock()
-	return s.onVideoTrack
+	return s.VideoTrackHandler()
 }
 
 func (s *Session) attachPendingVideoTracks(pub *webrtc.PeerConnection) error {
-	s.videoTrackMu.RLock()
-	defer s.videoTrackMu.RUnlock()
-
-	for _, track := range s.videoTracks {
+	var attachErr error
+	s.RangeVideoTracks(func(track webrtc.TrackLocal, _ bool) {
+		if attachErr != nil {
+			return
+		}
 		sender, err := pub.AddTrack(track)
 		if err != nil {
-			return fmt.Errorf("add video track: %w", err)
+			attachErr = fmt.Errorf("add video track: %w", err)
+			return
 		}
 		s.drainPublisherRTCP(sender)
-	}
-	return nil
+	})
+	return attachErr
 }
 
 // drainPublisherRTCP reads (and discards) RTCP feedback the SFU sends for our
@@ -385,25 +359,7 @@ func (s *Session) drainPublisherRTCP(sender *webrtc.RTPSender) {
 	if sender == nil {
 		return
 	}
-	go func() {
-		buf := make([]byte, 1500)
-		for {
-			if _, _, err := sender.Read(buf); err != nil {
-				return
-			}
-		}
-	}()
-}
-
-func closeSignal(ch chan struct{}) {
-	if ch == nil {
-		return
-	}
-	select {
-	case <-ch:
-	default:
-		close(ch)
-	}
+	go engine.DrainRTCP(sender)
 }
 
 func init() { //nolint:gochecknoinits // engine registration is the canonical Go pattern for plugins
