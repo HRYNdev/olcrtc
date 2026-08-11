@@ -130,7 +130,7 @@ func (s *Server) getOrCreatePeerControlSession(peerID string) *peerSession {
 		s.sessMu.Unlock()
 		return nil
 	}
-	conn := muxconn.NewPeerControlUnbound(s.ln, s.cipher, peerID)
+	conn := muxconn.NewPeerControlUnbound(s.ln, s.keys, peerID)
 	if conn == nil {
 		s.sessMu.Unlock()
 		return nil
@@ -178,7 +178,7 @@ func (s *Server) getPeerSession(peerID string) *peerSession {
 		s.sessMu.Unlock()
 		return peer
 	}
-	conn := muxconn.NewPeer(s.peerLn, s.cipher, peerID)
+	conn := muxconn.NewPeer(s.peerLn, s.keys, peerID)
 	session, err := tunnelcore.NewSession(conn, tunnelcore.ServerRole, runtime.SmuxConfigFor(s.ln))
 	if err != nil {
 		s.sessMu.Unlock()

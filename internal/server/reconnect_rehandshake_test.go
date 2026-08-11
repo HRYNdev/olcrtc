@@ -9,7 +9,6 @@ import (
 
 	"github.com/xtaci/smux"
 
-	cryptopkg "github.com/openlibrecommunity/olcrtc/internal/crypto"
 	"github.com/openlibrecommunity/olcrtc/internal/muxconn"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 	"github.com/openlibrecommunity/olcrtc/internal/tunnelcore"
@@ -42,10 +41,7 @@ func mkServerSess(t *testing.T) (*smux.Session, func()) {
 // waitPeerHandshake. swapSession must accept a dying session that matches
 // s.controlSess even when s.session is nil.
 func TestSwapSessionAcceptsControlSessionInPeerRouting(t *testing.T) {
-	cipher, err := cryptopkg.NewCipher("01234567890123456789012345678901")
-	if err != nil {
-		t.Fatalf("NewCipher() error = %v", err)
-	}
+	keys := newServerTestKeys(t)
 
 	deadControl, cleanupDead := mkServerSess(t)
 	defer cleanupDead()
@@ -57,16 +53,16 @@ func TestSwapSessionAcceptsControlSessionInPeerRouting(t *testing.T) {
 	ln := &peerRoutingStub{}
 	s := &Server{
 		ln:          ln,
-		cipher:      cipher,
+		keys:        keys,
 		session:     nil, // peer-routing: data session is nil
 		controlSess: deadControl,
 		health:      runtime.NewHealthTracker(nil),
 	}
 
 	r := &tunnelcore.SessionPair{
-		DataConn:       muxconn.New(ln, cipher),
+		DataConn:       muxconn.New(ln, keys),
 		DataSession:    newData,
-		ControlConn:    muxconn.New(ln, cipher),
+		ControlConn:    muxconn.New(ln, keys),
 		ControlSession: newControl,
 	}
 
@@ -90,10 +86,7 @@ func TestSwapSessionAcceptsControlSessionInPeerRouting(t *testing.T) {
 // reinstall whose dying session matches neither the live data nor control
 // session (another reinstall already won the race).
 func TestSwapSessionDiscardsStaleReinstall(t *testing.T) {
-	cipher, err := cryptopkg.NewCipher("01234567890123456789012345678901")
-	if err != nil {
-		t.Fatalf("NewCipher() error = %v", err)
-	}
+	keys := newServerTestKeys(t)
 	liveData, cleanupL := mkServerSess(t)
 	defer cleanupL()
 	stale, cleanupS := mkServerSess(t)
@@ -104,11 +97,11 @@ func TestSwapSessionDiscardsStaleReinstall(t *testing.T) {
 	ln := &peerRoutingStub{}
 	s := &Server{
 		ln:      ln,
-		cipher:  cipher,
+		keys:    keys,
 		session: liveData,
 		health:  runtime.NewHealthTracker(nil),
 	}
-	r := &tunnelcore.SessionPair{DataSession: newData, DataConn: muxconn.New(ln, cipher)}
+	r := &tunnelcore.SessionPair{DataSession: newData, DataConn: muxconn.New(ln, keys)}
 	if ok := s.swapSession(stale, r); ok {
 		t.Fatal("swapSession accepted a stale reinstall that matched no live session")
 	}

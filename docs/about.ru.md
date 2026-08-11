@@ -108,11 +108,27 @@ olcrtc client.yaml
 
 ## Шифрование и handshake
 
-`internal/crypto` использует XChaCha20-Poly1305. Общий ключ задаётся как 64 hex-символа:
+`internal/crypto` использует версионированный record layer v2 на XChaCha20-Poly1305. Общий PSK задаётся как 64 hex-символа:
 
 ```bash
 openssl rand -hex 32
 ```
+
+Из PSK через HKDF-SHA256 выводятся независимые ключи с фиксированными метками `olcrtc/v2/client-to-server` и `olcrtc/v2/server-to-client`. Клиент и сервер выбирают противоположные send/receive ключи, поэтому отражённая обратно запись не проходит AEAD-проверку.
+
+Формат каждой v2-записи:
+
+```text
+OLC2 (4 байта) | counter uint64 BE (8 байт) | sender prefix (16 байт) | ciphertext | Poly1305 tag (16 байт)
+```
+
+XChaCha20 nonce строится как `sender prefix || counter`. Случайный prefix создаётся один раз для send-части keyset, counter начинается с 1 и общий для data/control соединений и reconnect. При исчерпании `uint64` отправка завершается ошибкой без оборачивания счётчика. Полный crypto overhead равен 44 байтам.
+
+Плоскости разделены AEAD associated data: `olcrtc/muxconn/v2/data` и `olcrtc/muxconn/v2/control`. Перенос ciphertext между data и control не проходит аутентификацию.
+
+После успешной AEAD-проверки receive keyset применяет 64-записное скользящее replay-окно отдельно для каждого sender prefix. Состояние общее для data/control muxconn и новых muxconn после reconnect. Хранилище ограничено 256 sender prefix и вытесняет наименее недавно использованный prefix. Неаутентифицированные записи не создают и не изменяют replay state. Повторы и записи старше окна отклоняются отдельными ошибками.
+
+Формат v2 намеренно несовместим с прежним форматом. Декодер не имеет v1 fallback и отклоняет записи без magic `OLC2`.
 
 Поверх зашифрованного `muxconn` запускается `smux`. Первый smux stream занят handshake и control protocol:
 

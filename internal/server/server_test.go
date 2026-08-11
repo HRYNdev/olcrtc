@@ -29,27 +29,36 @@ const (
 	testConnectCmd  = connectCommand
 )
 
-func TestSetupCipher(t *testing.T) {
+func TestSetupKeySet(t *testing.T) {
 	keyHex := "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
-	cipher, err := tunnelcore.SetupCipher("server", keyHex)
+	keys, err := tunnelcore.SetupKeySet(keyHex, cryptopkg.Server)
 	if err != nil {
-		t.Fatalf("setupCipher() error = %v", err)
+		t.Fatalf("SetupKeySet() error = %v", err)
 	}
-	if cipher == nil {
-		t.Fatal("setupCipher() returned nil cipher")
+	if keys == nil {
+		t.Fatal("SetupKeySet() returned nil key set")
 	}
 }
 
-func TestSetupCipherRejectsBadInput(t *testing.T) {
-	if _, err := tunnelcore.SetupCipher("server", ""); !errors.Is(err, ErrKeyRequired) {
-		t.Fatalf("setupCipher() error = %v, want %v", err, ErrKeyRequired)
+func TestSetupKeySetRejectsBadInput(t *testing.T) {
+	if _, err := tunnelcore.SetupKeySet("", cryptopkg.Server); !errors.Is(err, ErrKeyRequired) {
+		t.Fatalf("SetupKeySet() error = %v, want %v", err, ErrKeyRequired)
 	}
-	if _, err := tunnelcore.SetupCipher("server", "zz"); err == nil {
-		t.Fatal("setupCipher() unexpectedly succeeded for bad hex")
+	if _, err := tunnelcore.SetupKeySet("zz", cryptopkg.Server); err == nil {
+		t.Fatal("SetupKeySet() unexpectedly succeeded for bad hex")
 	}
-	if _, err := tunnelcore.SetupCipher("server", "00"); !errors.Is(err, ErrKeySize) {
-		t.Fatalf("setupCipher() error = %v, want ErrKeySize", err)
+	if _, err := tunnelcore.SetupKeySet("00", cryptopkg.Server); !errors.Is(err, ErrKeySize) {
+		t.Fatalf("SetupKeySet() error = %v, want ErrKeySize", err)
 	}
+}
+
+func newServerTestKeys(t *testing.T) *cryptopkg.KeySet {
+	t.Helper()
+	keys, err := cryptopkg.NewKeySet([]byte("01234567890123456789012345678901"), cryptopkg.Server)
+	if err != nil {
+		t.Fatalf("NewKeySet(server) error = %v", err)
+	}
+	return keys
 }
 
 // testSmuxCfg is the data-plane smux config the production path builds for a
@@ -290,15 +299,12 @@ func (s *serverLinkStub) ResetPeer() {
 }
 
 func TestShutdownClosesLinkAndConn(t *testing.T) {
-	cipher, err := cryptopkg.NewCipher("01234567890123456789012345678901")
-	if err != nil {
-		t.Fatalf("NewCipher() error = %v", err)
-	}
+	keys := newServerTestKeys(t)
 	ln := &serverLinkStub{}
 	s := &Server{
-		ln:     ln,
-		cipher: cipher,
-		conn:   muxconn.New(ln, cipher),
+		ln:   ln,
+		keys: keys,
+		conn: muxconn.New(ln, keys),
 	}
 	s.shutdown()
 	if !ln.closed {
@@ -426,17 +432,14 @@ func TestHandleStreamDispatchAfterConnect(t *testing.T) {
 }
 
 func TestReinstallSessionFiresOnClose(t *testing.T) {
-	cipher, err := cryptopkg.NewCipher("01234567890123456789012345678901")
-	if err != nil {
-		t.Fatalf("NewCipher() error = %v", err)
-	}
+	keys := newServerTestKeys(t)
 	var got struct {
 		sid    string
 		reason string
 	}
 	s := &Server{
 		ln:        &serverLinkStub{},
-		cipher:    cipher,
+		keys:      keys,
 		sessionID: "sid-123",
 		deviceID:  "dev-123",
 		onClose:   func(sid, reason string) { got.sid = sid; got.reason = reason },
@@ -557,16 +560,13 @@ func TestStartControlLoopResetsPeerBeforeReinstall(t *testing.T) {
 	}
 	serverStream := <-serverStreamCh
 
-	cipher, err := cryptopkg.NewCipher("01234567890123456789012345678901")
-	if err != nil {
-		t.Fatalf("NewCipher() error = %v", err)
-	}
+	keys := newServerTestKeys(t)
 	ln := &serverLinkStub{resetCh: make(chan struct{}, 1)}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{
 		ln:      ln,
-		cipher:  cipher,
-		conn:    muxconn.New(ln, cipher),
+		keys:    keys,
+		conn:    muxconn.New(ln, keys),
 		session: serverSess,
 		health:  runtime.NewHealthTracker(nil),
 		liveness: control.Config{
@@ -724,19 +724,16 @@ func TestReinstallSessionClosesOldConnBeforeSwap(t *testing.T) {
 	// and manifests as "frame too large" on the control stream.
 	// The fix closes the old muxconn at the very start of reinstallSession
 	// so Push calls during the swap window are discarded.
-	cipher, err := cryptopkg.NewCipher("01234567890123456789012345678901")
-	if err != nil {
-		t.Fatalf("NewCipher() error = %v", err)
-	}
+	keys := newServerTestKeys(t)
 	ln := &serverLinkStub{}
-	conn := muxconn.New(ln, cipher)
+	conn := muxconn.New(ln, keys)
 	sess, err := smux.Server(conn, testSmuxCfg())
 	if err != nil {
 		t.Fatalf("smux.Server() error = %v", err)
 	}
 	s := &Server{
 		ln:           ln,
-		cipher:       cipher,
+		keys:         keys,
 		conn:         conn,
 		session:      sess,
 		onClose:      func(string, string) {},
@@ -863,14 +860,11 @@ func TestAcceptSingletonHandshakeStoresServerFields(t *testing.T) {
 // written under the unrelated server-wide sessMu (a write under RLock, no
 // less). Run with -race.
 func TestPeerSessionConcurrentAccess(t *testing.T) {
-	cipher, err := cryptopkg.NewCipher("01234567890123456789012345678901")
-	if err != nil {
-		t.Fatalf("NewCipher() error = %v", err)
-	}
+	keys := newServerTestKeys(t)
 	ln := &serverLinkStub{}
 	s := &Server{
 		ln:           ln,
-		cipher:       cipher,
+		keys:         keys,
 		onClose:      func(string, string) {},
 		health:       runtime.NewHealthTracker(nil),
 		peerSessions: make(map[string]*peerSession),
@@ -889,7 +883,7 @@ func TestPeerSessionConcurrentAccess(t *testing.T) {
 			case 0:
 				ps.setHandshake(handshakeResult{sessionID: "sid", deviceID: "dev"})
 			case 1:
-				ps.attachData(muxconn.New(ln, cipher), nil)
+				ps.attachData(muxconn.New(ln, keys), nil)
 			case 2:
 				ps.setControl(nil, func() {})
 			default:
@@ -1056,13 +1050,10 @@ func TestHandleStreamStopsOnContextCancel(t *testing.T) {
 // waiting for the handshake). It now parks on the state gate, so an install
 // must wake it.
 func TestServeSingleWakesOnSessionInstall(t *testing.T) {
-	cipher, err := cryptopkg.NewCipher("01234567890123456789012345678901")
-	if err != nil {
-		t.Fatalf("NewCipher() error = %v", err)
-	}
+	keys := newServerTestKeys(t)
 	s := &Server{
 		ln:           &serverLinkStub{},
-		cipher:       cipher,
+		keys:         keys,
 		sessionID:    "sid-serve",
 		resolver:     net.DefaultResolver,
 		onClose:      func(string, string) {},

@@ -47,8 +47,8 @@ func (c *Client) bringUpLink(ctx context.Context, cfg Config, cancel context.Can
 	if waitErr := waitForPeer(ctx, link); waitErr != nil {
 		return waitErr
 	}
-	c.conn = muxconn.New(link, c.cipher)
-	c.controlConn = muxconn.NewControl(link, c.cipher)
+	c.conn = muxconn.New(link, c.keys)
+	c.controlConn = muxconn.NewControl(link, c.keys)
 	pair, err := tunnelcore.NewSessionPairWithConns(
 		link, c.conn, c.controlConn, tunnelcore.ClientRole,
 	)
@@ -149,8 +149,8 @@ func (c *Client) handleReconnect(ctx context.Context, cfg Config, cancel context
 		}
 	}
 	c.sessMu.RUnlock()
-	newConn := muxconn.New(c.ln, c.cipher)
-	newControlConn := muxconn.NewControl(c.ln, c.cipher)
+	newConn := muxconn.New(c.ln, c.keys)
+	newControlConn := muxconn.NewControl(c.ln, c.keys)
 	c.sessMu.Lock()
 	oldPair := c.pair
 	oldControl := c.controlStrm
@@ -276,8 +276,8 @@ func (c *Client) tryReopenSession(
 	cancel context.CancelFunc,
 	attempt int,
 ) bool {
-	conn := muxconn.New(c.ln, c.cipher)
-	controlConn := muxconn.NewControl(c.ln, c.cipher)
+	conn := muxconn.New(c.ln, c.keys)
+	controlConn := muxconn.NewControl(c.ln, c.keys)
 	c.sessMu.Lock()
 	oldConn, oldControlConn := c.conn, c.controlConn
 	c.conn, c.controlConn = conn, controlConn

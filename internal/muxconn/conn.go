@@ -65,6 +65,9 @@ func (closedReadError) Error() string { return "muxconn: closed (EOF)" }
 func (closedReadError) Unwrap() []error { return []error{io.EOF, ErrClosed} }
 
 const (
+	dataRecordAAD    = "olcrtc/muxconn/v2/data"
+	controlRecordAAD = "olcrtc/muxconn/v2/control"
+
 	// inboundQueue is the buffered capacity of the Push -> Read pipeline.
 	// It absorbs short Read stalls without applying back-pressure to the
 	// transport callback. Frames are typically smux-sized (up to 32 KiB),
@@ -128,7 +131,7 @@ func releaseFrameBuf(bp *[]byte) {
 	frameBufPool.Put(bp)
 }
 
-// Conn is an io.ReadWriteCloser over a [transport.Transport] with optional AEAD wrapping.
+// Conn is an io.ReadWriteCloser over a [transport.Transport] with v2 record protection.
 //
 // Push produces decrypted plaintext frames into an internal channel; Read
 // drains the channel and slices each frame across as many caller buffers
@@ -143,7 +146,8 @@ type Conn struct {
 	ln      transport.Transport
 	send    func([]byte) error
 	canSend func() bool // if nil, uses ln.CanSend
-	cipher  *crypto.Cipher
+	keys    *crypto.KeySet
+	aad     []byte
 
 	in        chan *[]byte
 	closeOnce sync.Once
@@ -175,11 +179,12 @@ func (c *Conn) sendDeadline() time.Duration {
 
 // New wires a Conn over the given transport. Push must be set as the
 // transport's OnData callback before this conn is used.
-func New(ln transport.Transport, cipher *crypto.Cipher) *Conn {
+func New(ln transport.Transport, keys *crypto.KeySet) *Conn {
 	return &Conn{
 		ln:      ln,
 		send:    ln.Send,
-		cipher:  cipher,
+		keys:    keys,
+		aad:     []byte(dataRecordAAD),
 		in:      make(chan *[]byte, inboundQueue),
 		closeCh: make(chan struct{}),
 	}
@@ -188,7 +193,7 @@ func New(ln transport.Transport, cipher *crypto.Cipher) *Conn {
 // NewControl wires a Conn that routes through the transport's isolated
 // control-plane channel (transport.ControlPlane). Returns nil if the
 // transport does not implement ControlPlane.
-func NewControl(ln transport.Transport, cipher *crypto.Cipher) *Conn {
+func NewControl(ln transport.Transport, keys *crypto.KeySet) *Conn {
 	cp, ok := ln.(transport.ControlPlane)
 	if !ok {
 		return nil
@@ -197,7 +202,8 @@ func NewControl(ln transport.Transport, cipher *crypto.Cipher) *Conn {
 		ln:      ln,
 		send:    cp.ControlSend,
 		canSend: cp.ControlCanSend,
-		cipher:  cipher,
+		keys:    keys,
+		aad:     []byte(controlRecordAAD),
 		in:      make(chan *[]byte, inboundQueue),
 		closeCh: make(chan struct{}),
 	}
@@ -206,13 +212,14 @@ func NewControl(ln transport.Transport, cipher *crypto.Cipher) *Conn {
 }
 
 // NewPeer wires a Conn whose writes are addressed to a specific transport peer.
-func NewPeer(ln transport.PeerTransport, cipher *crypto.Cipher, peerID string) *Conn {
+func NewPeer(ln transport.PeerTransport, keys *crypto.KeySet, peerID string) *Conn {
 	return &Conn{
 		ln: ln,
 		send: func(data []byte) error {
 			return ln.SendTo(peerID, data)
 		},
-		cipher:  cipher,
+		keys:    keys,
+		aad:     []byte(dataRecordAAD),
 		in:      make(chan *[]byte, inboundQueue),
 		closeCh: make(chan struct{}),
 	}
@@ -226,7 +233,7 @@ func NewPeer(ln transport.PeerTransport, cipher *crypto.Cipher, peerID string) *
 // caller must feed it via Push. PeerControlPlane exposes a single
 // SetControlOnPeerData callback covering every peer, so registering here
 // would clobber the caller's demultiplexer - hence the name.
-func NewPeerControlUnbound(ln transport.Transport, cipher *crypto.Cipher, peerID string) *Conn {
+func NewPeerControlUnbound(ln transport.Transport, keys *crypto.KeySet, peerID string) *Conn {
 	cp, ok := ln.(transport.PeerControlPlane)
 	if !ok {
 		return nil
@@ -239,7 +246,8 @@ func NewPeerControlUnbound(ln transport.Transport, cipher *crypto.Cipher, peerID
 		canSend: func() bool {
 			return cp.ControlPeerCanSend(peerID)
 		},
-		cipher:  cipher,
+		keys:    keys,
+		aad:     []byte(controlRecordAAD),
 		in:      make(chan *[]byte, inboundQueue),
 		closeCh: make(chan struct{}),
 	}
@@ -255,7 +263,7 @@ func NewPeerControlUnbound(ln transport.Transport, cipher *crypto.Cipher, peerID
 // also bail on closeCh.
 func (c *Conn) Push(ciphertext []byte) {
 	bufPtr := acquireFrameBuf()
-	pt, err := c.cipher.DecryptInto(*bufPtr, ciphertext)
+	pt, err := c.keys.OpenInto(*bufPtr, ciphertext, c.aad)
 	if err != nil {
 		releaseFrameBuf(bufPtr)
 		c.noteDecryptFailure(len(ciphertext), err)
@@ -381,7 +389,7 @@ func (c *Conn) Write(p []byte) (int, error) {
 		return 0, err
 	}
 
-	enc, err := c.cipher.Encrypt(p)
+	enc, err := c.keys.SealInto(nil, p, c.aad)
 	if err != nil {
 		return 0, fmt.Errorf("encrypt: %w", err)
 	}

@@ -1,5 +1,5 @@
 // Package runtime holds infrastructure shared by the olcrtc server and
-// client: smux tuning, cipher setup, and control-stream health bookkeeping.
+// client: smux tuning, key setup, and control-stream health bookkeeping.
 // The lifecycle differences between server and client (accept loop / SOCKS5
 // dial vs. SOCKS5 listener / tunnel) live in their respective packages.
 package runtime
@@ -41,8 +41,8 @@ var ErrKeyRequired = errors.New("key required (use -key <hex>)")
 // ErrKeySize is returned when the encryption key is not 32 bytes.
 var ErrKeySize = errors.New("key must be 32 bytes")
 
-// SetupCipher decodes a 64-char hex key and instantiates the AEAD cipher.
-func SetupCipher(keyHex string) (*crypto.Cipher, error) {
+// SetupKeySet decodes a 64-char hex PSK and creates role-aware v2 keys.
+func SetupKeySet(keyHex string, role crypto.Role) (*crypto.KeySet, error) {
 	if keyHex == "" {
 		return nil, ErrKeyRequired
 	}
@@ -53,11 +53,11 @@ func SetupCipher(keyHex string) (*crypto.Cipher, error) {
 	if len(key) != 32 {
 		return nil, fmt.Errorf("%w, got %d", ErrKeySize, len(key))
 	}
-	cipher, err := crypto.NewCipher(string(key))
+	keys, err := crypto.NewKeySet(key, role)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
+		return nil, fmt.Errorf("failed to create key set: %w", err)
 	}
-	return cipher, nil
+	return keys, nil
 }
 
 // SmuxConfig returns the tuned smux config used on both ends. Both peers

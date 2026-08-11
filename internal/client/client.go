@@ -51,7 +51,7 @@ const (
 // Client handles local SOCKS5 connections and tunnels them to the server.
 type Client struct {
 	ln          transport.Transport
-	cipher      *crypto.Cipher
+	keys        *crypto.KeySet
 	pair        *tunnelcore.SessionPair
 	conn        *muxconn.Conn
 	controlConn *muxconn.Conn
@@ -116,16 +116,16 @@ func Run(ctx context.Context, cfg Config) error {
 func RunWithReady(ctx context.Context, cfg Config, onReady func()) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cipher, err := tunnelcore.SetupCipher("client", cfg.KeyHex)
+	keys, err := tunnelcore.SetupKeySet(cfg.KeyHex, crypto.Client)
 	if err != nil {
-		return fmt.Errorf("setupCipher failed: %w", err)
+		return fmt.Errorf("setup key set: %w", err)
 	}
 	deviceID, err := resolveDeviceID(cfg.DeviceID, cfg.DeviceIDPath)
 	if err != nil {
 		return fmt.Errorf("resolve device id: %w", err)
 	}
 	client := &Client{
-		cipher: cipher, deviceID: deviceID, claims: cfg.Claims, dnsServer: cfg.DNSServer,
+		keys: keys, deviceID: deviceID, claims: cfg.Claims, dnsServer: cfg.DNSServer,
 		socksUser: cfg.SOCKSUser, socksPass: cfg.SOCKSPass,
 		health: runtime.NewHealthTracker(cfg.OnHealth), sessionReady: make(chan struct{}),
 	}

@@ -30,24 +30,33 @@ const (
 	testConnectHost    = "example.com"
 )
 
-func TestSetupCipher(t *testing.T) {
+func TestSetupKeySet(t *testing.T) {
 	keyHex := "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
-	cipher, err := tunnelcore.SetupCipher("client", keyHex)
+	keys, err := tunnelcore.SetupKeySet(keyHex, cryptopkg.Client)
 	if err != nil {
-		t.Fatalf("setupCipher() error = %v", err)
+		t.Fatalf("SetupKeySet() error = %v", err)
 	}
-	if cipher == nil {
-		t.Fatal("setupCipher() returned nil cipher")
+	if keys == nil {
+		t.Fatal("SetupKeySet() returned nil key set")
 	}
 }
 
-func TestSetupCipherRejectsBadInput(t *testing.T) {
-	if _, err := tunnelcore.SetupCipher("client", "zz"); err == nil {
-		t.Fatal("setupCipher() unexpectedly succeeded for bad hex")
+func TestSetupKeySetRejectsBadInput(t *testing.T) {
+	if _, err := tunnelcore.SetupKeySet("zz", cryptopkg.Client); err == nil {
+		t.Fatal("SetupKeySet() unexpectedly succeeded for bad hex")
 	}
-	if _, err := tunnelcore.SetupCipher("client", "00"); !errors.Is(err, ErrKeySize) {
-		t.Fatalf("setupCipher() error = %v, want ErrKeySize", err)
+	if _, err := tunnelcore.SetupKeySet("00", cryptopkg.Client); !errors.Is(err, ErrKeySize) {
+		t.Fatalf("SetupKeySet() error = %v, want ErrKeySize", err)
 	}
+}
+
+func newClientTestKeys(t *testing.T) *cryptopkg.KeySet {
+	t.Helper()
+	keys, err := cryptopkg.NewKeySet([]byte("01234567890123456789012345678901"), cryptopkg.Client)
+	if err != nil {
+		t.Fatalf("NewKeySet(client) error = %v", err)
+	}
+	return keys
 }
 
 // testSmuxCfg is the data-plane smux config buildSmuxClient builds for a plain
@@ -616,15 +625,12 @@ func TestOnDataWithNilConn(_ *testing.T) {
 }
 
 func TestShutdownClosesLinkAndConn(t *testing.T) {
-	cipher, err := cryptopkg.NewCipher("01234567890123456789012345678901")
-	if err != nil {
-		t.Fatalf("NewCipher() error = %v", err)
-	}
+	keys := newClientTestKeys(t)
 	ln := &closerLinkStub{}
 	c := &Client{
-		ln:     ln,
-		cipher: cipher,
-		conn:   muxconn.New(ln, cipher),
+		ln:   ln,
+		keys: keys,
+		conn: muxconn.New(ln, keys),
 	}
 	c.shutdown()
 	if !ln.closed {
@@ -958,14 +964,11 @@ func TestShutdownGivesUpOnStuckGoroutine(t *testing.T) {
 // 60s readiness gate. The fallback proves it acted by driving a handshake over
 // the link.
 func TestLivenessFallbackReestablishesSession(t *testing.T) {
-	cipher, err := cryptopkg.NewCipher("01234567890123456789012345678901")
-	if err != nil {
-		t.Fatalf("NewCipher() error = %v", err)
-	}
+	keys := newClientTestKeys(t)
 	ln := &closerLinkStub{sentCh: make(chan struct{}, 1)}
 	c := &Client{
 		ln:               ln,
-		cipher:           cipher,
+		keys:             keys,
 		deviceID:         "dev-1",
 		health:           runtime.NewHealthTracker(nil),
 		sessionReady:     make(chan struct{}),
@@ -1028,12 +1031,9 @@ func TestLivenessFallbackSkipsWhenSessionIsBack(t *testing.T) {
 // and tryReopenSession unlocked) together with the session-state accessors.
 // Run with -race.
 func TestClientLinkAccessIsRaceFree(t *testing.T) {
-	cipher, err := cryptopkg.NewCipher("01234567890123456789012345678901")
-	if err != nil {
-		t.Fatalf("NewCipher() error = %v", err)
-	}
+	keys := newClientTestKeys(t)
 	ln := &closerLinkStub{}
-	c := &Client{ln: ln, cipher: cipher, sessionReady: make(chan struct{})}
+	c := &Client{ln: ln, keys: keys, sessionReady: make(chan struct{})}
 
 	const workers = 8
 	var wg sync.WaitGroup

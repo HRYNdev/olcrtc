@@ -6,29 +6,39 @@ import (
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/control"
+	"github.com/openlibrecommunity/olcrtc/internal/crypto"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 )
 
-func TestSetupCipherErrors(t *testing.T) {
-	if _, err := runtime.SetupCipher(""); !errors.Is(err, runtime.ErrKeyRequired) {
+func TestSetupKeySetErrors(t *testing.T) {
+	if _, err := runtime.SetupKeySet("", crypto.Client); !errors.Is(err, runtime.ErrKeyRequired) {
 		t.Fatalf("empty key error = %v, want ErrKeyRequired", err)
 	}
-	if _, err := runtime.SetupCipher("notHex"); err == nil {
+	if _, err := runtime.SetupKeySet("notHex", crypto.Client); err == nil {
 		t.Fatalf("bad hex error = nil")
 	}
-	if _, err := runtime.SetupCipher("00"); !errors.Is(err, runtime.ErrKeySize) {
+	if _, err := runtime.SetupKeySet("00", crypto.Client); !errors.Is(err, runtime.ErrKeySize) {
 		t.Fatalf("short key error = %v, want ErrKeySize", err)
 	}
 }
 
-func TestSetupCipherSuccess(t *testing.T) {
+func TestSetupKeySetSuccess(t *testing.T) {
 	key := "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
-	c, err := runtime.SetupCipher(key)
+	c, err := runtime.SetupKeySet(key, crypto.Server)
 	if err != nil {
-		t.Fatalf("SetupCipher() error = %v", err)
+		t.Fatalf("SetupKeySet() error = %v", err)
 	}
 	if c == nil {
-		t.Fatal("SetupCipher() returned nil cipher")
+		t.Fatal("SetupKeySet() returned nil key set")
+	}
+}
+
+func TestSmuxWireOverhead(t *testing.T) {
+	if crypto.WireOverhead != 44 {
+		t.Fatalf("crypto.WireOverhead = %d, want 44", crypto.WireOverhead)
+	}
+	if runtime.SmuxWireOverhead != 52 {
+		t.Fatalf("runtime.SmuxWireOverhead = %d, want 52", runtime.SmuxWireOverhead)
 	}
 }
 

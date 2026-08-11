@@ -36,9 +36,9 @@ type SessionPair struct {
 
 // NewSessionPair builds data and optional isolated-control muxconn/smux sessions.
 // If only the control session fails, the usable data pair is returned with the error.
-func NewSessionPair(tr transport.Transport, cipher *crypto.Cipher, role SessionRole) (*SessionPair, error) {
-	dataConn := muxconn.New(tr, cipher)
-	controlConn := muxconn.NewControl(tr, cipher)
+func NewSessionPair(tr transport.Transport, keys *crypto.KeySet, role SessionRole) (*SessionPair, error) {
+	dataConn := muxconn.New(tr, keys)
+	controlConn := muxconn.NewControl(tr, keys)
 	return NewSessionPairWithConns(tr, dataConn, controlConn, role)
 }
 
@@ -79,10 +79,10 @@ func NewSessionPairWithConns(
 // NewControlSession builds only an isolated control muxconn/smux session.
 func NewControlSession(
 	tr transport.Transport,
-	cipher *crypto.Cipher,
+	keys *crypto.KeySet,
 	role SessionRole,
 ) (*muxconn.Conn, *smux.Session, error) {
-	conn := muxconn.NewControl(tr, cipher)
+	conn := muxconn.NewControl(tr, keys)
 	if conn == nil {
 		return nil, nil, nil
 	}

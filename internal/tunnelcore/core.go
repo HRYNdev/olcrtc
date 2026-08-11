@@ -21,13 +21,13 @@ const (
 	ConnectAckHostUnreachable byte = 0x04
 )
 
-// SetupCipher creates the shared tunnel cipher and adds the caller role to errors.
-func SetupCipher(role, keyHex string) (*crypto.Cipher, error) {
-	cipher, err := runtime.SetupCipher(keyHex)
+// SetupKeySet creates shared directional tunnel keys and adds the role to errors.
+func SetupKeySet(keyHex string, role crypto.Role) (*crypto.KeySet, error) {
+	keys, err := runtime.SetupKeySet(keyHex, role)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", role, err)
 	}
-	return cipher, nil
+	return keys, nil
 }
 
 // Resolver returns the supplied resolver or a protected resolver for dnsServer.

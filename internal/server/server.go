@@ -45,7 +45,7 @@ type Server struct {
 	baseCtx context.Context //nolint:containedctx // server-lifetime context for reconnect goroutines
 	ln      transport.Transport
 	peerLn  transport.PeerTransport
-	cipher  *crypto.Cipher
+	keys    *crypto.KeySet
 	pair    *tunnelcore.SessionPair
 	conn    *muxconn.Conn
 
@@ -112,9 +112,9 @@ type Config struct {
 func Run(ctx context.Context, cfg Config) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cipher, err := tunnelcore.SetupCipher("server", cfg.KeyHex)
+	keys, err := tunnelcore.SetupKeySet(cfg.KeyHex, crypto.Server)
 	if err != nil {
-		return fmt.Errorf("setupCipher failed: %w", err)
+		return fmt.Errorf("setup key set: %w", err)
 	}
 	hook := cfg.AuthHook
 	if hook == nil {
@@ -133,7 +133,7 @@ func Run(ctx context.Context, cfg Config) error {
 		onTraffic = func(string, string, uint64, uint64) {}
 	}
 	s := &Server{
-		cipher: cipher, authHook: hook, onOpen: onOpen, onClose: onClose, onTraffic: onTraffic,
+		keys: keys, authHook: hook, onOpen: onOpen, onClose: onClose, onTraffic: onTraffic,
 		dnsServer: cfg.DNSServer, resolver: tunnelcore.Resolver(cfg.Resolver, cfg.DNSServer),
 		socksProxyAddr: cfg.SOCKSProxyAddr, socksProxyPort: cfg.SOCKSProxyPort,
 		socksProxyUser: cfg.SOCKSProxyUser, socksProxyPass: cfg.SOCKSProxyPass,
