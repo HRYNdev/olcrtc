@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/control"
-	"github.com/openlibrecommunity/olcrtc/internal/protect"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 )
 
@@ -97,23 +96,20 @@ func TestApplyLivenessDefaults(t *testing.T) {
 	}
 }
 
-// ai-generated: verifies session DNS setup preserves the process default resolver.
-func TestConfigureResolverDoesNotMutateDefaultResolver(t *testing.T) {
+func TestResolverForDoesNotMutateDefaultResolver(t *testing.T) {
 	defaultResolver := net.DefaultResolver
 	custom := &net.Resolver{PreferGo: true}
-	t.Cleanup(func() { protect.SetResolver(nil) })
 
-	configureResolver(nil, "8.8.8.8:53")
+	resolver := resolverFor(nil, "8.8.8.8:53")
 	if net.DefaultResolver != defaultResolver {
-		t.Fatal("configureResolver() mutated net.DefaultResolver")
+		t.Fatal("resolverFor() mutated net.DefaultResolver")
 	}
-	if protect.Resolver() == nil || protect.Resolver() == net.DefaultResolver {
-		t.Fatal("configureResolver() did not install a local resolver")
+	if resolver == nil || resolver == net.DefaultResolver {
+		t.Fatal("resolverFor() did not create a local resolver")
 	}
 
-	configureResolver(custom, "8.8.8.8:53")
-	if protect.Resolver() != custom {
-		t.Fatal("configureResolver() did not prefer the supplied resolver")
+	if resolverFor(custom, "8.8.8.8:53") != custom {
+		t.Fatal("resolverFor() did not prefer the supplied resolver")
 	}
 }
 

@@ -98,20 +98,18 @@ func RegisterDefaults() {
 // New creates a Session from cfg. The session is not connected yet; call
 // [Session.Connect] when ready.
 func New(ctx context.Context, cfg Config) (*Session, error) {
-	configureResolver(cfg)
+	cfg.Resolver = resolverFor(cfg)
 	if cfg.Auth != "" {
 		return newWithAuth(ctx, cfg)
 	}
 	return newDirect(ctx, cfg)
 }
 
-// ai-generated: installs the caller resolver without touching net.DefaultResolver.
-func configureResolver(cfg Config) {
-	resolver := cfg.Resolver
-	if resolver == nil {
-		resolver = protect.NewResolver(cfg.DNSServer)
+func resolverFor(cfg Config) *net.Resolver {
+	if cfg.Resolver != nil {
+		return cfg.Resolver
 	}
-	protect.SetResolver(resolver)
+	return protect.NewResolver(cfg.DNSServer)
 }
 
 func newWithAuth(ctx context.Context, cfg Config) (*Session, error) {
@@ -124,6 +122,7 @@ func newWithAuth(ctx context.Context, cfg Config) (*Session, error) {
 		RoomURL:   cfg.RoomID,
 		Name:      cfg.Name,
 		DNSServer: cfg.DNSServer,
+		Resolver:  cfg.Resolver,
 		ProxyAddr: cfg.ProxyAddr,
 		ProxyPort: cfg.ProxyPort,
 	}
@@ -142,6 +141,7 @@ func newWithAuth(ctx context.Context, cfg Config) (*Session, error) {
 		Extra:     creds.Extra,
 		OnData:    func(data []byte) { _, _ = pw.Write(data) },
 		DNSServer: cfg.DNSServer,
+		Resolver:  cfg.Resolver,
 		ProxyAddr: cfg.ProxyAddr,
 		ProxyPort: cfg.ProxyPort,
 		Refresh: func(rCtx context.Context) (engine.Credentials, error) {
@@ -180,6 +180,7 @@ func newDirect(ctx context.Context, cfg Config) (*Session, error) {
 		Name:      cfg.Name,
 		OnData:    func(data []byte) { _, _ = pw.Write(data) },
 		DNSServer: cfg.DNSServer,
+		Resolver:  cfg.Resolver,
 		ProxyAddr: cfg.ProxyAddr,
 		ProxyPort: cfg.ProxyPort,
 	})

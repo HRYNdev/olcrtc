@@ -49,7 +49,6 @@ func resetMobileGlobals(t *testing.T) {
 	defaultsSet = sync.Once{}
 	mu.Unlock()
 	protect.Protector = nil
-	protect.SetResolver(nil)
 	logger.SetVerbose(false)
 }
 
@@ -110,7 +109,6 @@ func TestDefaultsAndSetters(t *testing.T) {
 	}
 }
 
-// ai-generated: verifies DNS setters preserve the process default resolver.
 func TestDNSSettersDoNotMutateDefaultResolver(t *testing.T) {
 	resetMobileGlobals(t)
 	defaultResolver := net.DefaultResolver
@@ -120,15 +118,21 @@ func TestDNSSettersDoNotMutateDefaultResolver(t *testing.T) {
 	if net.DefaultResolver != defaultResolver {
 		t.Fatal("SetDNS() mutated net.DefaultResolver")
 	}
-	if protect.Resolver() == nil || protect.Resolver() == net.DefaultResolver {
-		t.Fatal("SetDNS() did not install a local resolver")
+	mu.Lock()
+	dnsResolver := defaults.resolver
+	mu.Unlock()
+	if dnsResolver == nil || dnsResolver == net.DefaultResolver {
+		t.Fatal("SetDNS() did not store a local resolver")
 	}
 
 	SetCustomResolver(custom)
 	if net.DefaultResolver != defaultResolver {
 		t.Fatal("SetCustomResolver() mutated net.DefaultResolver")
 	}
-	if protect.Resolver() != custom {
+	mu.Lock()
+	got := defaults.resolver
+	mu.Unlock()
+	if got != custom {
 		t.Fatal("SetCustomResolver() did not install the supplied resolver")
 	}
 }

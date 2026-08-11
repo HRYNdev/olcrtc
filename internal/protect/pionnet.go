@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -43,28 +42,35 @@ var (
 //nolint:gochecknoglobals // fixed lookup table; a slice cannot be const
 var tunInterfacePrefixes = []string{"tun", "ppp", "pptp"}
 
+const (
+	ipNetwork4           = "ip4"
+	ipNetwork6           = "ip6"
+	errNoSuitableAddress = "no suitable address found"
+)
+
 // ProtectedNet implements pion's transport.Net with socket protection and
-// tunnel-interface filtering. Interface data is loaded once at construction
-// time via a platform-specific loadInterfaces function.
+// tunnel-interface filtering.
 type ProtectedNet struct {
-	interfaces []*transport.Interface
-	resolver   *net.Resolver
+	resolver *net.Resolver
 }
 
 // NewProtectedNet builds a ProtectedNet with platform-specific interface
 // enumeration.
 func NewProtectedNet(resolvers ...*net.Resolver) (*ProtectedNet, error) {
-	ifs, err := loadInterfaces()
-	if err != nil {
+	if _, err := loadInterfaces(); err != nil {
 		return nil, fmt.Errorf("load interfaces: %w", err)
 	}
-	return &ProtectedNet{interfaces: ifs, resolver: firstResolver(resolvers)}, nil
+	return &ProtectedNet{resolver: firstResolver(resolvers)}, nil
 }
 
 // Interfaces returns system interfaces after filtering tunnel-style devices.
 func (n *ProtectedNet) Interfaces() ([]*transport.Interface, error) {
-	out := make([]*transport.Interface, 0, len(n.interfaces))
-	for _, ifc := range n.interfaces {
+	interfaces, err := loadInterfaces()
+	if err != nil {
+		return nil, fmt.Errorf("load interfaces: %w", err)
+	}
+	out := make([]*transport.Interface, 0, len(interfaces))
+	for _, ifc := range interfaces {
 		if !isTunInterface(ifc.Name) {
 			out = append(out, ifc)
 		}
@@ -74,7 +80,11 @@ func (n *ProtectedNet) Interfaces() ([]*transport.Interface, error) {
 
 // InterfaceByIndex returns the interface specified by index.
 func (n *ProtectedNet) InterfaceByIndex(index int) (*transport.Interface, error) {
-	for _, ifc := range n.interfaces {
+	interfaces, err := loadInterfaces()
+	if err != nil {
+		return nil, fmt.Errorf("load interfaces: %w", err)
+	}
+	for _, ifc := range interfaces {
 		if ifc.Index == index {
 			if isTunInterface(ifc.Name) {
 				return nil, transport.ErrInterfaceNotFound
@@ -90,7 +100,11 @@ func (n *ProtectedNet) InterfaceByName(name string) (*transport.Interface, error
 	if isTunInterface(name) {
 		return nil, transport.ErrInterfaceNotFound
 	}
-	for _, ifc := range n.interfaces {
+	interfaces, err := loadInterfaces()
+	if err != nil {
+		return nil, fmt.Errorf("load interfaces: %w", err)
+	}
+	for _, ifc := range interfaces {
 		if ifc.Name == name {
 			return ifc, nil
 		}
@@ -206,11 +220,15 @@ func (n *ProtectedNet) ResolveIPAddr(network, address string) (*net.IPAddr, erro
 		}
 		return addr, nil
 	}
-	ip, err := lookupIP(n.resolver, network, address)
+	ipNetwork, err := resolveIPNetwork(network)
 	if err != nil {
 		return nil, fmt.Errorf("resolve ip %s %q: %w", network, address, err)
 	}
-	return &net.IPAddr{IP: ip}, nil
+	ip, err := lookupIPAddr(n.resolver, ipNetwork, address)
+	if err != nil {
+		return nil, fmt.Errorf("resolve ip %s %q: %w", network, address, err)
+	}
+	return &ip, nil
 }
 
 // ResolveUDPAddr returns an address of UDP end point.
@@ -222,11 +240,16 @@ func (n *ProtectedNet) ResolveUDPAddr(network, address string) (*net.UDPAddr, er
 		}
 		return addr, nil
 	}
+	resolvedNetwork, err := resolveTransportNetwork(network, "udp")
+	if err != nil {
+		return nil, fmt.Errorf("resolve udp %s %q: %w", network, address, err)
+	}
+	network = resolvedNetwork
 	ip, port, err := n.resolveHostPort(network, address)
 	if err != nil {
 		return nil, fmt.Errorf("resolve udp %s %q: %w", network, address, err)
 	}
-	return &net.UDPAddr{IP: ip, Port: port}, nil
+	return &net.UDPAddr{IP: ip.IP, Port: port, Zone: ip.Zone}, nil
 }
 
 // ResolveTCPAddr returns an address of TCP end point.
@@ -238,49 +261,123 @@ func (n *ProtectedNet) ResolveTCPAddr(network, address string) (*net.TCPAddr, er
 		}
 		return addr, nil
 	}
+	resolvedNetwork, err := resolveTransportNetwork(network, "tcp")
+	if err != nil {
+		return nil, fmt.Errorf("resolve tcp %s %q: %w", network, address, err)
+	}
+	network = resolvedNetwork
 	ip, port, err := n.resolveHostPort(network, address)
 	if err != nil {
 		return nil, fmt.Errorf("resolve tcp %s %q: %w", network, address, err)
 	}
-	return &net.TCPAddr{IP: ip, Port: port}, nil
+	return &net.TCPAddr{IP: ip.IP, Port: port, Zone: ip.Zone}, nil
 }
 
-// ai-generated: resolves a host and numeric port through the injected resolver.
-func (n *ProtectedNet) resolveHostPort(network, address string) (net.IP, int, error) {
+func resolveTransportNetwork(network, transport string) (string, error) {
+	if network == "" {
+		return transport, nil
+	}
+	if network == transport || network == transport+"4" || network == transport+"6" {
+		return network, nil
+	}
+	return "", net.UnknownNetworkError(network)
+}
+
+func resolveIPNetwork(network string) (string, error) {
+	if network == "" {
+		return "ip", nil
+	}
+	if network == "ip" || network == ipNetwork4 || network == ipNetwork6 {
+		return network, nil
+	}
+	if i := strings.LastIndexByte(network, ':'); i >= 0 {
+		// Let net validate protocol names and numbers without resolving a host.
+		if _, err := net.ResolveIPAddr(network, ""); err != nil {
+			return "", fmt.Errorf("validate IP network: %w", err)
+		}
+		return network[:i], nil
+	}
+	return "", net.UnknownNetworkError(network)
+}
+
+func (n *ProtectedNet) resolveHostPort(network, address string) (net.IPAddr, int, error) {
+	if address == "" {
+		return net.IPAddr{}, 0, nil
+	}
 	host, portText, err := net.SplitHostPort(address)
 	if err != nil {
-		return nil, 0, fmt.Errorf("split host port: %w", err)
+		return net.IPAddr{}, 0, fmt.Errorf("split host port: %w", err)
 	}
-	port, err := strconv.Atoi(portText)
+	port, err := n.resolver.LookupPort(context.Background(), network, portText)
 	if err != nil {
-		return nil, 0, fmt.Errorf("parse port: %w", err)
+		return net.IPAddr{}, 0, fmt.Errorf("lookup port: %w", err)
 	}
 	ipNetwork := "ip"
 	if strings.HasSuffix(network, "4") {
-		ipNetwork = "ip4"
+		ipNetwork = ipNetwork4
 	} else if strings.HasSuffix(network, "6") {
-		ipNetwork = "ip6"
+		ipNetwork = ipNetwork6
 	}
-	ip, err := lookupIP(n.resolver, ipNetwork, host)
+	ip, err := lookupIPAddr(n.resolver, ipNetwork, host)
 	if err != nil {
-		return nil, 0, err
+		return net.IPAddr{}, 0, err
 	}
 	return ip, port, nil
 }
 
-// ai-generated: resolves one IP while preserving IP literals.
-func lookupIP(resolver *net.Resolver, network, host string) (net.IP, error) {
-	if ip := net.ParseIP(host); ip != nil {
-		return ip, nil
+func lookupIPAddr(resolver *net.Resolver, network, host string) (net.IPAddr, error) {
+	if host == "" {
+		return net.IPAddr{}, nil
+	}
+	address, zone := host, ""
+	if i := strings.LastIndexByte(host, '%'); i >= 0 {
+		address, zone = host[:i], host[i+1:]
+	}
+	if ip := net.ParseIP(address); ip != nil {
+		return selectIPAddr([]net.IPAddr{{IP: ip, Zone: zone}}, network, host)
 	}
 	ips, err := resolver.LookupIP(context.Background(), network, host)
 	if err != nil {
-		return nil, fmt.Errorf("lookup IP: %w", err)
+		return net.IPAddr{}, fmt.Errorf("lookup IP: %w", err)
 	}
-	if len(ips) == 0 {
-		return nil, &net.DNSError{Name: host, Err: "no addresses"}
+	addrs := make([]net.IPAddr, len(ips))
+	for i, ip := range ips {
+		addrs[i].IP = ip
 	}
-	return ips[0], nil
+	return selectIPAddr(addrs, network, host)
+}
+
+func selectIPAddr(ips []net.IPAddr, network, host string) (net.IPAddr, error) {
+	if strings.HasSuffix(network, "4") {
+		if ip, ok := firstIPAddr(ips, true); ok {
+			return ip, nil
+		}
+		return net.IPAddr{}, &net.AddrError{Err: errNoSuitableAddress, Addr: host}
+	}
+	if strings.HasSuffix(network, "6") {
+		if ip, ok := firstIPAddr(ips, false); ok {
+			return ip, nil
+		}
+		return net.IPAddr{}, &net.AddrError{Err: errNoSuitableAddress, Addr: host}
+	}
+	// Match net.Resolve*Addr's preference for IPv4 host-name results.
+	if ip, ok := firstIPAddr(ips, true); ok {
+		return ip, nil
+	}
+	if ip, ok := firstIPAddr(ips, false); ok {
+		return ip, nil
+	}
+	return net.IPAddr{}, &net.AddrError{Err: errNoSuitableAddress, Addr: host}
+}
+
+func firstIPAddr(ips []net.IPAddr, ipv4 bool) (net.IPAddr, bool) {
+	for _, ip := range ips {
+		is4 := ip.IP.To4() != nil
+		if (ipv4 && is4) || (!ipv4 && !is4 && len(ip.IP) == net.IPv6len) {
+			return ip, true
+		}
+	}
+	return net.IPAddr{}, false
 }
 
 // CreateDialer returns a dialer that protects each fd. It copies d and chains

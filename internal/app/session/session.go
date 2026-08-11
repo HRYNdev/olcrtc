@@ -601,7 +601,7 @@ func isLoopbackListenHost(host string) bool {
 func Run(ctx context.Context, cfg Config) error {
 	cfg = ApplyTransportDefaults(cfg)
 	cfg = ApplyLivenessDefaults(cfg)
-	configureResolver(cfg.Resolver, cfg.DNSServer)
+	cfg.Resolver = resolverFor(cfg.Resolver, cfg.DNSServer)
 	roomURL := cfg.RoomID
 	liveness, err := livenessConfig(cfg)
 	if err != nil {
@@ -625,12 +625,11 @@ func Run(ctx context.Context, cfg Config) error {
 	return run(ctx)
 }
 
-// ai-generated: configures protected dialing without mutating net.DefaultResolver.
-func configureResolver(resolver *net.Resolver, dnsServer string) {
-	if resolver == nil {
-		resolver = protect.NewResolver(dnsServer)
+func resolverFor(resolver *net.Resolver, dnsServer string) *net.Resolver {
+	if resolver != nil {
+		return resolver
 	}
-	protect.SetResolver(resolver)
+	return protect.NewResolver(dnsServer)
 }
 
 func runOnce(
@@ -650,6 +649,7 @@ func runOnce(
 			ChannelID:        cfg.ChannelID,
 			KeyHex:           cfg.KeyHex,
 			DNSServer:        cfg.DNSServer,
+			Resolver:         cfg.Resolver,
 			SOCKSProxyAddr:   cfg.SOCKSProxyAddr,
 			SOCKSProxyPort:   cfg.SOCKSProxyPort,
 			SOCKSProxyUser:   cfg.SOCKSProxyUser,
@@ -683,6 +683,7 @@ func runOnce(
 			KeyHex:           cfg.KeyHex,
 			LocalAddr:        fmt.Sprintf("%s:%d", cfg.SOCKSHost, cfg.SOCKSPort),
 			DNSServer:        cfg.DNSServer,
+			Resolver:         cfg.Resolver,
 			SOCKSUser:        cfg.SOCKSUser,
 			SOCKSPass:        cfg.SOCKSPass,
 			TransportOptions: opts,
@@ -796,7 +797,7 @@ func genRetry(ctx context.Context, fn func(context.Context) error) error {
 
 // Gen creates cfg.Amount rooms for the configured auth provider and writes each room ID to out.
 func Gen(ctx context.Context, cfg Config, out func(string)) error {
-	configureResolver(cfg.Resolver, cfg.DNSServer)
+	cfg.Resolver = resolverFor(cfg.Resolver, cfg.DNSServer)
 	p, err := auth.Get(cfg.Auth)
 	if err != nil {
 		return fmt.Errorf("%w: %s", ErrUnsupportedCarrier, cfg.Auth)
@@ -809,7 +810,9 @@ func Gen(ctx context.Context, cfg Config, out func(string)) error {
 		var roomID string
 		err := genRetry(ctx, func(ctx context.Context) error {
 			var genErr error
-			roomID, genErr = creator.CreateRoom(ctx, auth.Config{Name: names.Generate(), DNSServer: cfg.DNSServer})
+			roomID, genErr = creator.CreateRoom(ctx, auth.Config{
+				Name: names.Generate(), DNSServer: cfg.DNSServer, Resolver: cfg.Resolver,
+			})
 			if genErr != nil {
 				return fmt.Errorf("CreateRoom: %w", genErr)
 			}

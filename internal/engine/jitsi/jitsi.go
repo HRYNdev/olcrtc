@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"runtime"
 	"strconv"
 	"strings"
@@ -115,9 +116,11 @@ var (
 
 // Session is the Jitsi engine handle.
 type Session struct {
-	host string
-	room string
-	name string
+	host       string
+	room       string
+	name       string
+	resolver   *net.Resolver
+	httpClient *http.Client
 
 	onData              func([]byte)
 	onPeerData          func(peerID string, data []byte)
@@ -209,6 +212,8 @@ func New(_ context.Context, cfg engine.Config) (engine.Session, error) {
 		host:                host,
 		room:                room,
 		name:                name,
+		resolver:            cfg.Resolver,
+		httpClient:          protect.NewHTTPClient(cfg.Resolver),
 		onData:              cfg.OnData,
 		onPeerData:          cfg.OnPeerData,
 		requireTargetedPeer: cfg.RequireTargetedPeer,
@@ -327,10 +332,11 @@ func (s *Session) Connect(ctx context.Context) error {
 
 	logger.Infof("jitsi: joining MUC %s/%s as %s …", s.host, s.room, s.name)
 	jSess, err := j.JoinMUC(ctx, j.Config{
-		Host:  s.host,
-		Room:  s.room,
-		Nick:  s.name,
-		Debug: logger.IsVerbose(),
+		Host:       s.host,
+		Room:       s.room,
+		Nick:       s.name,
+		Debug:      logger.IsVerbose(),
+		HTTPClient: s.httpClient,
 	})
 	if err != nil {
 		return fmt.Errorf("jitsi join muc: %w", err)
@@ -529,7 +535,7 @@ func (s *Session) videoTrackHandler() func(*webrtc.TrackRemote, *webrtc.RTPRecei
 // netlink_route_socket for untrusted apps (b/155595000), so ProtectedNet
 // (which uses getifaddrs instead of netlink) must be installed even without
 // a Protector. It fails closed instead of falling back to the default path.
-func newSettingEngine() (webrtc.SettingEngine, error) {
+func newSettingEngine(resolver *net.Resolver) (webrtc.SettingEngine, error) {
 	settings := webrtc.SettingEngine{}
 	settings.LoggerFactory = logger.NewPionLoggerFactory()
 
@@ -545,10 +551,10 @@ func newSettingEngine() (webrtc.SettingEngine, error) {
 		return ip.To4() != nil
 	})
 
-	if protect.Protector == nil && protect.Resolver() == nil && runtime.GOOS != "android" {
+	if protect.Protector == nil && resolver == nil && runtime.GOOS != "android" {
 		return settings, nil
 	}
-	pnet, err := protect.NewProtectedNet()
+	pnet, err := protect.NewProtectedNet(resolver)
 	if err != nil {
 		return settings, fmt.Errorf("protected net: %w", err)
 	}
@@ -568,7 +574,7 @@ func newSettingEngine() (webrtc.SettingEngine, error) {
 func (s *Session) negotiatePC(
 	ctx context.Context, jSess *j.Session, sctpBridge bool,
 ) error {
-	settings, err := newSettingEngine()
+	settings, err := newSettingEngine(s.resolver)
 	if err != nil {
 		return err
 	}
@@ -1772,10 +1778,11 @@ func (s *Session) reconnect(ctx context.Context) error {
 	logger.Infof("jitsi: rejoin %s/%s (non-blocking) ...", s.host, s.room)
 	joinCtx, joinCancel := context.WithTimeout(ctx, reconnectJoinTimeout)
 	jSess, err := j.JoinMUC(joinCtx, j.Config{
-		Host:  s.host,
-		Room:  s.room,
-		Nick:  s.name,
-		Debug: logger.IsVerbose(),
+		Host:       s.host,
+		Room:       s.room,
+		Nick:       s.name,
+		Debug:      logger.IsVerbose(),
+		HTTPClient: s.httpClient,
 	})
 	joinCancel()
 	if err != nil {
@@ -1902,10 +1909,11 @@ func (s *Session) reconnectFull(ctx context.Context) error {
 	// If this fails, it's a real connectivity problem.
 	joinCtx, joinCancel := context.WithTimeout(ctx, reconnectJoinTimeout)
 	jSess, err := j.JoinMUC(joinCtx, j.Config{
-		Host:  s.host,
-		Room:  s.room,
-		Nick:  s.name,
-		Debug: logger.IsVerbose(),
+		Host:       s.host,
+		Room:       s.room,
+		Nick:       s.name,
+		Debug:      logger.IsVerbose(),
+		HTTPClient: s.httpClient,
 	})
 	joinCancel()
 	if err != nil {

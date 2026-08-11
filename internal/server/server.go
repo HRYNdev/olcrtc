@@ -142,6 +142,7 @@ type Config struct {
 	ChannelID        string
 	KeyHex           string
 	DNSServer        string
+	Resolver         *net.Resolver
 	SOCKSProxyAddr   string
 	SOCKSProxyPort   int
 	SOCKSProxyUser   string
@@ -201,6 +202,7 @@ func Run(ctx context.Context, cfg Config) error {
 		onClose:        onClose,
 		onTraffic:      onTraffic,
 		dnsServer:      cfg.DNSServer,
+		resolver:       cfg.Resolver,
 		socksProxyAddr: cfg.SOCKSProxyAddr,
 		socksProxyPort: cfg.SOCKSProxyPort,
 		socksProxyUser: cfg.SOCKSProxyUser,
@@ -247,9 +249,7 @@ func setupCipher(keyHex string) (*crypto.Cipher, error) {
 	return cipher, nil
 }
 
-// ai-generated: uses the injected resolver or a local DNS server resolver.
 func (s *Server) setupResolver() {
-	s.resolver = protect.Resolver()
 	if s.resolver == nil {
 		s.resolver = protect.NewResolver(s.dnsServer)
 	}
@@ -298,6 +298,7 @@ func (s *Server) bringUpLink(
 		OnData:     s.onData,
 		OnPeerData: s.onPeerData,
 		DNSServer:  s.dnsServer,
+		Resolver:   s.resolver,
 		ProxyAddr:  s.socksProxyAddr,
 		ProxyPort:  s.socksProxyPort,
 		Options:    cfg.TransportOptions,

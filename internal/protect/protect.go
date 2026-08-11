@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -30,7 +29,8 @@ const (
 )
 
 var (
-	sensitiveFieldRE = regexp.MustCompile(
+	errRequestBodyNotReplayable = errors.New("request body is not replayable")
+	sensitiveFieldRE            = regexp.MustCompile(
 		`(?i)((?:access[_-]?token|room[_-]?token|token|credentials)"?\s*[:=]\s*"?)` +
 			`[^",\s}]+`,
 	)
@@ -40,20 +40,6 @@ var (
 // Protector is called with a socket file descriptor before connect.
 // On Android, this calls VpnService.protect(fd) to bypass VPN routing.
 var Protector func(fd int) bool //nolint:gochecknoglobals // package-level state intentional
-
-var customResolver atomic.Pointer[net.Resolver] //nolint:gochecknoglobals // process integration setting
-
-// SetResolver sets the resolver used by newly created protected dialers.
-// ai-generated: added thread-safe custom resolver injection.
-func SetResolver(resolver *net.Resolver) {
-	customResolver.Store(resolver)
-}
-
-// Resolver returns the resolver used by newly created protected dialers.
-// ai-generated: added access to the current custom resolver.
-func Resolver() *net.Resolver {
-	return customResolver.Load()
-}
 
 func controlFunc(network, _ string, c syscall.RawConn) error {
 	if Protector == nil {
@@ -73,11 +59,10 @@ func controlFunc(network, _ string, c syscall.RawConn) error {
 
 // NewDialer returns a net.Dialer that calls Protector on each new socket.
 func NewDialer() *net.Dialer {
-	return NewDialerWithResolver(Resolver())
+	return NewDialerWithResolver(nil)
 }
 
 // NewDialerWithResolver returns a protected dialer using resolver for DNS.
-// ai-generated: added resolver-aware protected dialing.
 func NewDialerWithResolver(resolver *net.Resolver) *net.Dialer {
 	return &net.Dialer{
 		Timeout:   defaultDialTimeout,
@@ -88,7 +73,6 @@ func NewDialerWithResolver(resolver *net.Resolver) *net.Dialer {
 }
 
 // NewResolver returns a local Go resolver that sends queries to dnsServer.
-// ai-generated: added local DNS server resolver construction.
 func NewResolver(dnsServer string) *net.Resolver {
 	if dnsServer == "" {
 		return nil
@@ -140,18 +124,58 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	var resp *http.Response
 	var err error
 	for i := range maxRetries {
-		if i > 0 {
-			time.Sleep(time.Duration(i) * 500 * time.Millisecond)
+		if waitErr := waitForRetry(req.Context(), i); waitErr != nil {
+			return nil, waitErr
 		}
-		resp, err = t.base.RoundTrip(req)
+		attempt, requestErr := requestForAttempt(req, i)
+		if requestErr != nil {
+			return resp, fmt.Errorf("prepare retry: %w", requestErr)
+		}
+		resp, err = t.base.RoundTrip(attempt)
 		if err == nil || !isRetriableError(err) {
 			if err != nil {
 				return resp, fmt.Errorf("round trip: %w", err)
 			}
 			return resp, nil
 		}
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
 	}
 	return resp, fmt.Errorf("round trip after %d retries: %w", maxRetries, err)
+}
+
+func waitForRetry(ctx context.Context, attempt int) error {
+	if attempt == 0 {
+		return nil
+	}
+	timer := time.NewTimer(time.Duration(attempt) * 500 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("retry wait: %w", ctx.Err())
+	}
+}
+
+func requestForAttempt(req *http.Request, attempt int) (*http.Request, error) {
+	if attempt == 0 {
+		return req, nil
+	}
+	retry := req.Clone(req.Context())
+	if req.Body == nil {
+		return retry, nil
+	}
+	if req.GetBody == nil {
+		return nil, errRequestBodyNotReplayable
+	}
+	body, err := req.GetBody()
+	if err != nil {
+		return nil, fmt.Errorf("recreate request body: %w", err)
+	}
+	retry.Body = body
+	return retry, nil
 }
 
 func isRetriableError(err error) bool {
@@ -228,15 +252,13 @@ func (d *ProxyDialer) Dial(network, addr string) (net.Conn, error) {
 }
 
 // NewProxyDialer returns a proxy.Dialer that protects ICE sockets.
-// ai-generated: added optional resolver injection to the ICE proxy dialer.
 func NewProxyDialer(resolvers ...*net.Resolver) *ProxyDialer {
 	return &ProxyDialer{resolver: firstResolver(resolvers)}
 }
 
-// ai-generated: selects the optional resolver without changing legacy calls.
 func firstResolver(resolvers []*net.Resolver) *net.Resolver {
 	if len(resolvers) == 0 {
-		return Resolver()
+		return nil
 	}
 	return resolvers[0]
 }

@@ -127,24 +127,20 @@ func SetTransport(transport string) {
 }
 
 // SetDNS selects the DNS server used by the tunnel.
-// ai-generated: constructs a local resolver instead of changing net.DefaultResolver.
 func SetDNS(dnsServer string) {
 	mu.Lock()
 	defer mu.Unlock()
 	ensureDefaultConfigLocked()
 	defaults.dnsServer = dnsServer
 	defaults.resolver = protect.NewResolver(dnsServer)
-	protect.SetResolver(defaults.resolver)
 }
 
 // SetCustomResolver sets the resolver used by outbound olcrtc connections.
-// ai-generated: added resolver injection for embedding applications.
 func SetCustomResolver(resolver *net.Resolver) {
 	mu.Lock()
 	defer mu.Unlock()
 	ensureDefaultConfigLocked()
 	defaults.resolver = resolver
-	protect.SetResolver(resolver)
 }
 
 // SetWBToken sets the pre-issued wbstream account token (auth.token).
@@ -276,7 +272,8 @@ func Check(
 				KeyHex:    keyHex,
 				DeviceID:  clientID,
 				LocalAddr: socksListenAddr(cfg.socksListenHost, socksPort),
-				DNSServer: defaultDNSServer,
+				DNSServer: cfg.dnsServer,
+				Resolver:  cfg.resolver,
 				AuthToken: cfg.authToken,
 				TransportOptions: vp8channel.Options{
 					FPS:       clampAtLeastOne(vp8FPS, 120),
@@ -367,7 +364,8 @@ func Ping(
 				KeyHex:    keyHex,
 				DeviceID:  clientID,
 				LocalAddr: socksListenAddr(cfg.socksListenHost, socksPort),
-				DNSServer: defaultDNSServer,
+				DNSServer: cfg.dnsServer,
+				Resolver:  cfg.resolver,
 				AuthToken: cfg.authToken,
 				TransportOptions: vp8channel.Options{
 					FPS:       clampAtLeastOne(vp8FPS, 120),
@@ -594,8 +592,6 @@ func startWithConfig(
 	}
 
 	roomURL := buildRoomURL(carrierName, roomID)
-	protect.SetResolver(cfg.resolver)
-
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	cancel = cancelFunc
 	done = make(chan struct{})
@@ -617,6 +613,7 @@ func startWithConfig(
 				DeviceID:  clientID,
 				LocalAddr: socksListenAddr(cfg.socksListenHost, socksPort),
 				DNSServer: cfg.dnsServer,
+				Resolver:  cfg.resolver,
 				AuthToken: cfg.authToken,
 				SOCKSUser: socksUser,
 				SOCKSPass: socksPass,
