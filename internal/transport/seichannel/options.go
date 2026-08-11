@@ -1,7 +1,6 @@
 package seichannel
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
@@ -36,12 +35,9 @@ func (o Options) withDefaults() Options {
 }
 
 func optionsFrom(cfg transport.Config) (Options, error) {
-	if cfg.Options == nil {
-		return Options{}, nil
+	opts, err := transport.OptionsAs[Options](cfg, "seichannel")
+	if err != nil {
+		return Options{}, err
 	}
-	opts, ok := cfg.Options.(Options)
-	if !ok {
-		return Options{}, fmt.Errorf("%w: seichannel: got %T", transport.ErrOptionsTypeMismatch, cfg.Options)
-	}
-	return opts, nil
+	return opts.withDefaults(), nil
 }

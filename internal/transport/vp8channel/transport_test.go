@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -121,12 +120,12 @@ func TestBatchSampleCarriesMultipleKCPPackets(t *testing.T) {
 	}
 
 	tr := &streamTransport{
-		outbound:  make(chan []byte, 4),
+		data:      newKCPPlane(4, nil),
 		batchSize: 3,
 	}
-	tr.outbound <- packet("two")
-	tr.outbound <- packet("three")
-	tr.outbound <- packet("four")
+	tr.data.out <- packet("two")
+	tr.data.out <- packet("three")
+	tr.data.out <- packet("four")
 
 	sample := tr.batchSample(packet("one"))
 	if !bytes.Equal(sample[:epochHdrLen], hdr[:]) {
@@ -146,7 +145,7 @@ func TestBatchSampleCarriesMultipleKCPPackets(t *testing.T) {
 			t.Fatalf("payload[%d] = %q, want %q", i, got[i], want[i])
 		}
 	}
-	if left := len(tr.outbound); left != 1 {
+	if left := len(tr.data.out); left != 1 {
 		t.Fatalf("outbound left = %d, want 1", left)
 	}
 }
@@ -172,14 +171,13 @@ func testEpochHdr(epoch uint32) [epochHdrLen]byte {
 }
 
 func TestHandleIncomingFrameIgnoresLoopedBackLocalEpoch(t *testing.T) {
+	stream := &fakeVideoStream{}
 	tr := &streamTransport{
+		stream:       stream,
 		bindingToken: bindingToken("test"),
 		localEpoch:   12345,
 		onData:       func([]byte) {},
 	}
-
-	var called atomic.Int32
-	tr.reconnectFn = func() { called.Add(1) }
 
 	frame := make([]byte, epochHdrLen+4)
 	copy(frame, vp8Keepalive)
@@ -197,20 +195,19 @@ func TestHandleIncomingFrameIgnoresLoopedBackLocalEpoch(t *testing.T) {
 	if got := tr.peerEpoch.Load(); got != 0 {
 		t.Fatalf("peer epoch changed on self-echo: got %d want 0", got)
 	}
-	if got := called.Load(); got != 0 {
-		t.Fatalf("reconnect called on self-echo: got %d want 0", got)
+	if got := stream.reconnects.Load(); got != 0 {
+		t.Fatalf("carrier rebuilt on self-echo: got %d want 0", got)
 	}
 }
 
 func TestHandleIncomingFrameIgnoresForeignBindingToken(t *testing.T) {
+	stream := &fakeVideoStream{}
 	tr := &streamTransport{
+		stream:       stream,
 		bindingToken: bindingToken("srv-client"),
 		localEpoch:   12345,
 		onData:       func([]byte) {},
 	}
-
-	var called atomic.Int32
-	tr.reconnectFn = func() { called.Add(1) }
 
 	frame := make([]byte, epochHdrLen+4)
 	copy(frame, vp8Keepalive)
@@ -229,7 +226,7 @@ func TestHandleIncomingFrameIgnoresForeignBindingToken(t *testing.T) {
 	if got := tr.peerEpoch.Load(); got != 0 {
 		t.Fatalf("peer epoch changed on foreign frame: got %d want 0", got)
 	}
-	if got := called.Load(); got != 0 {
-		t.Fatalf("reconnect called on foreign frame: got %d want 0", got)
+	if got := stream.reconnects.Load(); got != 0 {
+		t.Fatalf("carrier rebuilt on foreign frame: got %d want 0", got)
 	}
 }

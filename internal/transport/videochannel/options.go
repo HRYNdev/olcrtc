@@ -1,8 +1,6 @@
 package videochannel
 
 import (
-	"fmt"
-
 	grtile "github.com/zarazaex69/gr/tile"
 
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
@@ -12,10 +10,12 @@ import (
 // video defaults so a transport built straight from a zero Options behaves
 // like one built from the documented config.
 const (
-	defaultFPS    = 30
-	defaultWidth  = 1920
-	defaultHeight = 1080
-	codecTile     = "tile"
+	defaultFPS        = 30
+	defaultWidth      = 1920
+	defaultHeight     = 1080
+	defaultTileModule = 4
+	defaultTileRS     = 20
+	codecTile         = "tile"
 )
 
 // Options tunes the videochannel transport. Zero values fall back to documented defaults.
@@ -42,6 +42,17 @@ func (o Options) withDefaults() Options {
 	if o.FPS <= 0 {
 		o.FPS = defaultFPS
 	}
+	if o.QRSize <= 0 {
+		o.QRSize = defaultFragmentSize
+	}
+	if o.TileModule <= 0 {
+		o.TileModule = defaultTileModule
+	}
+	// A zero RS budget is a valid choice (no Reed-Solomon parity); only an
+	// unset/negative value falls back to the default.
+	if o.TileRS < 0 {
+		o.TileRS = defaultTileRS
+	}
 	// The tile codec renders fixed-size frames, so its dimensions are not a
 	// free choice - they must match the tile frame or the encoder rejects
 	// every sample.
@@ -64,12 +75,9 @@ func (o Options) withDefaults() Options {
 }
 
 func optionsFrom(cfg transport.Config) (Options, error) {
-	if cfg.Options == nil {
-		return Options{}.withDefaults(), nil
-	}
-	opts, ok := cfg.Options.(Options)
-	if !ok {
-		return Options{}, fmt.Errorf("%w: videochannel: got %T", transport.ErrOptionsTypeMismatch, cfg.Options)
+	opts, err := transport.OptionsAs[Options](cfg, "videochannel")
+	if err != nil {
+		return Options{}, err
 	}
 	return opts.withDefaults(), nil
 }

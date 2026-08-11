@@ -1,8 +1,6 @@
 package vp8channel
 
 import (
-	"fmt"
-
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
 )
 
@@ -20,13 +18,23 @@ type Options struct {
 // TransportOptions marks Options as belonging to the transport options family.
 func (Options) TransportOptions() {}
 
+// withDefaults fills unset Options fields with the package defaults. FPS in
+// particular must never stay zero: the writer loop derives its ticker period
+// from it and a zero divides by zero.
+func (o Options) withDefaults() Options {
+	if o.FPS <= 0 {
+		o.FPS = defaultFPS
+	}
+	if o.BatchSize <= 0 {
+		o.BatchSize = defaultBatchSize
+	}
+	return o
+}
+
 func optionsFrom(cfg transport.Config) (Options, error) {
-	if cfg.Options == nil {
-		return Options{}, nil
+	opts, err := transport.OptionsAs[Options](cfg, "vp8channel")
+	if err != nil {
+		return Options{}, err
 	}
-	opts, ok := cfg.Options.(Options)
-	if !ok {
-		return Options{}, fmt.Errorf("%w: vp8channel: got %T", transport.ErrOptionsTypeMismatch, cfg.Options)
-	}
-	return opts, nil
+	return opts.withDefaults(), nil
 }

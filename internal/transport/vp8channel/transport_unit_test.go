@@ -174,7 +174,7 @@ func TestNewConnectSendCallbacksFeaturesAndClose(t *testing.T) {
 	if err := tr.Connect(context.Background()); err != nil {
 		t.Fatalf("Connect() error = %v", err)
 	}
-	if tr.kcp == nil || !tr.writerUp.Load() {
+	if tr.data.get() == nil || !tr.writerUp.Load() {
 		t.Fatal("Connect() should eagerly initialize kcp and writer")
 	}
 	tr.SetReconnectCallback(func() {})
@@ -192,22 +192,22 @@ func TestNewConnectSendCallbacksFeaturesAndClose(t *testing.T) {
 	binary.BigEndian.PutUint32(firstFrame[srcOff:dstOff], peerEpoch)
 	binary.BigEndian.PutUint32(firstFrame[dstOff:crcOff], 0)
 	binary.BigEndian.PutUint32(firstFrame[crcOff:epochHdrLen], epochCRC(tr.bindingToken, peerEpoch, 0))
-	copy(firstFrame[epochHdrLen:], []byte("data"))
+	copy(firstFrame[epochHdrLen:], "data")
 	tr.handleIncomingFrame(firstFrame)
-	if tr.kcp == nil {
+	if tr.data.get() == nil {
 		t.Fatal("kcp not initialized after first peer frame")
 	}
 
 	if !tr.CanSend() {
 		t.Fatal("CanSend() = false, want true")
 	}
-	if features := tr.Features(); !features.Reliable || !features.Ordered || !features.MessageOriented || features.MaxPayloadSize == 0 {
+	if features := tr.Features(); features.MaxPayloadSize == 0 {
 		t.Fatalf("Features() = %+v", features)
 	}
 	if err := tr.Send([]byte("payload")); err != nil {
 		t.Fatalf("Send() error = %v", err)
 	}
-	tr.drainOutbound()
+	tr.data.drain()
 	if err := tr.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
@@ -237,7 +237,8 @@ func TestNewErrorPaths(t *testing.T) {
 func TestEpochHeaderTokenAndOutboundCapacity(t *testing.T) {
 	tr := &streamTransport{
 		stream:       &fakeVideoStream{canSend: true},
-		outbound:     make(chan []byte, 10),
+		data:         newKCPPlane(10, nil),
+		control:      newKCPPlane(1, nil),
 		closeCh:      make(chan struct{}),
 		writerDone:   make(chan struct{}),
 		bindingToken: bindingToken("client"),
@@ -256,22 +257,20 @@ func TestEpochHeaderTokenAndOutboundCapacity(t *testing.T) {
 		t.Fatal("bindingToken/randomEpoch returned zero")
 	}
 
-	rt, err := startKCP(tr.outbound, nil, tr.epochHeader())
+	rt, err := startKCP(tr.data.out, nil, tr.epochHeader())
 	if err != nil {
 		t.Fatalf("startKCP: %v", err)
 	}
 	defer rt.close()
-	tr.kcpMu.Lock()
-	tr.kcp = rt
-	tr.kcpMu.Unlock()
+	tr.data.set(rt)
 
-	for len(tr.outbound) < cap(tr.outbound)*canSendHighWatermark/100 {
-		tr.outbound <- []byte("queued")
+	for len(tr.data.out) < cap(tr.data.out)*canSendHighWatermark/100 {
+		tr.data.out <- []byte("queued")
 	}
 	if tr.CanSend() {
 		t.Fatal("CanSend() = true at high watermark")
 	}
-	tr.drainOutbound()
+	tr.data.drain()
 	if !tr.CanSend() {
 		t.Fatal("CanSend() = false after drain")
 	}
@@ -284,7 +283,8 @@ func TestEpochHeaderTokenAndOutboundCapacity(t *testing.T) {
 func TestResetPeerRestartsKCPAndDrainsOutbound(t *testing.T) {
 	tr := &streamTransport{
 		stream:       &fakeVideoStream{canSend: true},
-		outbound:     make(chan []byte, 10),
+		data:         newKCPPlane(10, nil),
+		control:      newKCPPlane(10, nil),
 		closeCh:      make(chan struct{}),
 		writerDone:   make(chan struct{}),
 		bindingToken: bindingToken("client"),
@@ -294,26 +294,22 @@ func TestResetPeerRestartsKCPAndDrainsOutbound(t *testing.T) {
 		_ = tr.Close()
 	}()
 
-	rt, err := startKCP(tr.outbound, nil, tr.epochHeader())
+	rt, err := startKCP(tr.data.out, nil, tr.epochHeader())
 	if err != nil {
 		t.Fatalf("startKCP: %v", err)
 	}
-	tr.kcpMu.Lock()
-	tr.kcp = rt
-	tr.kcpMu.Unlock()
-	tr.outbound <- []byte("stale")
+	tr.data.set(rt)
+	tr.data.out <- []byte("stale")
 	oldEpoch := tr.localEpoch
 
 	tr.ResetPeer()
 
-	tr.kcpMu.RLock()
-	got := tr.kcp
-	tr.kcpMu.RUnlock()
+	got := tr.data.get()
 	if got == nil || got == rt {
 		t.Fatalf("ResetPeer kcp = %p, want fresh non-nil runtime distinct from %p", got, rt)
 	}
-	if len(tr.outbound) != 0 {
-		t.Fatalf("ResetPeer left %d outbound frame(s), want 0", len(tr.outbound))
+	if len(tr.data.out) != 0 {
+		t.Fatalf("ResetPeer left %d outbound frame(s), want 0", len(tr.data.out))
 	}
 	if tr.localEpoch == oldEpoch {
 		t.Fatalf("ResetPeer localEpoch = %#x, want different epoch", tr.localEpoch)
@@ -338,11 +334,11 @@ func TestVP8FrameStateAssemblesAndRejectsCorruptFrames(t *testing.T) {
 	}
 
 	state = vp8FrameState{}
-	if got := state.processRTPPacket(&rtp.Packet{
+	if partial := state.processRTPPacket(&rtp.Packet{
 		Header:  rtp.Header{SequenceNumber: 20},
 		Payload: append([]byte{0x10}, frame[:4]...),
-	}); got != nil {
-		t.Fatalf("partial frame = %x, want nil", got)
+	}); partial != nil {
+		t.Fatalf("partial frame = %x, want nil", partial)
 	}
 	got = state.processRTPPacket(&rtp.Packet{
 		Header:  rtp.Header{SequenceNumber: 21, Marker: true},
@@ -357,19 +353,19 @@ func TestVP8FrameStateAssemblesAndRejectsCorruptFrames(t *testing.T) {
 		Header:  rtp.Header{SequenceNumber: 30},
 		Payload: append([]byte{0x10}, frame[:4]...),
 	})
-	if got := state.processRTPPacket(&rtp.Packet{
+	if gapped := state.processRTPPacket(&rtp.Packet{
 		Header:  rtp.Header{SequenceNumber: 32, Marker: true},
 		Payload: append([]byte{0x00}, frame[4:]...),
-	}); got != nil {
-		t.Fatalf("frame after sequence gap = %x, want nil", got)
+	}); gapped != nil {
+		t.Fatalf("frame after sequence gap = %x, want nil", gapped)
 	}
 
 	state = vp8FrameState{}
-	if got := state.processRTPPacket(&rtp.Packet{
+	if bad := state.processRTPPacket(&rtp.Packet{
 		Header:  rtp.Header{SequenceNumber: 40, Marker: true},
 		Payload: []byte{},
-	}); got != nil {
-		t.Fatalf("bad vp8 payload = %x, want nil", got)
+	}); bad != nil {
+		t.Fatalf("bad vp8 payload = %x, want nil", bad)
 	}
 }
 
@@ -377,7 +373,8 @@ func TestHandleIncomingFrameEpochFilteringAndReconnect(t *testing.T) {
 	called := 0
 	tr := &streamTransport{
 		stream:       &fakeVideoStream{canSend: true},
-		outbound:     make(chan []byte, 16),
+		data:         newKCPPlane(16, nil),
+		control:      newKCPPlane(16, nil),
 		closeCh:      make(chan struct{}),
 		writerDone:   make(chan struct{}),
 		bindingToken: bindingToken("client"),
@@ -424,8 +421,8 @@ func TestHandleIncomingFrameEpochFilteringAndReconnect(t *testing.T) {
 		t.Fatal("SetReconnectCallback did not install stream callback")
 	}
 	stream.reconnect()
-	if !reconnected || tr.kcp == nil {
-		t.Fatalf("stream reconnect did not reset/callback: reconnected=%v kcp=%v", reconnected, tr.kcp)
+	if !reconnected || tr.data.get() == nil {
+		t.Fatalf("stream reconnect did not reset/callback: reconnected=%v kcp=%v", reconnected, tr.data.get())
 	}
 	reconnected = false
 	// After reconnect, peerConfirmed is reset so the next frame re-latches
@@ -465,7 +462,8 @@ func TestPeerRestartRebuildsCarrierAfterGrace(t *testing.T) {
 	stream := &fakeVideoStream{canSend: true}
 	tr := &streamTransport{
 		stream:           stream,
-		outbound:         make(chan []byte, 16),
+		data:             newKCPPlane(16, nil),
+		control:          newKCPPlane(16, nil),
 		closeCh:          make(chan struct{}),
 		writerDone:       make(chan struct{}),
 		bindingToken:     bindingToken("client"),
@@ -512,7 +510,8 @@ func TestPeerRestartRebuildsOnlyOnce(t *testing.T) {
 	stream := &fakeVideoStream{canSend: true}
 	tr := &streamTransport{
 		stream:           stream,
-		outbound:         make(chan []byte, 16),
+		data:             newKCPPlane(16, nil),
+		control:          newKCPPlane(16, nil),
 		closeCh:          make(chan struct{}),
 		writerDone:       make(chan struct{}),
 		bindingToken:     bindingToken("client"),
@@ -541,7 +540,8 @@ func TestLivePeerKeepsLatchFresh(t *testing.T) {
 	stream := &fakeVideoStream{canSend: true}
 	tr := &streamTransport{
 		stream:           stream,
-		outbound:         make(chan []byte, 16),
+		data:             newKCPPlane(16, nil),
+		control:          newKCPPlane(16, nil),
 		closeCh:          make(chan struct{}),
 		writerDone:       make(chan struct{}),
 		bindingToken:     bindingToken("client"),
@@ -576,7 +576,8 @@ func TestPeerRestartSuppressedWhenControlHealthy(t *testing.T) {
 	stream := &fakeVideoStream{canSend: true}
 	tr := &streamTransport{
 		stream:           stream,
-		outbound:         make(chan []byte, 16),
+		data:             newKCPPlane(16, nil),
+		control:          newKCPPlane(16, nil),
 		closeCh:          make(chan struct{}),
 		writerDone:       make(chan struct{}),
 		bindingToken:     bindingToken("client"),
@@ -608,7 +609,8 @@ func TestPeerRestartFiresOnceCorroborated(t *testing.T) {
 	stream := &fakeVideoStream{canSend: true}
 	tr := &streamTransport{
 		stream:           stream,
-		outbound:         make(chan []byte, 16),
+		data:             newKCPPlane(16, nil),
+		control:          newKCPPlane(16, nil),
 		closeCh:          make(chan struct{}),
 		writerDone:       make(chan struct{}),
 		bindingToken:     bindingToken("client"),

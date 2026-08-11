@@ -5,7 +5,10 @@ import (
 	"hash/crc32"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/openlibrecommunity/olcrtc/internal/logger"
 )
 
 // wireCRCLen is the size of the CRC32 trailer appended to every KCP packet
@@ -18,6 +21,9 @@ import (
 // (issue #109). The CRC restores UDP-equivalent semantics: a corrupted packet
 // is dropped so KCP retransmits it.
 const wireCRCLen = 4
+
+// warnInterval rate-limits the drop/truncation warnings.
+const warnInterval = 5 * time.Second
 
 // crcTable uses the Castagnoli polynomial for hardware-accelerated checksums
 // (SSE4.2 on amd64) on this throughput hot path.
@@ -50,6 +56,16 @@ type kcpConn struct {
 	hdrMu    sync.RWMutex
 	epochHdr [epochHdrLen]byte
 
+	// dropped counts packets discarded because the inbound queue was full,
+	// corrupt counts packets rejected by the CRC check, and truncated counts
+	// reads whose destination buffer was too small for the packet. All three
+	// are otherwise-invisible failure modes, so they are reported through
+	// warnRateLimitedf.
+	dropped      atomic.Uint64
+	corrupt      atomic.Uint64
+	truncated    atomic.Uint64
+	lastWarnNano atomic.Int64
+
 	mu        sync.Mutex
 	rDeadline time.Time
 	wDeadline time.Time
@@ -79,14 +95,19 @@ func newKCPConn(out chan<- []byte, inboundCap int, epochHdr [epochHdrLen]byte) *
 // CRC32 is verified and stripped first: a mismatch means the carrier corrupted
 // the packet, so we drop it (KCP retransmits via SACK) instead of feeding
 // garbage into KCP and, ultimately, the muxconn AEAD (issue #109). Drops on
-// overflow are intentional - KCP will detect the loss via SACK and retransmit.
+// overflow are intentional - KCP will detect the loss via SACK and retransmit -
+// but they are counted and reported, because a queue that keeps overflowing is
+// the difference between "KCP recovered a packet" and "the reader cannot keep
+// up and throughput is quietly capped".
 func (c *kcpConn) deliver(payload []byte) {
 	if len(payload) < wireCRCLen {
+		c.corrupt.Add(1)
 		return
 	}
 	body := payload[:len(payload)-wireCRCLen]
 	want := binary.BigEndian.Uint32(payload[len(payload)-wireCRCLen:])
 	if crc32.Checksum(body, crcTable) != want {
+		c.corrupt.Add(1)
 		return
 	}
 	cp := make([]byte, len(body))
@@ -95,7 +116,24 @@ func (c *kcpConn) deliver(payload []byte) {
 	case c.in <- cp:
 	case <-c.closed:
 	default:
+		c.warnRateLimitedf("inbound queue full, dropped %d packet(s) (corrupt=%d)",
+			c.dropped.Add(1), c.corrupt.Load())
 	}
+}
+
+// warnRateLimitedf emits at most one warning per warnInterval so a sustained
+// drop storm cannot itself become the problem.
+func (c *kcpConn) warnRateLimitedf(format string, args ...any) {
+	now := time.Now().UnixNano()
+	last := c.lastWarnNano.Load()
+	if now-last < int64(warnInterval) {
+		return
+	}
+	if !c.lastWarnNano.CompareAndSwap(last, now) {
+		return
+	}
+
+	logger.Warnf("vp8channel: "+format, args...)
 }
 
 func (c *kcpConn) ReadFrom(p []byte) (int, net.Addr, error) {
@@ -117,6 +155,13 @@ func (c *kcpConn) ReadFrom(p []byte) (int, net.Addr, error) {
 	select {
 	case msg := <-c.in:
 		n := copy(p, msg)
+		if n < len(msg) {
+			// KCP always reads with a full-MTU buffer, so this means the
+			// packet exceeded the MTU: the tail is lost and KCP will see a
+			// malformed segment. Never silently.
+			c.warnRateLimitedf("read buffer too small: %d of %d bytes, %d truncated read(s)",
+				n, len(msg), c.truncated.Add(1))
+		}
 		return n, fakeUDPAddr(), nil
 	case <-c.closed:
 		return 0, nil, net.ErrClosed
@@ -189,6 +234,12 @@ func (c *kcpConn) SetWriteDeadline(t time.Time) error {
 
 // TimeoutError is a net.Error indicating a deadline exceeded.
 type TimeoutError struct{}
+
+// kcp-go and everything else on this path classify read/write failures with
+// errors.As(err, &net.Error). That interface still lists the deprecated
+// Temporary method, so dropping it would silently stop TimeoutError being
+// recognised as a timeout at all.
+var _ net.Error = TimeoutError{}
 
 func (TimeoutError) Error() string { return "i/o timeout" }
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
+	"github.com/openlibrecommunity/olcrtc/internal/transport/common"
 )
 
 const defaultMaxPayloadSize = 12 * 1024
@@ -21,6 +22,8 @@ var ErrByteStreamUnsupported = errors.New("engine does not support byte stream")
 var _ transport.PeerResetter = (*streamTransport)(nil)
 
 type streamTransport struct {
+	common.Lifecycle
+
 	session engine.Session
 	shaper  *transport.Shaper
 }
@@ -37,7 +40,7 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		return nil, ErrByteStreamUnsupported
 	}
 
-	tr := &streamTransport{session: sess}
+	tr := &streamTransport{Lifecycle: common.NewLifecycle(sess), session: sess}
 	tr.shaper = transport.NewShaper(cfg.Traffic, tr.Features())
 
 	return tr, nil
@@ -102,9 +105,6 @@ func (p *streamTransport) ResetPeer() {
 	}
 }
 
-// Reconnect forwards to the underlying engine session.
-func (p *streamTransport) Reconnect(reason string) { p.session.Reconnect(reason) }
-
 // SetReconnectCallback registers reconnect handling.
 func (p *streamTransport) SetReconnectCallback(cb func()) {
 	p.session.SetReconnectCallback(func(*webrtc.DataChannel) {
@@ -112,21 +112,6 @@ func (p *streamTransport) SetReconnectCallback(cb func()) {
 			cb()
 		}
 	})
-}
-
-// SetShouldReconnect configures reconnect policy.
-func (p *streamTransport) SetShouldReconnect(fn func() bool) {
-	p.session.SetShouldReconnect(fn)
-}
-
-// SetEndedCallback registers end-of-session handling.
-func (p *streamTransport) SetEndedCallback(cb func(string)) {
-	p.session.SetEndedCallback(cb)
-}
-
-// WatchConnection monitors connection lifecycle.
-func (p *streamTransport) WatchConnection(ctx context.Context) {
-	p.session.WatchConnection(ctx)
 }
 
 // CanSend reports whether transport is ready for sending.
@@ -149,10 +134,5 @@ func (p *streamTransport) WaitForPeer(ctx context.Context) error {
 
 // Features describes the current datachannel transport semantics.
 func (p *streamTransport) Features() transport.Features {
-	return p.shaper.Features(transport.Features{
-		Reliable:        true,
-		Ordered:         true,
-		MessageOriented: true,
-		MaxPayloadSize:  defaultMaxPayloadSize,
-	})
+	return p.shaper.Features(transport.Features{MaxPayloadSize: defaultMaxPayloadSize})
 }

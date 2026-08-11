@@ -44,6 +44,14 @@ type peerSession struct {
 	lastSeen int64
 }
 
+// controlRuntime returns the peer's control KCP if one has been created.
+func (s *peerSession) controlRuntime() *kcpRuntime {
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
+
+	return s.control
+}
+
 func (s *peerSession) touch(now time.Time) {
 	// Written under peerTable's lock, read under the same lock by sweep.
 	s.lastSeen = now.UnixNano()
@@ -266,14 +274,8 @@ func (p *streamTransport) peerControlFor(epoch uint32) *kcpRuntime {
 		epoch|controlEpochFlag,
 	)
 
-	control, err := startKCP(p.controlOutbound, func(data []byte) {
-		p.controlOnDataMu.RLock()
-		onPeerCtrl := p.onPeerControlData
-		p.controlOnDataMu.RUnlock()
-
-		if onPeerCtrl != nil {
-			onPeerCtrl(peerID, data)
-		}
+	control, err := startKCP(p.control.out, func(data []byte) {
+		p.deliverPeerControlData(peerID, data)
 	}, hdr)
 	if err != nil {
 		logger.Warnf("vp8channel: startKCP for peer control 0x%08x failed: %v", epoch, err)

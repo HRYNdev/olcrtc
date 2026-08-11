@@ -1,7 +1,12 @@
-// Package common provides building blocks shared by the video-track based
-// transports (videochannel, seichannel) - fragment/reassembly, ack waiters,
-// and per-peer random IDs. vp8channel does its own KCP-based framing and
-// only consumes RandomID.
+// Package common provides the building blocks shared by the video-track based
+// transports: the engine-session adapter, the wire frame codec, fragment and
+// reassembly handling, per-fragment ack tracking with the retransmit loop
+// built on it, the outbound queue pair, session binding tokens and per-peer
+// random IDs.
+//
+// seichannel and videochannel are built entirely out of these; vp8channel
+// does its own KCP-based framing and consumes only the session adapter, the
+// binding token and the ID helpers.
 package common
 
 import (
@@ -26,10 +31,14 @@ func RandomID() string {
 
 // FragmentPayload splits data into chunks of at most maxSize bytes. An empty
 // payload produces a single empty fragment so the caller can still ack a
-// zero-byte message round-trip.
+// zero-byte message round-trip. A non-positive maxSize yields one chunk
+// holding everything: misconfigured sizing must not spin here forever.
 func FragmentPayload(data []byte, maxSize int) [][]byte {
 	if len(data) == 0 {
 		return [][]byte{{}}
+	}
+	if maxSize <= 0 {
+		return [][]byte{append([]byte(nil), data...)}
 	}
 	out := make([][]byte, 0, (len(data)+maxSize-1)/maxSize)
 	for start := 0; start < len(data); start += maxSize {
@@ -214,49 +223,4 @@ func assemble(msg *InboundMessage) []byte {
 		out = out[:msg.TotalLen]
 	}
 	return out
-}
-
-// AckRegistry tracks in-flight Send calls waiting for their peer ack. Each
-// Send registers a waiter keyed by sequence number and reads from it; the
-// receive loop calls Resolve when an ack arrives.
-type AckRegistry struct {
-	mu      sync.Mutex
-	waiters map[uint32]chan uint32
-}
-
-// NewAckRegistry creates an empty ack registry.
-func NewAckRegistry() *AckRegistry {
-	return &AckRegistry{waiters: make(map[uint32]chan uint32)}
-}
-
-// Register installs a waiter for seq and returns its channel. The caller
-// must drop the waiter via Unregister when it is done.
-func (a *AckRegistry) Register(seq uint32) chan uint32 {
-	ch := make(chan uint32, 1)
-	a.mu.Lock()
-	a.waiters[seq] = ch
-	a.mu.Unlock()
-	return ch
-}
-
-// Unregister drops the waiter for seq.
-func (a *AckRegistry) Unregister(seq uint32) {
-	a.mu.Lock()
-	delete(a.waiters, seq)
-	a.mu.Unlock()
-}
-
-// Resolve delivers crc to the waiter for seq, if present. A missing waiter
-// is silently ignored - the sender has already moved on.
-func (a *AckRegistry) Resolve(seq, crc uint32) {
-	a.mu.Lock()
-	waiter := a.waiters[seq]
-	a.mu.Unlock()
-	if waiter == nil {
-		return
-	}
-	select {
-	case waiter <- crc:
-	default:
-	}
 }

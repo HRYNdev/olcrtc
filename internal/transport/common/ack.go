@@ -1,26 +1,26 @@
-package videochannel
+package common
 
 import "sync"
 
-// fragAckTracker tracks per-fragment acknowledgements for in-flight Send
-// calls. Each Send registers a tracker keyed by sequence number with the
-// total fragment count; the receive loop calls Mark(seq, fragIdx) when an
-// ack arrives. Send polls Snapshot() to see which fragments still need
-// retransmission.
+// AckTracker tracks per-fragment acknowledgements for in-flight Send calls.
+// Each Send registers a waiter keyed by sequence number with the total
+// fragment count; the receive loop calls Mark(seq, crc, fragIdx) when an ack
+// arrives, and Send retransmits whatever Pending() still reports.
 //
-// The split from common.AckRegistry exists because video transports are
-// lossy at the fragment level (each fragment is a separate VP8-encoded
-// video frame that may be corrupted past QR/tile decode recovery). Whole-
-// message ack semantics forced a full retransmit on any single-fragment
-// loss, which under load piled fragments into the outbound channel and
-// eventually killed the encoder. Per-fragment ack lets the sender retry
-// only what was actually lost.
-type fragAckTracker struct {
+// Per-fragment accounting is the general case, not an optimisation: the video
+// transports are lossy at the fragment level (every fragment is a separate
+// encoded video frame that can be corrupted past ECC recovery). Whole-message
+// ack semantics forced a full retransmit of an entire message on any single
+// fragment loss, which under load piled fragments into the outbound queue and
+// eventually killed the encoder. A single-fragment message (total == 1) gives
+// exactly the whole-message semantics back, so this one tracker serves both.
+type AckTracker struct {
 	mu      sync.Mutex
-	pending map[uint32]*fragWaiter
+	pending map[uint32]*AckWaiter
 }
 
-type fragWaiter struct {
+// AckWaiter is the per-message acknowledgement state handed to a sender.
+type AckWaiter struct {
 	mu        sync.Mutex
 	crc       uint32
 	total     int
@@ -29,14 +29,15 @@ type fragWaiter struct {
 	notify    chan struct{}
 }
 
-func newFragAckTracker() *fragAckTracker {
-	return &fragAckTracker{pending: make(map[uint32]*fragWaiter)}
+// NewAckTracker creates an empty tracker.
+func NewAckTracker() *AckTracker {
+	return &AckTracker{pending: make(map[uint32]*AckWaiter)}
 }
 
 // Register installs a waiter for (seq, crc) covering total fragments and
 // returns it. The caller must drop it via Unregister.
-func (t *fragAckTracker) Register(seq, crc uint32, total int) *fragWaiter {
-	w := &fragWaiter{
+func (t *AckTracker) Register(seq, crc uint32, total int) *AckWaiter {
+	w := &AckWaiter{
 		crc:       crc,
 		total:     total,
 		acked:     make([]bool, total),
@@ -50,7 +51,7 @@ func (t *fragAckTracker) Register(seq, crc uint32, total int) *fragWaiter {
 }
 
 // Unregister drops the waiter for seq.
-func (t *fragAckTracker) Unregister(seq uint32) {
+func (t *AckTracker) Unregister(seq uint32) {
 	t.mu.Lock()
 	delete(t.pending, seq)
 	t.mu.Unlock()
@@ -60,7 +61,7 @@ func (t *fragAckTracker) Unregister(seq uint32) {
 // waiter's crc, otherwise the ack is ignored (it is from an older message
 // whose seq was reused). Returns true iff this call actually flipped a
 // previously-unacked fragment.
-func (t *fragAckTracker) Mark(seq, crc uint32, fragIdx int) bool {
+func (t *AckTracker) Mark(seq, crc uint32, fragIdx int) bool {
 	t.mu.Lock()
 	w, ok := t.pending[seq]
 	t.mu.Unlock()
@@ -83,7 +84,7 @@ func (t *fragAckTracker) Mark(seq, crc uint32, fragIdx int) bool {
 }
 
 // Pending returns the indexes of fragments still unacked.
-func (w *fragWaiter) Pending() []int {
+func (w *AckWaiter) Pending() []int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	out := make([]int, 0, w.remaining)
@@ -96,13 +97,13 @@ func (w *fragWaiter) Pending() []int {
 }
 
 // Done reports whether every fragment has been acked.
-func (w *fragWaiter) Done() bool {
+func (w *AckWaiter) Done() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.remaining == 0
 }
 
 // Notify returns the channel that ticks on every Mark.
-func (w *fragWaiter) Notify() <-chan struct{} {
+func (w *AckWaiter) Notify() <-chan struct{} {
 	return w.notify
 }

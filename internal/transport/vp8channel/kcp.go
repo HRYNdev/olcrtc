@@ -161,3 +161,94 @@ func (r *kcpRuntime) close() {
 		_ = r.conn.Close()
 	})
 }
+
+// kcpPlane owns one KCP session together with the outbound queue that carries
+// its packets. The transport runs two of them - bulk data and control - with
+// identical lifecycle rules, so start/restart/drain/close live here once
+// instead of being written twice with only the field names changed.
+type kcpPlane struct {
+	out    chan []byte
+	onData func([]byte)
+
+	mu   sync.RWMutex
+	rt   *kcpRuntime
+	once sync.Once
+}
+
+func newKCPPlane(queueSize int, onData func([]byte)) *kcpPlane {
+	return &kcpPlane{out: make(chan []byte, queueSize), onData: onData}
+}
+
+// get returns the live runtime, or nil when the plane has not started (or is
+// mid-restart).
+func (p *kcpPlane) get() *kcpRuntime {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.rt
+}
+
+// set installs rt directly. Used by tests to attach a hand-built runtime.
+func (p *kcpPlane) set(rt *kcpRuntime) {
+	p.mu.Lock()
+	p.rt = rt
+	p.mu.Unlock()
+}
+
+// start brings the plane up exactly once however many times Connect runs. The
+// first result reports whether this call was the one that started it.
+func (p *kcpPlane) start(hdr [epochHdrLen]byte) (bool, error) {
+	var (
+		started bool
+		err     error
+	)
+
+	p.once.Do(func() {
+		var rt *kcpRuntime
+		rt, err = startKCP(p.out, p.onData, hdr)
+		if err != nil {
+			return
+		}
+		p.set(rt)
+		started = true
+	})
+
+	return started, err
+}
+
+// restart drops queued packets and replaces the KCP state machine with a
+// fresh one stamped with hdr.
+func (p *kcpPlane) restart(hdr [epochHdrLen]byte) {
+	p.drain()
+
+	p.mu.Lock()
+	old := p.rt
+	p.rt = nil
+	p.mu.Unlock()
+
+	if old != nil {
+		old.close()
+	}
+
+	rt, err := startKCP(p.out, p.onData, hdr)
+	if err != nil {
+		return
+	}
+	p.set(rt)
+}
+
+// drain discards everything still queued for the paced writer.
+func (p *kcpPlane) drain() {
+	for {
+		select {
+		case <-p.out:
+		default:
+			return
+		}
+	}
+}
+
+func (p *kcpPlane) close() {
+	if rt := p.get(); rt != nil {
+		rt.close()
+	}
+}

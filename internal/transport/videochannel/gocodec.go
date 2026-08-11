@@ -46,9 +46,9 @@ func (e *goEncoder) EncodeFrame(frame []byte) ([]byte, error) {
 	return encoded, nil
 }
 
-func (e *goEncoder) Close() error {
+// Close stops the encoder. Further EncodeFrame calls fail.
+func (e *goEncoder) Close() {
 	e.closed.Store(true)
-	return nil
 }
 
 // goDecoder is a pure Go VP8 decoder.
@@ -106,10 +106,10 @@ func (d *goDecoder) PopFrame() ([]byte, error) {
 	}
 }
 
-func (d *goDecoder) Close() error {
+// Close stops the decoder and unblocks PopFrame.
+func (d *goDecoder) Close() {
 	d.closeOnce.Do(func() {
 		d.closed.Store(true)
 		close(d.closeCh)
 	})
-	return nil
 }

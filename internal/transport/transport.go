@@ -27,11 +27,15 @@ var ErrTransportNotFound = errors.New("transport not found")
 var ErrOptionsTypeMismatch = errors.New("transport options type mismatch")
 
 // Features describes the delivery semantics of a transport.
+//
+// It used to also advertise Reliable/Ordered/MessageOriented. All four
+// transports hardcoded them to true - including the ack-based ones, where
+// "reliable" means a bounded number of retransmit attempts and a Send that
+// can still fail - and nothing ever read them. Rather than keep three
+// unread booleans honest, they are gone; the payload cap is the one property
+// upper layers actually size their frames against (see runtime.MaxPayload).
 type Features struct {
-	Reliable        bool
-	Ordered         bool
-	MessageOriented bool
-	MaxPayloadSize  int
+	MaxPayloadSize int
 }
 
 // Transport defines a byte transport independent of the underlying carrier.
@@ -120,6 +124,24 @@ type PeerResetter interface {
 // transports that need no extra configuration (e.g. datachannel).
 type Options interface {
 	TransportOptions()
+}
+
+// OptionsAs extracts the per-transport options from cfg. A nil Options
+// yields the zero value of T, which every transport turns into its documented
+// defaults via withDefaults. name identifies the transport in the error.
+func OptionsAs[T Options](cfg Config, name string) (T, error) {
+	var zero T
+
+	if cfg.Options == nil {
+		return zero, nil
+	}
+
+	opts, ok := cfg.Options.(T)
+	if !ok {
+		return zero, fmt.Errorf("%w: %s: got %T", ErrOptionsTypeMismatch, name, cfg.Options)
+	}
+
+	return opts, nil
 }
 
 // TrafficConfig controls optional reliability-oriented send shaping.

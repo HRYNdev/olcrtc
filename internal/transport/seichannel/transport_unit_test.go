@@ -131,17 +131,18 @@ func TestNewConnectCallbacksAndFeatures(t *testing.T) {
 	if tr.CanSend() {
 		t.Fatal("CanSend() = true before peer hello")
 	}
-	tr.handleSample(buildVideoAccessUnit(encodeHelloFrame()))
+	// The peer is the client side, so its hello carries the client role.
+	peerHello := common.EncodeHello(common.RoleClient, tr.bindingToken)
+	tr.handleSample(buildVideoAccessUnit(peerHello))
 	if !tr.CanSend() {
 		t.Fatal("CanSend() = false after peer hello")
 	}
-	if features := tr.Features(); !features.Reliable || !features.Ordered || !features.MessageOriented || features.MaxPayloadSize == 0 {
+	if features := tr.Features(); features.MaxPayloadSize == 0 {
 		t.Fatalf("Features() = %+v", features)
 	}
-	if tr.fragmentSize != 512 || tr.batchSize != 3 || tr.frameInterval != 25*time.Millisecond ||
-		tr.ackTimeout != 1500*time.Millisecond {
-		t.Fatalf("seichannel settings fragment=%d batch=%d interval=%v ack=%v",
-			tr.fragmentSize, tr.batchSize, tr.frameInterval, tr.ackTimeout)
+	if tr.fragmentSize != 512 || tr.batchSize != 3 || tr.frameInterval != 25*time.Millisecond {
+		t.Fatalf("seichannel settings fragment=%d batch=%d interval=%v",
+			tr.fragmentSize, tr.batchSize, tr.frameInterval)
 	}
 	if err := tr.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
@@ -167,28 +168,41 @@ func TestNewErrorPaths(t *testing.T) {
 }
 
 func TestSendAckAndClosePaths(t *testing.T) {
+	stream := &fakeVideoStream{canSend: true}
+	closeCh := make(chan struct{})
+	queue := common.NewOutboundQueue(closeCh, ErrTransportClosed)
 	tr := &streamTransport{
-		stream:      &fakeVideoStream{canSend: true},
-		outbound:    make(chan []byte, 8),
-		outboundAck: make(chan []byte, 8),
-		closeCh:     make(chan struct{}),
-		writerDone:  make(chan struct{}),
-		acks:        common.NewAckRegistry(),
+		Lifecycle:  common.NewLifecycle(stream),
+		stream:     stream,
+		queue:      queue,
+		closeCh:    closeCh,
+		writerDone: make(chan struct{}),
+		sender: common.NewSender(common.SenderConfig{
+			FragmentSize:  4,
+			MaxAttempts:   maxSendAttempts,
+			FrameInterval: time.Millisecond,
+			BatchSize:     1,
+			AckFloor:      time.Second,
+		}, queue),
 	}
 
+	// "payload" = 7 bytes; with a 4-byte fragment size that is two
+	// fragments, and Send returns only once both are acked.
 	done := make(chan error, 1)
 	payload := []byte("payload")
 	go func() { done <- tr.Send(payload) }()
 
-	select {
-	case frame := <-tr.outbound:
-		decoded, err := decodeTransportFrame(frame)
-		if err != nil {
-			t.Fatalf("decodeTransportFrame() error = %v", err)
+	wantCRC := crc32.ChecksumIEEE(payload)
+	for seen := range 2 {
+		frame, ok := waitForFrame(t, tr)
+		if !ok {
+			t.Fatalf("Send() did not enqueue fragment %d", seen)
 		}
-		tr.resolveAck(decoded.seq, crc32.ChecksumIEEE(payload))
-	case <-time.After(time.Second):
-		t.Fatal("Send() did not enqueue frame")
+		decoded, err := common.DecodeFrame(frame)
+		if err != nil {
+			t.Fatalf("DecodeFrame() error = %v", err)
+		}
+		tr.resolveAck(decoded.Seq, wantCRC, decoded.FragIdx)
 	}
 
 	if err := <-done; err != nil {
@@ -200,4 +214,23 @@ func TestSendAckAndClosePaths(t *testing.T) {
 	if err := tr.Send([]byte("closed")); !errors.Is(err, ErrTransportClosed) {
 		t.Fatalf("Send(closed) error = %v, want %v", err, ErrTransportClosed)
 	}
+}
+
+// waitForFrame polls the outbound queue until a frame shows up.
+func waitForFrame(t *testing.T, tr *streamTransport) ([]byte, bool) {
+	t.Helper()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		frame, open := tr.queue.Next()
+		if !open {
+			return nil, false
+		}
+		if frame != nil {
+			return frame, true
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	return nil, false
 }

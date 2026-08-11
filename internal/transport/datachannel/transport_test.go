@@ -92,7 +92,7 @@ func TestNewAndFeatures(t *testing.T) {
 	}
 
 	features := tr.Features()
-	if !features.Reliable || !features.Ordered || !features.MessageOriented || features.MaxPayloadSize != defaultMaxPayloadSize {
+	if features.MaxPayloadSize != defaultMaxPayloadSize {
 		t.Fatalf("Features() = %+v", features)
 	}
 	if err := tr.Close(); err != nil {
