@@ -51,7 +51,7 @@ Speed in descending order: `datachannel` > `vp8channel` > `seichannel` > `videoc
 | `net.transport` | `datachannel`, `vp8channel`, `seichannel` or `videochannel` |
 | `room.id` | Room ID |
 | `crypto.key` or `crypto.key_file` | Encryption key, hex 64 chars. Generate: `openssl rand -hex 32` |
-| `data` | Always `data` |
+| `data` | Not required. Set it only to supply your own name dictionary |
 | `net.dns` | DNS server, e.g. `8.8.8.8:53` |
 
 ---
@@ -228,7 +228,6 @@ crypto:
 net:
   transport: datachannel
   dns: "8.8.8.8:53"
-data: data
 ```
 
 ```yaml
@@ -246,7 +245,6 @@ net:
 socks:
   host: "127.0.0.1"
   port: 8808
-data: data
 ```
 
 ### wbstream + datachannel + SOCKS5 authentication (does not work in the normal guest flow)
@@ -268,7 +266,6 @@ socks:
   port: 8808
   user: myuser
   pass: mypass
-data: data
 ```
 
 Usage:
@@ -297,7 +294,6 @@ net:
 vp8:
   fps: 30
   batch_size: 64
-data: data
 ```
 
 ```yaml
@@ -318,7 +314,6 @@ socks:
 vp8:
   fps: 30
   batch_size: 64
-data: data
 ```
 
 ### telemost + seichannel (does not work)
@@ -342,7 +337,6 @@ sei:
   batch_size: 64
   fragment_size: 900
   ack_timeout_ms: 2000
-data: data
 ```
 
 ```yaml
@@ -365,7 +359,6 @@ sei:
   batch_size: 64
   fragment_size: 900
   ack_timeout_ms: 2000
-data: data
 ```
 
 ### telemost + videochannel (best effort, unstable)
@@ -389,7 +382,6 @@ video:
   fps: 30
   bitrate: "5000k"
   hw: none
-data: data
 ```
 
 ```yaml
@@ -414,7 +406,6 @@ video:
   fps: 30
   bitrate: "5000k"
   hw: none
-data: data
 ```
 
 ---

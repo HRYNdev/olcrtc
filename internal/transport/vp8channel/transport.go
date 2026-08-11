@@ -18,15 +18,16 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pion/rtp"
+	"github.com/pion/rtp/codecs"
+	"github.com/pion/webrtc/v4"
+	"github.com/pion/webrtc/v4/pkg/media"
+
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
 	"github.com/openlibrecommunity/olcrtc/internal/transport/common"
-	"github.com/pion/rtp"
-	"github.com/pion/rtp/codecs"
-	"github.com/pion/webrtc/v4"
-	"github.com/pion/webrtc/v4/pkg/media"
 )
 
 const (
@@ -177,8 +178,6 @@ type streamTransport struct {
 	peerRestarting    atomic.Bool
 	peerRestartGrace  time.Duration
 
-	// ai-generated: new field, peer-restart-corroboration PR.
-	//
 	// linkUnhealthy corroborates the peer-restart heuristic with an
 	// independent signal from the client's control-plane liveness loop
 	// (pushed via NotifyLinkHealth). Zero-value false means "not known
@@ -643,8 +642,6 @@ func (p *streamTransport) Reconnect(reason string) {
 // require corroborating evidence before firing (a second client joining the
 // SFU room broadcasts its own epoch to everyone, which alone must not be
 // mistaken for "my server restarted").
-//
-// ai-generated: new method, peer-restart-corroboration PR.
 func (p *streamTransport) NotifyLinkHealth(unhealthy bool) {
 	p.linkUnhealthy.Store(unhealthy)
 }
@@ -1216,9 +1213,7 @@ func (p *streamTransport) handleIncomingFrame(frame []byte) {
 	p.handleSinglePeerData(src, kcpPayload)
 }
 
-// ai-generated: doc comment updated (last clause about corroboration),
 // peer-restart-corroboration PR; function body predates it.
-//
 // handleSinglePeerData delivers a data frame in single-peer (client) mode. It
 // latches the first peer epoch seen. When the latched peer has gone silent
 // past peerRestartGrace and a frame from a different epoch arrives, that is
@@ -1249,11 +1244,9 @@ func (p *streamTransport) handleSinglePeerData(src uint32, kcpPayload []byte) {
 	}
 }
 
-// ai-generated: existing function, guard clause + doc comment update added
 // by the peer-restart-corroboration PR (linkUnhealthy check at the top of
 // the function body below is the new part; the rest of the function and
 // doc predates this change).
-//
 // maybePeerRestart reads a frame from a non-latched epoch as a possible
 // server restart once the latched peer has been silent longer than
 // peerRestartGrace. A live peer keeps the latch fresh by emitting a keepalive
@@ -1593,10 +1586,3 @@ func (p *streamTransport) ControlPeerCanSend(peerID string) bool {
 	p.ctrlPeersMu.RUnlock()
 	return pck != nil && p.stream.SubscriberCanSend()
 }
-
-/*
-ПИДОРАС ИЗ ЯНДЕКСА СУКА ПРЕЖДЕ ЧЕМ ФИКСИТЬ ЭТО ЗАДАЙСЯ ВОПРОСОМ:
-ПОЧЕМУ ТВОЙ СЕРВЕР ПРИНИМАЕТ ПАКЕТЫ С SEQUENCE NUMBER ИЗ БУДУЩЕГО
-БЛЯТЬ ДА ПОТОМУ ЧТО ОН ХУЙНЯ И ТВОЯ МАТЬ СОЛСЕТ МОЙ ХУЙ СУКА Я ЕЕ УБЬЮ БЛЯТЬ
-ОЕСЕНЮ СДЕЛАЮ ТЕСТО А ПОТОМ ЭТО ТЕСТО ВЫЕБУ БЛЯТЬ
-*/

@@ -10,11 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pion/rtp"
+	"github.com/pion/webrtc/v4"
+
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
-	"github.com/pion/rtp"
-	"github.com/pion/webrtc/v4"
 )
 
 var errVP8UnitBoom = errors.New("boom")
@@ -148,7 +149,6 @@ func (s *fakeEngineSession) SetVideoTrackHandler(cb func(*webrtc.TrackRemote, *w
 	s.stream.SetTrackHandler(cb)
 }
 
-//nolint:cyclop // table-driven test naturally has many branches
 func TestNewConnectSendCallbacksFeaturesAndClose(t *testing.T) {
 	stream := &fakeVideoStream{canSend: true}
 	name := "vp8channel-unit-new"
@@ -201,7 +201,7 @@ func TestNewConnectSendCallbacksFeaturesAndClose(t *testing.T) {
 	if !tr.CanSend() {
 		t.Fatal("CanSend() = false, want true")
 	}
-	if features := tr.Features(); !features.Reliable || !features.Ordered || !features.MessageOriented || features.MaxPayloadSize == 0 { //nolint:lll // long test description
+	if features := tr.Features(); !features.Reliable || !features.Ordered || !features.MessageOriented || features.MaxPayloadSize == 0 {
 		t.Fatalf("Features() = %+v", features)
 	}
 	if err := tr.Send([]byte("payload")); err != nil {
@@ -234,7 +234,6 @@ func TestNewErrorPaths(t *testing.T) {
 	}
 }
 
-//nolint:cyclop // table-driven test naturally has many branches
 func TestEpochHeaderTokenAndOutboundCapacity(t *testing.T) {
 	tr := &streamTransport{
 		stream:       &fakeVideoStream{canSend: true},
@@ -374,7 +373,6 @@ func TestVP8FrameStateAssemblesAndRejectsCorruptFrames(t *testing.T) {
 	}
 }
 
-//nolint:cyclop // table-driven test naturally has many branches
 func TestHandleIncomingFrameEpochFilteringAndReconnect(t *testing.T) {
 	called := 0
 	tr := &streamTransport{
@@ -457,9 +455,7 @@ func mkPeerFrame(token, epoch uint32, payload []byte) []byte {
 	return frame
 }
 
-// ai-generated: added tr.NotifyLinkHealth(true) call + updated comment
 // below, peer-restart-corroboration PR (rest of the test predates it).
-//
 // TestPeerRestartRebuildsCarrierAfterGrace guards issue #105: when the latched
 // peer goes silent past peerRestartGrace and a frame from a fresh epoch
 // arrives, the transport rebuilds the carrier (stream.Reconnect) so the client
@@ -509,9 +505,7 @@ func TestPeerRestartRebuildsCarrierAfterGrace(t *testing.T) {
 	}
 }
 
-// ai-generated: added tr.NotifyLinkHealth(true) call below,
 // peer-restart-corroboration PR (rest of the test predates it).
-//
 // TestPeerRestartRebuildsOnlyOnce ensures repeated frames from the new epoch do
 // not trigger a rebuild storm before the latch is reset.
 func TestPeerRestartRebuildsOnlyOnce(t *testing.T) {
@@ -539,9 +533,7 @@ func TestPeerRestartRebuildsOnlyOnce(t *testing.T) {
 	}
 }
 
-// ai-generated: added the linkUnhealthy default-false assertion below,
 // peer-restart-corroboration PR (rest of the test predates it).
-//
 // TestLivePeerKeepsLatchFresh confirms a peer that keeps sending frames within
 // the grace window never trips the restart watchdog, even if a stray frame from
 // another epoch shows up (unrelated room participant).
@@ -575,8 +567,6 @@ func TestLivePeerKeepsLatchFresh(t *testing.T) {
 	}
 }
 
-// ai-generated: new test, peer-restart-corroboration PR.
-//
 // TestPeerRestartSuppressedWhenControlHealthy reproduces the multi-client SFU
 // scenario directly: a second, unrelated room participant's epoch shows up
 // after the latched peer's silence exceeds peerRestartGrace, but the client's
@@ -610,8 +600,6 @@ func TestPeerRestartSuppressedWhenControlHealthy(t *testing.T) {
 	}
 }
 
-// ai-generated: new test, peer-restart-corroboration PR.
-//
 // TestPeerRestartFiresOnceCorroborated confirms NotifyLinkHealth(true) is a
 // gate, not a permanent disable: with corroborating evidence the client's own
 // link is down, the same foreign-epoch frame still triggers the fast-path
@@ -643,8 +631,6 @@ func TestPeerRestartFiresOnceCorroborated(t *testing.T) {
 	}
 }
 
-// ai-generated: new test, peer-restart-corroboration PR.
-//
 // TestNotifyLinkHealthTogglesGuard is a direct unit test of the setter.
 func TestNotifyLinkHealthTogglesGuard(t *testing.T) {
 	tr := &streamTransport{}

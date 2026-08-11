@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 )
 
@@ -167,8 +168,8 @@ func (s *Session) sendPong(uid string) {
 	s.wsMu.Lock()
 	defer s.wsMu.Unlock()
 	_ = s.ws.WriteJSON(map[string]any{
-		keyUID:  uid,
-		"pong":  map[string]any{},
+		keyUID: uid,
+		"pong": map[string]any{},
 	})
 }
 

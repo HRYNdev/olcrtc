@@ -434,7 +434,6 @@ EOF
 fi
 
 cat >> "$CONFIG_FILE" <<EOF
-data: data
 debug: false
 EOF
 

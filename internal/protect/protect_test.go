@@ -84,7 +84,6 @@ func TestControlFuncWrapsControlError(t *testing.T) {
 	}
 }
 
-//nolint:cyclop // table-driven test naturally has many branches
 func TestNewDialerAndHTTPClient(t *testing.T) {
 	dialer := NewDialer()
 	if dialer.Timeout != 10*time.Second || dialer.KeepAlive != 30*time.Second || dialer.Control == nil {

@@ -19,8 +19,9 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	"github.com/pion/webrtc/v4"
+
+	"github.com/openlibrecommunity/olcrtc/internal/engine"
 )
 
 const (

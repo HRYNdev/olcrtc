@@ -138,17 +138,16 @@ func TestRunWithSessionRotationRestartsAfterMaxDuration(t *testing.T) {
 	}
 }
 
-//nolint:maintidx // table-driven validation test naturally has many cases
 func TestValidate(t *testing.T) {
 	RegisterDefaults()
 
 	base := Config{
-		Mode:      modeSRV,
+		Mode:      ModeSrv,
 		Transport: "datachannel",
 		Auth:      "telemost",
 		RoomID:    "room-1",
 		KeyHex:    "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
-		DNSServer: "8.8.8.8:53", //nolint:goconst // test literal, repetition is intentional
+		DNSServer: "8.8.8.8:53",
 	}
 
 	tests := []struct {
@@ -170,7 +169,7 @@ func TestValidate(t *testing.T) {
 			name: "cnc requires socks host and port",
 			cfg: func() Config {
 				cfg := base
-				cfg.Mode = modeCNC
+				cfg.Mode = ModeCnc
 				cfg.SOCKSHost = "127.0.0.1"
 				cfg.SOCKSPort = 1080
 				return cfg
@@ -189,7 +188,7 @@ func TestValidate(t *testing.T) {
 			name: "unsupported carrier",
 			cfg: func() Config {
 				cfg := base
-				cfg.Auth = "unknown" //nolint:goconst // test literal, repetition is intentional
+				cfg.Auth = "unknown"
 				return cfg
 			}(),
 			want: ErrUnsupportedCarrier,
@@ -234,7 +233,7 @@ func TestValidate(t *testing.T) {
 			name: "videochannel requires dimensions and bitrate settings",
 			cfg: func() Config {
 				cfg := base
-				cfg.Transport = "videochannel" //nolint:goconst // test literal, repetition is intentional
+				cfg.Transport = "videochannel"
 				return cfg
 			}(),
 			want: ErrVideoWidthRequired,
@@ -333,7 +332,7 @@ func TestValidate(t *testing.T) {
 			name: "vp8channel requires fps",
 			cfg: func() Config {
 				cfg := base
-				cfg.Transport = "vp8channel" //nolint:goconst // test literal, repetition is intentional
+				cfg.Transport = "vp8channel"
 				return cfg
 			}(),
 			want: ErrVP8FPSRequired,
@@ -362,7 +361,7 @@ func TestValidate(t *testing.T) {
 			name: "seichannel requires fps",
 			cfg: func() Config {
 				cfg := base
-				cfg.Transport = "seichannel" //nolint:goconst // test literal, repetition is intentional
+				cfg.Transport = "seichannel"
 				return cfg
 			}(),
 			want: ErrSEIFPSRequired,
@@ -416,7 +415,7 @@ func TestValidate(t *testing.T) {
 			name: "cnc requires socks host",
 			cfg: func() Config {
 				cfg := base
-				cfg.Mode = modeCNC
+				cfg.Mode = ModeCnc
 				cfg.SOCKSPort = 1080
 				return cfg
 			}(),
@@ -426,7 +425,7 @@ func TestValidate(t *testing.T) {
 			name: "cnc requires socks port",
 			cfg: func() Config {
 				cfg := base
-				cfg.Mode = modeCNC
+				cfg.Mode = ModeCnc
 				cfg.SOCKSHost = "127.0.0.1"
 				return cfg
 			}(),
@@ -436,7 +435,7 @@ func TestValidate(t *testing.T) {
 			name: "cnc rejects unauthenticated wildcard socks bind",
 			cfg: func() Config {
 				cfg := base
-				cfg.Mode = modeCNC
+				cfg.Mode = ModeCnc
 				cfg.SOCKSHost = "0.0.0.0"
 				cfg.SOCKSPort = 1080
 				return cfg
@@ -447,7 +446,7 @@ func TestValidate(t *testing.T) {
 			name: "cnc allows authenticated wildcard socks bind",
 			cfg: func() Config {
 				cfg := base
-				cfg.Mode = modeCNC
+				cfg.Mode = ModeCnc
 				cfg.SOCKSHost = "0.0.0.0"
 				cfg.SOCKSPort = 1080
 				cfg.SOCKSUser = "user"
@@ -459,7 +458,7 @@ func TestValidate(t *testing.T) {
 			name: "cnc allows localhost socks bind without auth",
 			cfg: func() Config {
 				cfg := base
-				cfg.Mode = modeCNC
+				cfg.Mode = ModeCnc
 				cfg.SOCKSHost = "localhost"
 				cfg.SOCKSPort = 1080
 				return cfg

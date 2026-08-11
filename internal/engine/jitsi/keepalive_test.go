@@ -14,8 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	"github.com/pion/webrtc/v4"
+
+	"github.com/openlibrecommunity/olcrtc/internal/engine"
 )
 
 func newSilentSession(t *testing.T) *Session {

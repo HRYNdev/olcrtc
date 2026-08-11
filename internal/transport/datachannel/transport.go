@@ -6,10 +6,11 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/pion/webrtc/v4"
+
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
-	"github.com/pion/webrtc/v4"
 )
 
 const defaultMaxPayloadSize = 12 * 1024

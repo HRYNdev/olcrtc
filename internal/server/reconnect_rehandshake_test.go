@@ -7,10 +7,11 @@ import (
 
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
 
+	"github.com/xtaci/smux"
+
 	cryptopkg "github.com/openlibrecommunity/olcrtc/internal/crypto"
 	"github.com/openlibrecommunity/olcrtc/internal/muxconn"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
-	"github.com/xtaci/smux"
 )
 
 // mkServerSess builds a server-side smux session over one end of a pipe.

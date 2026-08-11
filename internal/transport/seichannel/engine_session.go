@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	"github.com/pion/webrtc/v4"
+
+	"github.com/openlibrecommunity/olcrtc/internal/engine"
 )
 
 // engineVideoSession adapts engine.Session + engine.VideoTrackCapable to the

@@ -30,5 +30,4 @@ socks: # local socks proxy exposed to apps
   user: "" # optional inbound auth
   pass: "" # optional inbound auth
 
-data: data # where to store / read data
 debug: false # log actions in more detail

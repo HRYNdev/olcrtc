@@ -25,37 +25,37 @@ import (
 //	    -timeout=60m
 
 var (
-	realSoakEnabled = flag.Bool( //nolint:gochecknoglobals // package-level state intentional
+	realSoakEnabled = flag.Bool(
 		"olcrtc.real-soak",
 		false,
 		"run TestRealThroughputSoak (long-running real-carrier throughput pump)",
 	)
-	realSoakDuration = flag.Duration( //nolint:gochecknoglobals // package-level state intentional
+	realSoakDuration = flag.Duration(
 		"olcrtc.real-soak-duration",
 		5*time.Minute,
 		"how long to pump traffic per carrier×transport case",
 	)
-	realSoakCarrier = flag.String( //nolint:gochecknoglobals // package-level state intentional
+	realSoakCarrier = flag.String(
 		"olcrtc.real-soak-carrier",
 		"jitsi",
 		"carrier(s) to use: comma-separated list (e.g. jitsi,telemost,wbstream)",
 	)
-	realSoakTransport = flag.String( //nolint:gochecknoglobals // package-level state intentional
+	realSoakTransport = flag.String(
 		"olcrtc.real-soak-transport",
 		"seichannel",
 		"transport(s): datachannel|videochannel|seichannel|vp8channel or comma-separated",
 	)
-	realSoakChunk = flag.Int( //nolint:gochecknoglobals // package-level state intentional
+	realSoakChunk = flag.Int(
 		"olcrtc.real-soak-chunk",
 		4096,
 		"write/read chunk size in bytes",
 	)
-	realSoakProgress = flag.Duration( //nolint:gochecknoglobals // package-level state intentional
+	realSoakProgress = flag.Duration(
 		"olcrtc.real-soak-progress",
 		30*time.Second,
 		"how often to log throughput progress lines",
 	)
-	realSoakVerify = flag.Bool( //nolint:gochecknoglobals // package-level state intentional
+	realSoakVerify = flag.Bool(
 		"olcrtc.real-soak-verify",
 		true,
 		"verify echoed bytes match the sent pattern",

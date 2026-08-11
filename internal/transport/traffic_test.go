@@ -67,9 +67,7 @@ func TestTrafficWrapperAppliesMinimumDelay(t *testing.T) {
 	}
 }
 
-// ai-generated: this whole block (stub type + 2 tests below), new,
 // peer-restart-corroboration PR.
-//
 // trafficStubLinkHealthTransport additionally implements
 // LinkHealthObserver, to verify trafficTransport forwards to it.
 type trafficStubLinkHealthTransport struct {

@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-//nolint:cyclop // table-driven test naturally has many branches
 func TestSessionReconnectAndEndedHelpers(t *testing.T) {
 	s := &Session{
 		reconnectCh:    make(chan struct{}, 2),

@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/xtaci/smux"
+
 	"github.com/openlibrecommunity/olcrtc/internal/control"
 	"github.com/openlibrecommunity/olcrtc/internal/crypto"
 	"github.com/openlibrecommunity/olcrtc/internal/handshake"
@@ -26,7 +28,6 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/protect"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
-	"github.com/xtaci/smux"
 )
 
 var (
@@ -67,8 +68,6 @@ type Client struct {
 	sessMu      sync.RWMutex
 	reconnectMu sync.Mutex
 	health      *runtime.HealthTracker
-	// ai-generated: new field, peer-restart-corroboration PR.
-	//
 	// controlLastPong tracks the last successful control pong (as a
 	// time.Time, not a stripped int64 - time.Since needs the monotonic
 	// reading time.Now() attaches, otherwise it's vulnerable to wall-clock
@@ -638,7 +637,6 @@ func (c *Client) startControlLoop(
 	if runtime.IsControlPlane(c.ln) && liveness.Timeout <= control.DefaultTimeout {
 		liveness.Timeout = runtime.LivenessTimeout(c.ln)
 	}
-	// ai-generated: pingInterval resolution + the watchControlStaleness
 	// launch below are new, peer-restart-corroboration PR.
 	pingInterval := liveness.Interval
 	if pingInterval <= 0 {
@@ -652,7 +650,6 @@ func (c *Client) startControlLoop(
 		sid := c.sessionID
 		c.sessMu.RUnlock()
 		c.recordPong(h)
-		// ai-generated: next two lines, peer-restart-corroboration PR.
 		c.controlLastPong.Store(time.Now())
 		c.notifyLinkHealth(false)
 		logger.Debugf("control alive session=%s rtt=%v seq=%d", sid, h.RTT, h.Seq)
@@ -675,7 +672,6 @@ func (c *Client) startControlLoop(
 		}
 	}
 
-	// ai-generated: this launch line, peer-restart-corroboration PR.
 	go c.watchControlStaleness(controlCtx, pingInterval)
 
 	go func() {
@@ -692,8 +688,6 @@ func (c *Client) startControlLoop(
 	}()
 }
 
-// ai-generated: new function, peer-restart-corroboration PR.
-//
 // watchControlStaleness pushes a tighter, independent "control unhealthy"
 // signal to the transport than OnMissedPong/OnUnhealthy provide - those are
 // deliberately relaxed for vp8channel (KCP-batching tolerance, see
@@ -737,8 +731,6 @@ func (c *Client) recordMissed(missed int)        { c.health.RecordMissed(missed)
 func (c *Client) recordUnhealthy(missed int)     { c.health.RecordUnhealthy(missed) }
 func (c *Client) recordReconnect()               { c.health.RecordReconnect() }
 
-// ai-generated: new method, peer-restart-corroboration PR.
-//
 // notifyLinkHealth pushes a liveness health update, sourced from the
 // client's own control-plane ping/pong loop, to the transport if it
 // implements transport.LinkHealthObserver (currently vp8channel, so its

@@ -11,10 +11,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xtaci/smux"
+
 	"github.com/openlibrecommunity/olcrtc/internal/control"
 	"github.com/openlibrecommunity/olcrtc/internal/crypto"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
-	"github.com/xtaci/smux"
 )
 
 const (

@@ -76,7 +76,7 @@ olcrtc /etc/olcrtc/client.yaml
 | `profiles[]` | список failover-профилей для `srv`/`cnc` |
 | `failover.retry_delay` | пауза перед следующим профилем, например `2s` |
 | `failover.max_cycles` | сколько полных проходов по профилям сделать; `0` = бесконечно |
-| `data` | путь к директории с runtime-данными (`names`, `surnames`) |
+| `data` | опционально: каталог с файлами `names`/`surnames`, переопределяющими встроенные словари имён. Путь резолвится относительно YAML-файла |
 | `debug` | подробное логирование |
 | `ffmpeg` | путь к бинарнику ffmpeg для `videochannel` |
 
@@ -103,7 +103,6 @@ crypto:
 net:
   transport: datachannel
   dns: "8.8.8.8:53"
-data: data
 ```
 
 ### Клиент
@@ -124,7 +123,6 @@ net:
 socks:
   host: "127.0.0.1"
   port: 8808
-data: data
 ```
 
 ## Liveness
@@ -174,7 +172,6 @@ crypto:
   key_file: ./olcrtc.key
 net:
   dns: "8.8.8.8:53"
-data: data
 
 profiles:
   - name: wb-vp8

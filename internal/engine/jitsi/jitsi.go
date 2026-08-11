@@ -33,14 +33,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/openlibrecommunity/olcrtc/internal/engine"
-	"github.com/openlibrecommunity/olcrtc/internal/logger"
-	"github.com/openlibrecommunity/olcrtc/internal/protect"
 	"github.com/pion/ice/v4"
 	pioninterceptor "github.com/pion/interceptor"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 	"github.com/zarazaex69/j"
+
+	"github.com/openlibrecommunity/olcrtc/internal/engine"
+	"github.com/openlibrecommunity/olcrtc/internal/logger"
+	"github.com/openlibrecommunity/olcrtc/internal/protect"
 )
 
 const (
@@ -392,7 +393,7 @@ func (s *Session) waitForJingle() {
 
 // completeJingleSetup opens the bridge and negotiates a PeerConnection only
 // when media or the SCTP bridge fallback needs one.
-func (s *Session) completeJingleSetup( //nolint:cyclop // bridge logic is inherently branchy
+func (s *Session) completeJingleSetup(
 	ctx context.Context, jSess *j.Session,
 ) error {
 	logger.Infof("jitsi: session-initiate received; colibri-ws=%s", jSess.ColibriWS)
@@ -539,7 +540,6 @@ func newSettingEngine(resolver *net.Resolver) (webrtc.SettingEngine, error) {
 	settings := webrtc.SettingEngine{}
 	settings.LoggerFactory = logger.NewPionLoggerFactory()
 
-	// ai-generated: added SetNetworkTypes/SetIPFilter (UDP4-only) below.
 	// Restrict ICE to UDP/IPv4, mirroring goolom's newWebRTCAPI. Without this,
 	// pion enumerates every local interface (VPN/WireGuard, docker, veth,
 	// link-local IPv6, ...) as a host candidate. A dead candidate (e.g. a
@@ -1389,7 +1389,6 @@ func (s *Session) acceptPeerEpochFrame(from string, payload []byte) ([]byte, boo
 	return payload[off+epochHeaderLen:], true
 }
 
-//nolint:cyclop // epoch filtering has several explicit drop cases
 func (s *Session) acceptEpochFrame(payload []byte) ([]byte, bool) {
 	const epochHeaderLen = 8
 	if len(payload) < len(bridgeMagic)+epochHeaderLen {
@@ -1861,7 +1860,7 @@ func (s *Session) teardownPC() {
 
 // reinitiateBridge negotiates a new PeerConnection only when required and opens
 // the bridge channel.
-func (s *Session) reinitiateBridge( //nolint:cyclop // bridge logic is inherently branchy
+func (s *Session) reinitiateBridge(
 	ctx context.Context, jSess *j.Session,
 ) error {
 	needBridge := s.onData != nil || s.onPeerData != nil

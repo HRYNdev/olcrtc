@@ -36,5 +36,4 @@ vp8:
   fps: 30 # frames per second
   batch_size: 64 # frames encoded per batch
 
-data: data # where to store / read data
 debug: false # log actions in more detail

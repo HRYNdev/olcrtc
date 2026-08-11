@@ -46,38 +46,38 @@ import (
 // The test is gated by -olcrtc.local-soak so it never runs in regular CI.
 
 var (
-	localSoakEnabled = flag.Bool( //nolint:gochecknoglobals // package-level state intentional
+	localSoakEnabled = flag.Bool(
 		"olcrtc.local-soak",
 		false,
 		"run TestLocalThroughputSoak (long-running local throughput pump)",
 	)
-	localSoakDuration = flag.Duration( //nolint:gochecknoglobals // package-level state intentional
+	localSoakDuration = flag.Duration(
 		"olcrtc.local-soak-duration",
 		30*time.Second,
 		"how long to keep pumping traffic (e.g. 12h, 30m, 90s)",
 	)
-	localSoakTransport = flag.String( //nolint:gochecknoglobals // package-level state intentional
+	localSoakTransport = flag.String(
 		"olcrtc.local-soak-transport",
 		transportData,
 		"transport(s) to pump through: datachannel|videochannel|seichannel|vp8channel, "+
 			"or 'all', or a comma-separated subset (e.g. datachannel,vp8channel)",
 	)
-	localSoakChunk = flag.Int( //nolint:gochecknoglobals // package-level state intentional
+	localSoakChunk = flag.Int(
 		"olcrtc.local-soak-chunk",
 		64*1024,
 		"write/read chunk size in bytes",
 	)
-	localSoakProgress = flag.Duration( //nolint:gochecknoglobals // package-level state intentional
+	localSoakProgress = flag.Duration(
 		"olcrtc.local-soak-progress",
 		30*time.Second,
 		"how often to log throughput progress lines",
 	)
-	localSoakVerify = flag.Bool( //nolint:gochecknoglobals // package-level state intentional
+	localSoakVerify = flag.Bool(
 		"olcrtc.local-soak-verify",
 		true,
 		"verify echoed bytes match the sent pattern (slower, but catches corruption)",
 	)
-	localSoakChaos = flag.Duration( //nolint:gochecknoglobals // package-level state intentional
+	localSoakChaos = flag.Duration(
 		"olcrtc.local-soak-chaos",
 		0,
 		"if >0, trigger carrier reconnect every this interval to simulate network disruption",

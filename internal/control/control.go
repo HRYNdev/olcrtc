@@ -6,8 +6,6 @@
 //
 // Wire format matches the handshake framing: a 4-byte big-endian length
 // followed by a JSON message.
-//
-//nolint:tagliatelle // JSON keys are the stable wire protocol schema.
 package control
 
 import (

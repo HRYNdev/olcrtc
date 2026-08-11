@@ -360,7 +360,6 @@ net:
   dns: "$DNS"
 gen:
   amount: 1
-data: data
 GENEOF
     ROOM_ID=$(podman run --rm \
         --network host \
@@ -465,7 +464,6 @@ EOF
 fi
 
 cat >> "$CONFIG_FILE" <<EOF
-data: data
 debug: false
 EOF
 

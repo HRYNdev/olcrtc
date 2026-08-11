@@ -26,12 +26,12 @@ var (
 )
 
 var (
-	realStress = flag.Bool( //nolint:gochecknoglobals // package-level state intentional
+	realStress = flag.Bool(
 		"olcrtc.stress",
 		false,
 		"run real provider stress matrix (bulk transfer + sustained echo) - requires -olcrtc.real-e2e",
 	)
-	realStressBulkDuration = flag.Duration( //nolint:gochecknoglobals // package-level state intentional
+	realStressBulkDuration = flag.Duration(
 		"olcrtc.stress-bulk-duration",
 		60*time.Second,
 		"per-case duration for the bulk pattern-pump phase (set 0 to skip). "+
@@ -39,22 +39,22 @@ var (
 			"(datachannel: MiB/s; videochannel: KB/s), so we measure how much "+
 			"flows in a fixed time rather than fixing the byte budget.",
 	)
-	realStressDuration = flag.Duration( //nolint:gochecknoglobals // package-level state intentional
+	realStressDuration = flag.Duration(
 		"olcrtc.stress-duration",
 		30*time.Second,
 		"per-case duration for the sustained echo phase (set 0 to skip)",
 	)
-	realStressEchoSize = flag.Int( //nolint:gochecknoglobals // package-level state intentional
+	realStressEchoSize = flag.Int(
 		"olcrtc.stress-echo-size",
 		1024,
 		"single-roundtrip payload size during the sustained echo phase",
 	)
-	realStressCaseTimeout = flag.Duration( //nolint:gochecknoglobals // package-level state intentional
+	realStressCaseTimeout = flag.Duration(
 		"olcrtc.stress-case-timeout",
 		5*time.Minute,
 		"hard timeout per stress carrier×transport case (covers connect + bulk + echo)",
 	)
-	realStressBulkChunkSize = flag.Int( //nolint:gochecknoglobals // package-level state intentional
+	realStressBulkChunkSize = flag.Int(
 		"olcrtc.stress-bulk-chunk",
 		4096,
 		"bulk request-response chunk size in bytes",
@@ -79,8 +79,6 @@ var (
 //
 // Gated by -olcrtc.stress so it never runs on every push; intended for the
 // nightly soak job in CI and for local stress profiling.
-//
-//nolint:cyclop // matrix of carrier×transport expectations is naturally branchy
 func TestRealProviderTransportStress(t *testing.T) {
 	if !*realE2E {
 		t.Skip("real provider e2e disabled; pass -olcrtc.real-e2e to enable")
@@ -382,8 +380,6 @@ type echoStats struct {
 // echo back, recording per-roundtrip latency. Runs until duration elapses
 // or the underlying connection fails. Each write/read uses a deadline so a
 // stuck transport surfaces as a finite-time test failure rather than a hang.
-//
-//nolint:cyclop // per-rt deadlines + error wrapping naturally branch many ways
 func sustainedEcho(conn net.Conn, payloadSize int, duration time.Duration, transportName string) (echoStats, error) {
 	if payloadSize < 4 {
 		payloadSize = 4

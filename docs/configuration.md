@@ -76,7 +76,7 @@ Ready-made examples:
 | `profiles[]` | list of failover profiles for `srv`/`cnc` |
 | `failover.retry_delay` | pause before the next profile, e.g. `2s` |
 | `failover.max_cycles` | how many full passes over the profiles to do; `0` = infinite |
-| `data` | path to the directory with runtime data (`names`, `surnames`) |
+| `data` | optional: directory holding `names`/`surnames` files that override the built-in display-name dictionaries. Resolved relative to the YAML file |
 | `debug` | verbose logging |
 | `ffmpeg` | path to the ffmpeg binary for `videochannel` |
 
@@ -103,7 +103,6 @@ crypto:
 net:
   transport: datachannel
   dns: "8.8.8.8:53"
-data: data
 ```
 
 ### Client
@@ -124,7 +123,6 @@ net:
 socks:
   host: "127.0.0.1"
   port: 8808
-data: data
 ```
 
 ## Liveness
@@ -174,7 +172,6 @@ crypto:
   key_file: ./olcrtc.key
 net:
   dns: "8.8.8.8:53"
-data: data
 
 profiles:
   - name: wb-vp8

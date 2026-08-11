@@ -51,7 +51,7 @@
 | `net.transport` | `datachannel`, `vp8channel`, `seichannel` или `videochannel` |
 | `room.id` | Room ID |
 | `crypto.key` или `crypto.key_file` | Ключ шифрования hex 64 символа. Генерация: `openssl rand -hex 32` |
-| `data` | Всегда `data` |
+| `data` | Не требуется. Задавайте только для собственного словаря имён |
 | `net.dns` | DNS-сервер, например `8.8.8.8:53` |
 
 ---
@@ -229,7 +229,6 @@ crypto:
 net:
   transport: datachannel
   dns: "8.8.8.8:53"
-data: data
 ```
 
 ```yaml
@@ -247,7 +246,6 @@ net:
 socks:
   host: "127.0.0.1"
   port: 8808
-data: data
 ```
 
 ### wbstream + datachannel + SOCKS5 аутентификация (не работает в обычном guest flow)
@@ -269,7 +267,6 @@ socks:
   port: 8808
   user: myuser
   pass: mypass
-data: data
 ```
 
 Использование:
@@ -298,7 +295,6 @@ net:
 vp8:
   fps: 30
   batch_size: 64
-data: data
 ```
 
 ```yaml
@@ -319,7 +315,6 @@ socks:
 vp8:
   fps: 30
   batch_size: 64
-data: data
 ```
 
 ### telemost + seichannel (не работает)
@@ -343,7 +338,6 @@ sei:
   batch_size: 64
   fragment_size: 900
   ack_timeout_ms: 2000
-data: data
 ```
 
 ```yaml
@@ -366,7 +360,6 @@ sei:
   batch_size: 64
   fragment_size: 900
   ack_timeout_ms: 2000
-data: data
 ```
 
 ### telemost + videochannel (best effort, нестабильно)
@@ -390,7 +383,6 @@ video:
   fps: 30
   bitrate: "5000k"
   hw: none
-data: data
 ```
 
 ```yaml
@@ -415,7 +407,6 @@ video:
   fps: 30
   bitrate: "5000k"
   hw: none
-data: data
 ```
 
 ---

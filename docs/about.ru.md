@@ -140,7 +140,6 @@ crypto:
 net:
   transport: datachannel
   dns: "8.8.8.8:53"
-data: data
 ```
 
 Минимальный клиент:
@@ -161,7 +160,6 @@ net:
 socks:
   host: "127.0.0.1"
   port: 8808
-data: data
 ```
 
 Подробнее: [configuration.md](configuration.ru.md), [settings.md](settings.ru.md).

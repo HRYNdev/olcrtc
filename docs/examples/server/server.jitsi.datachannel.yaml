@@ -33,5 +33,4 @@ socks: # upstream socks proxy
   proxy_user: "" # optional auth for upstream proxy (RFC 1929)
   proxy_pass: "" # optional auth for upstream proxy (RFC 1929)
 
-data: data # where to store / read data
 debug: false # log actions in more detail

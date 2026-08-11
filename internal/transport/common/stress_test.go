@@ -17,8 +17,6 @@ import (
 //
 // Invariant: every payload, once Push returns ResultDelivered, must match
 // the original bytes exactly.
-//
-//nolint:cyclop // stress fixture intentionally exercises many branches in one test
 func TestReassemblerStressShuffledFragments(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping stress test in -short mode")

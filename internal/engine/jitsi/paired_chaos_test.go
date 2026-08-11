@@ -94,7 +94,7 @@ func (c *pairedConfig) durationLabel() string {
 	return c.duration.String()
 }
 
-func readPairedConfig(t *testing.T) *pairedConfig { //nolint:cyclop // config parsing is naturally branchy
+func readPairedConfig(t *testing.T) *pairedConfig {
 	t.Helper()
 	host := strings.TrimSpace(os.Getenv(envPairedHost))
 	if host == "" {
@@ -148,9 +148,9 @@ type pairedInstance struct {
 	name string
 	js   *Session
 
-	mu              sync.Mutex
+	mu                sync.Mutex
 	receivedFromOther int64
-	lastReceiveAt   time.Time
+	lastReceiveAt     time.Time
 }
 
 func (p *pairedInstance) note(b []byte) {
@@ -277,7 +277,7 @@ type pairedStats struct {
 //   - Either side hits ErrSessionClosed at the engine level
 //     (the closed flag is the canonical "we gave up" signal).
 //
-//nolint:cyclop,gocognit // chaos cycle structure naturally branches on phase + side
+//nolint:gocognit // chaos cycle structure naturally branches on phase + side
 func TestJitsiPairedChaosStress(t *testing.T) {
 	cfg := readPairedConfig(t)
 	infinite := cfg.duration == 0

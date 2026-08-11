@@ -22,7 +22,7 @@ import (
 // the control-stream liveness timeout. The bad commit widened that timeout to
 // 120s globally; the fix scopes the long window to ControlPlane transports so
 // datachannel detects a dead link on the conservative ~30s smux keepalive.
-var deadLinkEnabled = flag.Bool( //nolint:gochecknoglobals // package-level state intentional
+var deadLinkEnabled = flag.Bool(
 	"olcrtc.deadlink",
 	false,
 	"run TestDeadLinkDetectionWindow (measures dead-link detection latency)",

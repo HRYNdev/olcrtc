@@ -15,8 +15,6 @@
 // After the exchange the control stream stays open; tunnel traffic flows over
 // additional smux streams opened by the client. The control stream then
 // carries ping/pong liveness and future control messages.
-//
-//nolint:tagliatelle // JSON keys are the stable wire protocol schema.
 package handshake
 
 import (

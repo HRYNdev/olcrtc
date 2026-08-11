@@ -99,7 +99,6 @@ type PeerReadyTransport interface {
 // signal before acting on carrier-level noise (e.g. unrelated room
 // participants).
 //
-// ai-generated: new interface, part of the "fix(vp8channel): gate
 // peer-restart heuristic on control-plane health" PR.
 type LinkHealthObserver interface {
 	NotifyLinkHealth(unhealthy bool)

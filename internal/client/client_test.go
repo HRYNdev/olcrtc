@@ -12,12 +12,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xtaci/smux"
+
 	"github.com/openlibrecommunity/olcrtc/internal/control"
 	cryptopkg "github.com/openlibrecommunity/olcrtc/internal/crypto"
 	"github.com/openlibrecommunity/olcrtc/internal/muxconn"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
-	"github.com/xtaci/smux"
 )
 
 var errUnexpectedConnectRequest = errors.New("unexpected connect request")
@@ -532,7 +533,6 @@ func TestOpenControlStreamStopsOnContextCancel(t *testing.T) {
 	}
 }
 
-// ai-generated: mu/unhealthy fields and the NotifyLinkHealth/lastNotified
 // methods below are new (peer-restart-corroboration PR); closed/resetCount
 // and the rest of the stub predate it.
 type closerLinkStub struct {
@@ -603,7 +603,6 @@ func TestResetLinkPeer(t *testing.T) {
 	}
 }
 
-//nolint:cyclop // integration-style control loop test needs setup and async assertions together
 func TestStartControlLoopReportsPong(t *testing.T) {
 	a, b := net.Pipe()
 	defer func() {
@@ -679,8 +678,6 @@ func TestStartControlLoopReportsPong(t *testing.T) {
 	}
 }
 
-// ai-generated: new test, peer-restart-corroboration PR.
-//
 // TestWatchControlStalenessNotifiesTransport unit-tests watchControlStaleness
 // directly (not through the full control.Run/smux stack - control.Run always
 // closes its stream when its context is done, so "stop responding but keep

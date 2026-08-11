@@ -5,10 +5,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/pion/webrtc/v4"
+
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
-	"github.com/pion/webrtc/v4"
 )
 
 var (
@@ -19,35 +20,35 @@ var (
 )
 
 type stubSession struct {
-	caps        engine.Capabilities
-	connectErr  error
-	sendErr     error
-	closeErr    error
-	canSend     bool
+	caps          engine.Capabilities
+	connectErr    error
+	sendErr       error
+	closeErr      error
+	canSend       bool
 	connectCalled bool
-	sent        []byte
-	watched     bool
-	reconnectCB func(*webrtc.DataChannel)
-	shouldFn    func() bool
-	endedCB     func(string)
+	sent          []byte
+	watched       bool
+	reconnectCB   func(*webrtc.DataChannel)
+	shouldFn      func() bool
+	endedCB       func(string)
 }
 
 func (s *stubSession) Capabilities() engine.Capabilities { return s.caps }
-func (s *stubSession) Connect(context.Context) error    { s.connectCalled = true; return s.connectErr }
+func (s *stubSession) Connect(context.Context) error     { s.connectCalled = true; return s.connectErr }
 func (s *stubSession) Send(data []byte) error {
 	s.sent = append([]byte(nil), data...)
 	return s.sendErr
 }
-func (s *stubSession) Close() error                                            { return s.closeErr }
-func (s *stubSession) SetReconnectCallback(cb func(*webrtc.DataChannel))       { s.reconnectCB = cb }
-func (s *stubSession) SetShouldReconnect(fn func() bool)                       { s.shouldFn = fn }
-func (s *stubSession) SetEndedCallback(cb func(string))                        { s.endedCB = cb }
-func (s *stubSession) WatchConnection(context.Context)                         { s.watched = true }
-func (s *stubSession) CanSend() bool                                           { return s.canSend }
-func (s *stubSession) SubscriberCanSend() bool                                 { return s.canSend }
-func (s *stubSession) GetSendQueue() chan []byte                               { return nil }
-func (s *stubSession) GetBufferedAmount() uint64                               { return 0 }
-func (s *stubSession) Reconnect(string)                                        {}
+func (s *stubSession) Close() error                                      { return s.closeErr }
+func (s *stubSession) SetReconnectCallback(cb func(*webrtc.DataChannel)) { s.reconnectCB = cb }
+func (s *stubSession) SetShouldReconnect(fn func() bool)                 { s.shouldFn = fn }
+func (s *stubSession) SetEndedCallback(cb func(string))                  { s.endedCB = cb }
+func (s *stubSession) WatchConnection(context.Context)                   { s.watched = true }
+func (s *stubSession) CanSend() bool                                     { return s.canSend }
+func (s *stubSession) SubscriberCanSend() bool                           { return s.canSend }
+func (s *stubSession) GetSendQueue() chan []byte                         { return nil }
+func (s *stubSession) GetBufferedAmount() uint64                         { return 0 }
+func (s *stubSession) Reconnect(string)                                  {}
 
 func registerCarrier(name string, sess engine.Session, err error) {
 	enginebuiltin.Register(name, func(context.Context, enginebuiltin.Config) (engine.Session, error) {
@@ -58,7 +59,6 @@ func registerCarrier(name string, sess engine.Session, err error) {
 	})
 }
 
-//nolint:cyclop // table-driven test naturally has many branches
 func TestNewAndFeatures(t *testing.T) {
 	sess := &stubSession{caps: engine.Capabilities{ByteStream: true}, canSend: true}
 	registerCarrier("datachannel-test-new-and-features", sess, nil)
@@ -92,7 +92,7 @@ func TestNewAndFeatures(t *testing.T) {
 	}
 
 	features := tr.Features()
-	if !features.Reliable || !features.Ordered || !features.MessageOriented || features.MaxPayloadSize != defaultMaxPayloadSize { //nolint:lll // long test description
+	if !features.Reliable || !features.Ordered || !features.MessageOriented || features.MaxPayloadSize != defaultMaxPayloadSize {
 		t.Fatalf("Features() = %+v", features)
 	}
 	if err := tr.Close(); err != nil {

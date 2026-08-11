@@ -24,7 +24,6 @@ liveness:
 #   min_delay: 5ms
 #   max_delay: 30ms
 
-data: data # where to store / read data
 
 profiles: # ordered list of link profiles, tried top to bottom
   - name: wb-vp8 # profile label

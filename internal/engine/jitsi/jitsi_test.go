@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	"github.com/zarazaex69/j"
+
+	"github.com/openlibrecommunity/olcrtc/internal/engine"
 )
 
 const (
@@ -354,8 +355,6 @@ func TestReconnectEpochAnnounceWithZeroPeerEpochIsAccepted(t *testing.T) {
 // a different senderEpoch (a third-party olcrtc instance or a stale ghost in a
 // polluted room) are dropped, while further frames from the latched peer keep
 // flowing.
-//
-//nolint:cyclop // setup asserts latch, epoch, and delivery state
 func TestRequireTargetedPeerLatchesFirstBroadcastThenRejectsOthers(t *testing.T) {
 	var received [][]byte
 	sess, err := New(context.Background(), engine.Config{

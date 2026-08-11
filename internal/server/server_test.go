@@ -11,12 +11,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xtaci/smux"
+
 	"github.com/openlibrecommunity/olcrtc/internal/control"
 	cryptopkg "github.com/openlibrecommunity/olcrtc/internal/crypto"
 	"github.com/openlibrecommunity/olcrtc/internal/muxconn"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
-	"github.com/xtaci/smux"
 )
 
 const (
@@ -64,7 +65,7 @@ func TestSmuxConfig(t *testing.T) {
 func TestParseConnectRequest(t *testing.T) {
 	buf, err := json.Marshal(ConnectRequest{
 		Cmd:  testConnectCmd,
-		Addr: "example.com", //nolint:goconst // test literal, repetition is intentional
+		Addr: "example.com",
 		Port: 443,
 	})
 	if err != nil {
@@ -97,7 +98,6 @@ func TestDefaultAuthHook(t *testing.T) {
 	}
 }
 
-//nolint:cyclop // table-driven test naturally has many branches
 func TestSocks5ConnectSuccess(t *testing.T) {
 	s := &Server{}
 	server, client := net.Pipe()
@@ -287,7 +287,7 @@ func TestDialWithoutProxy(t *testing.T) {
 
 func TestDialProxyError(t *testing.T) {
 	s := &Server{socksProxyAddr: testConnectAddr, socksProxyPort: 1}
-	if _, err := s.dial(ConnectRequest{Addr: "example.com", Port: 443}); err == nil || !strings.Contains(err.Error(), "failed to dial proxy") { //nolint:lll // long test description
+	if _, err := s.dial(ConnectRequest{Addr: "example.com", Port: 443}); err == nil || !strings.Contains(err.Error(), "failed to dial proxy") {
 		t.Fatalf("dial() error = %v", err)
 	}
 }
@@ -396,7 +396,6 @@ func TestReinstallSessionFiresOnClose(t *testing.T) {
 	}
 }
 
-//nolint:cyclop // integration-style control loop test needs setup and async assertions together
 func TestStartControlLoopReportsPong(t *testing.T) {
 	a, b := net.Pipe()
 	defer func() {
@@ -563,7 +562,6 @@ func TestStatusRecordsReconnectAndUnhealthy(t *testing.T) {
 	}
 }
 
-//nolint:cyclop // integration-style test needs setup, proxying, and traffic assertions together.
 func TestDispatchFiresOnTraffic(t *testing.T) {
 	var lc net.ListenConfig
 	ln, err := lc.Listen(context.Background(), "tcp4", testConnectAddr+":0")

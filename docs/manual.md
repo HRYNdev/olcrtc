@@ -177,7 +177,6 @@ crypto:
 net:
   transport: datachannel
   dns: "8.8.8.8:53"
-data: data
 ```
 
 Run:
@@ -208,7 +207,6 @@ crypto:
 net:
   transport: vp8channel
   dns: "8.8.8.8:53"
-data: data
 ```
 
 Run:
@@ -257,7 +255,6 @@ net:
 socks:
   host: "127.0.0.1"
   port: 8808
-data: data
 ```
 
 ```sh
@@ -283,7 +280,6 @@ net:
 socks:
   host: "127.0.0.1"
   port: 8808
-data: data
 ```
 
 ```sh
@@ -315,7 +311,6 @@ socks:
   port: 8808
   user: myuser
   pass: mypass
-data: data
 ```
 
 Without these fields authentication is disabled - the behavior is the same as before.
@@ -505,7 +500,6 @@ crypto:
 net:
   transport: datachannel
   dns: "8.8.8.8:53"
-data: data
 ```
 
 ```yaml
@@ -520,7 +514,6 @@ crypto:
 net:
   transport: vp8channel
   dns: "8.8.8.8:53"
-data: data
 ```
 
 Run each in its own terminal (or via `tmux` / `screen` / `systemd`):
@@ -549,7 +542,6 @@ net:
 socks:
   host: "127.0.0.1"
   port: 8808
-data: data
 ```
 
 ```yaml
@@ -567,7 +559,6 @@ net:
 socks:
   host: "127.0.0.1"
   port: 8809
-data: data
 ```
 
 ```sh

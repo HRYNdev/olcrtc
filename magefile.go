@@ -11,6 +11,7 @@
 //	mage build          # native binary
 //	mage cross          # all platforms
 //	mage mobile         # Android AAR
+//	mage cgo            # c-shared library
 //
 //	mage test           # short unit tests
 //	mage testfull       # all unit tests, no real providers
@@ -29,6 +30,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -50,6 +52,11 @@ const (
 	ldflags  = "-s -w"
 )
 
+// errNotFormatted reports files that `go fmt` had to rewrite.
+//
+//nolint:gochecknoglobals // sentinel error
+var errNotFormatted = errors.New("files were not gofmt-clean")
+
 var (
 	goexe  = mg.GoCmd()
 	goos   = envOr("GOOS", runtime.GOOS)
@@ -67,10 +74,10 @@ func Help() error {
 	return sh.RunV("mage", "-l")
 }
 
-// Check runs the fast pre-commit pipeline: build + vet + lint + unit tests.
-// Use this before every commit.
+// Check runs the fast pre-commit pipeline: formatting, build, vet, lint and
+// unit tests. Use this before every commit.
 func Check() {
-	mg.SerialDeps(Build, Vet, Lint, TestFull)
+	mg.SerialDeps(Fmt, Build, Vet, Lint, TestFull)
 }
 
 // All runs the full pre-merge pipeline: Check + the real-provider smoke
@@ -130,10 +137,41 @@ func Cross() error {
 	return nil
 }
 
+// Cgo builds the c-shared library exposed by cmd/olcrtc-cgo.
+func Cgo() error {
+	mg.Deps(Deps)
+
+	if err := ensureBuildDir(); err != nil {
+		return err
+	}
+
+	ext := ".so"
+
+	switch goos {
+	case "windows":
+		ext = ".dll"
+	case "darwin":
+		ext = ".dylib"
+	}
+
+	out := filepath.Join(buildDir, "libolcrtc"+ext)
+	fmt.Printf("building c-shared library -> %s\n", out)
+
+	env := map[string]string{"CGO_ENABLED": "1"}
+	args := []string{"build", "-trimpath", "-buildmode=c-shared", "-ldflags", ldflags, "-o", out, "./cmd/olcrtc-cgo"}
+
+	if err := sh.RunWithV(env, goexe, args...); err != nil {
+		return fmt.Errorf("build c-shared library: %w", err)
+	}
+
+	return nil
+}
+
 // Mobile builds the Android AAR via gomobile.
 func Mobile() error {
 	if err := ensureTool("gomobile"); err != nil {
-		return fmt.Errorf("gomobile not found: run 'go install golang.org/x/mobile/cmd/gomobile@latest && gomobile init'")
+		return fmt.Errorf("gomobile not found, run "+
+			"'go install golang.org/x/mobile/cmd/gomobile@latest && gomobile init': %w", err)
 	}
 	if err := ensureBuildDir(); err != nil {
 		return err
@@ -151,6 +189,20 @@ func Mobile() error {
 // Quality
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Fmt verifies that every file is gofmt-clean, the same gate CI applies.
+func Fmt() error {
+	out, err := sh.Output(goexe, "fmt", "./...")
+	if err != nil {
+		return fmt.Errorf("go fmt: %w", err)
+	}
+
+	if strings.TrimSpace(out) != "" {
+		return fmt.Errorf("%w:\n%s", errNotFormatted, out)
+	}
+
+	return nil
+}
+
 // Vet runs go vet on the whole module.
 func Vet() error {
 	return sh.RunV(goexe, "vet", "./...")
@@ -159,7 +211,8 @@ func Vet() error {
 // Lint runs golangci-lint.
 func Lint() error {
 	if err := ensureTool("golangci-lint"); err != nil {
-		return fmt.Errorf("golangci-lint not found, install it:\n  go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest")
+		return fmt.Errorf("golangci-lint not found, install it with "+
+			"'go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest': %w", err)
 	}
 	return sh.RunV("golangci-lint", "run", "./...")
 }

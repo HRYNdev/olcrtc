@@ -113,7 +113,6 @@ func TestCreateDialerUsesResolver(t *testing.T) {
 	}
 }
 
-//nolint:cyclop // covers related address forms together
 func TestResolveAddrUsesInjectedResolverSemantics(t *testing.T) {
 	t.Parallel()
 

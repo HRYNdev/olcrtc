@@ -26,10 +26,17 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/transport/vp8channel"
 )
 
+// Supported values for the `mode:` config field.
 const (
-	modeSRV          = "srv"
-	modeCNC          = "cnc"
-	modeGen          = "gen"
+	// ModeSrv is the server side: it accepts tunnel streams and dials targets.
+	ModeSrv = "srv"
+	// ModeCnc is the client side: it listens on a local SOCKS5 endpoint.
+	ModeCnc = "cnc"
+	// ModeGen creates room IDs for providers that support room creation.
+	ModeGen = "gen"
+)
+
+const (
 	authNone         = "none"
 	transportVideo   = "videochannel"
 	transportVP8     = "vp8channel"
@@ -216,29 +223,44 @@ func RegisterDefaults() {
 	transport.Register("vp8channel", vp8channel.New)
 }
 
+// ApplyDefaults normalises a raw config: auth-derived fields first, then the
+// documented transport and liveness defaults. Callers should always run this
+// before Validate.
+func ApplyDefaults(cfg Config) (Config, error) {
+	cfg, err := ApplyAuthDefaults(cfg)
+	if err != nil {
+		return cfg, err
+	}
+
+	return ApplyLivenessDefaults(ApplyTransportDefaults(cfg)), nil
+}
+
 // ApplyAuthDefaults fills in Engine and URL from the auth provider when they are not set explicitly.
-// For -auth none the fields are left untouched (the caller supplies them directly).
+// For auth "none" the fields are left untouched (the caller supplies them directly).
 //
 // An empty cfg.URL is acceptable when the auth provider does not advertise a
-// DefaultServiceURL. Providers that DO advertise a DefaultServiceURL still
-// require URL to be set when their default cannot be applied.
+// DefaultServiceURL; providers that do advertise one always resolve here.
 func ApplyAuthDefaults(cfg Config) (Config, error) {
 	if cfg.Auth == authNone || cfg.Auth == "" {
 		return cfg, nil
 	}
-	p, _ := auth.Get(cfg.Auth) // unknown auth is caught later by validateAuth
-	if p == nil {
+
+	provider, err := auth.Get(cfg.Auth)
+	if err != nil {
+		// Unknown auth providers are reported by validateAuth with a full list
+		// of the registered ones, which is a far better message than anything
+		// this function could produce.
 		return cfg, nil
 	}
+
 	if cfg.Engine == "" {
-		cfg.Engine = p.Engine()
+		cfg.Engine = provider.Engine()
 	}
+
 	if cfg.URL == "" {
-		cfg.URL = p.DefaultServiceURL()
+		cfg.URL = provider.DefaultServiceURL()
 	}
-	if cfg.URL == "" && p.DefaultServiceURL() != "" {
-		return cfg, fmt.Errorf("%w: auth provider %q has no default URL", ErrURLRequired, cfg.Auth)
-	}
+
 	return cfg, nil
 }
 
@@ -356,7 +378,7 @@ func Validate(cfg Config) error {
 
 func validateMode(cfg Config) error {
 	switch cfg.Mode {
-	case modeSRV, modeCNC, modeGen:
+	case ModeSrv, ModeCnc, ModeGen:
 		return nil
 	default:
 		return ErrModeRequired
@@ -465,7 +487,7 @@ func validateSEIChannel(cfg Config) error {
 }
 
 func validateModeConfig(cfg Config) error {
-	if cfg.Mode != modeCNC {
+	if cfg.Mode != ModeCnc {
 		return nil
 	}
 	if cfg.SOCKSHost == "" {
@@ -641,7 +663,7 @@ func runOnce(
 ) error {
 	opts := buildTransportOptions(cfg)
 	switch cfg.Mode {
-	case modeSRV:
+	case ModeSrv:
 		if err := server.Run(ctx, server.Config{
 			Transport:        cfg.Transport,
 			Carrier:          cfg.Auth,
@@ -674,7 +696,7 @@ func runOnce(
 			return fmt.Errorf("server: %w", err)
 		}
 		return nil
-	case modeCNC:
+	case ModeCnc:
 		if err := client.Run(ctx, client.Config{
 			Transport:        cfg.Transport,
 			Carrier:          cfg.Auth,

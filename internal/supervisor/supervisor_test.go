@@ -64,7 +64,6 @@ func TestRunAdvancesProfilesAndStopsAtMaxCycles(t *testing.T) {
 	}
 }
 
-//nolint:cyclop // status history test verifies one complete failover cycle
 func TestRunEmitsStatusHistory(t *testing.T) {
 	profiles := []Profile{
 		{Name: testProfileFirst, Config: session.Config{Auth: "wbstream"}},

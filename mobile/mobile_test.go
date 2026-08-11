@@ -52,7 +52,7 @@ func resetMobileGlobals(t *testing.T) {
 	logger.SetVerbose(false)
 }
 
-var clientRunWithReady = runClientWithReady //nolint:gochecknoglobals // package-level state intentional
+var clientRunWithReady = runClientWithReady
 
 const testRoomID = "room"
 
@@ -171,29 +171,28 @@ func TestNormalizeBuildRoomAndClamp(t *testing.T) {
 func TestStartValidation(t *testing.T) {
 	resetMobileGlobals(t)
 
-	if err := startWithConfig("", dataTransport, testRoomID, "client", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errCarrierRequired) { //nolint:lll // long test description
+	if err := startWithConfig("", dataTransport, testRoomID, "client", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errCarrierRequired) {
 		t.Fatalf("startWithConfig(missing carrier) = %v", err)
 	}
-	if err := startWithConfig("telemost", dataTransport, "", "client", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errRoomIDRequired) { //nolint:lll // long test description
+	if err := startWithConfig("telemost", dataTransport, "", "client", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errRoomIDRequired) {
 		t.Fatalf("startWithConfig(missing room) = %v", err)
 	}
-	if err := startWithConfig("jitsi", dataTransport, testRoomID, "", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errClientIDRequired) { //nolint:lll // long test description
+	if err := startWithConfig("jitsi", dataTransport, testRoomID, "", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errClientIDRequired) {
 		t.Fatalf("startWithConfig(missing client) = %v", err)
 	}
-	if err := startWithConfig("jitsi", dataTransport, testRoomID, "client", "", 1080, "", "", mobileConfig{}); !errors.Is(err, errKeyHexRequired) { //nolint:lll // long test description
+	if err := startWithConfig("jitsi", dataTransport, testRoomID, "client", "", 1080, "", "", mobileConfig{}); !errors.Is(err, errKeyHexRequired) {
 		t.Fatalf("startWithConfig(missing key) = %v", err)
 	}
 
 	mu.Lock()
 	cancel = func() {}
 	mu.Unlock()
-	if err := startWithConfig("jitsi", dataTransport, testRoomID, "client", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errAlreadyRunning) { //nolint:lll // long test description
+	if err := startWithConfig("jitsi", dataTransport, testRoomID, "client", "key", 1080, "", "", mobileConfig{}); !errors.Is(err, errAlreadyRunning) {
 		t.Fatalf("startWithConfig(running) = %v", err)
 	}
 	resetMobileGlobals(t)
 }
 
-//nolint:cyclop // table-driven test naturally has many branches
 func TestStartWithInjectedRunnerLifecycle(t *testing.T) {
 	resetMobileGlobals(t)
 	t.Cleanup(func() {
@@ -271,7 +270,6 @@ func TestSetWBTokenReachesClientConfig(t *testing.T) {
 	}
 }
 
-//nolint:cyclop // table-driven test naturally has many branches
 func TestStartUsesDefaultsAndCheckWithInjectedRunner(t *testing.T) {
 	resetMobileGlobals(t)
 	t.Cleanup(func() {
@@ -359,7 +357,7 @@ func TestCheckTimeoutAndRunError(t *testing.T) {
 		<-ctx.Done()
 		return nil
 	}
-	if _, err := Check("telemost", defaultTransport, testRoomID, "client", "key", 1083, 1, 30, 1); !errors.Is(err, errStartTimedOut) { //nolint:lll // long test description
+	if _, err := Check("telemost", defaultTransport, testRoomID, "client", "key", 1083, 1, 30, 1); !errors.Is(err, errStartTimedOut) {
 		t.Fatalf("Check(timeout) error = %v, want %v", err, errStartTimedOut)
 	}
 

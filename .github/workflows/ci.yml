@@ -9,41 +9,60 @@ on:
     - cron: "17 0 * * *"
   workflow_dispatch:
 
+env:
+  GO_VERSION: "1.26.x"
+  GOLANGCI_LINT_VERSION: "v2.12.2"
+
 jobs:
+  hygiene:
+    name: Hygiene (fmt, tidy, vet)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "these files are not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go mod tidy
+        run: go mod tidy -diff
+
+      - name: go vet
+        run: go vet ./...
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          args: --timeout=5m
+
   test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.26.x"
-
-      - name: Run tests
-        run: go test -count=1 ./...
-
-  coverage:
-    name: Coverage
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.26.x"
-
-      - name: Run tests with coverage
-        run: go test -count=1 ./... --cover
-
-  race:
-    name: Test (-race)
+    name: Test (-race, coverage)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -54,13 +73,25 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.x"
+          go-version: ${{ env.GO_VERSION }}
 
-      - name: Run tests with -race
-        run: go test -count=1 -race ./...
+      - name: Run tests
+        run: go test -count=1 -race -timeout 15m -coverprofile=coverage.out ./...
+
+      - name: Coverage summary
+        run: go tool cover -func=coverage.out | tail -1
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
 
   real-e2e:
     name: Real E2E (Providers x Transports)
+    # Talks to third-party services, so it only runs on PRs into the default
+    # branches plus the nightly schedule. Feature-branch pushes stay offline.
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -71,7 +102,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.x"
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Install media tools
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
@@ -98,7 +129,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.x"
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Install media tools
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
@@ -116,24 +147,6 @@ jobs:
             -olcrtc.stress-echo-size=1024 \
             -olcrtc.stress-case-timeout=8m
 
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.26.x"
-
-      - name: golangci-lint
-        run: |
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
-          $(go env GOPATH)/bin/golangci-lint run --timeout=5m
-
   build-cli:
     name: Build CLI (Binaries)
     runs-on: ubuntu-latest
@@ -145,7 +158,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.x"
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Install Mage
         run: go install github.com/magefile/mage@latest
@@ -170,7 +183,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.x"
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Set up JDK
         uses: actions/setup-java@v4
@@ -195,6 +208,31 @@ jobs:
           name: olcrtc-android
           path: build/olcrtc.aar
 
+  build-cgo:
+    name: Build c-shared library
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install Mage
+        run: go install github.com/magefile/mage@latest
+
+      - name: Build c-shared
+        run: mage cgo
+
+      - name: Upload c-shared artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: olcrtc-cshared
+          path: build/libolcrtc.*
+
   nightly-soak:
     name: Nightly Soak (All Carriers × Transports)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -208,7 +246,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.x"
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Install media tools
         run: sudo apt-get update && sudo apt-get install -y ffmpeg

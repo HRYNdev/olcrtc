@@ -24,7 +24,6 @@ type chaosCfg struct {
 	seed         uint64        // RNG seed; 0 picks 1
 }
 
-//nolint:cyclop // chaos pump intentionally has several independent injection paths
 func chaosPump(
 	t *testing.T,
 	stop <-chan struct{},
@@ -190,8 +189,6 @@ func TestKCPSurvivesReorder(t *testing.T) {
 // then full restoration. This mirrors a real connectivity blip: the
 // transport should not give up; KCP should resend everything queued
 // during the blackout once the path comes back.
-//
-//nolint:cyclop // setup + gated pump + assertions naturally branch several ways
 func TestKCPRecoversFromBurstLoss(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping chaos test in -short mode")

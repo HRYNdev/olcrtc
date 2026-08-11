@@ -22,7 +22,6 @@ func TestLoadAndApply(t *testing.T) {
 	path := filepath.Join(dir, "olcrtc.yaml")
 	body := `
 mode: srv
-link: direct
 auth:
   provider: wbstream
 room:
@@ -64,7 +63,7 @@ debug: true
 	}
 	requireLoadedFile(t, f)
 
-	got := Apply(session.Config{}, f)
+	got := Apply(f)
 	requireAppliedConfig(t, got)
 }
 
@@ -112,39 +111,86 @@ func requireAppliedConfig(t *testing.T, got session.Config) {
 	}
 }
 
-func TestApplyCLIWins(t *testing.T) {
-	cli := session.Config{
-		Mode:      "cnc",
-		KeyHex:    "from-cli",
+func TestApplySettingsOverlaysNonZeroFields(t *testing.T) {
+	base := session.Config{
+		KeyHex:    "kept",
+		SOCKSHost: "kept-host",
 		SOCKSPort: 9999,
 	}
-	f := File{
-		Mode:   testModeSrv,
-		Crypto: Crypto{Key: "from-yaml"},
-		SOCKS:  SOCKS{Port: 1234, Host: "0.0.0.0"},
+
+	got := ApplySettings(base, Settings{
+		Crypto: Crypto{Key: "override"},
+		SOCKS:  SOCKS{Port: 1234},
+	})
+
+	if got.KeyHex != "override" {
+		t.Errorf("KeyHex: got %q, want override", got.KeyHex)
 	}
-	got := Apply(cli, f)
-	if got.Mode != "cnc" {
-		t.Errorf("Mode: got %q, want cnc (CLI wins)", got.Mode)
+
+	if got.SOCKSPort != 1234 {
+		t.Errorf("SOCKSPort: got %d, want 1234", got.SOCKSPort)
 	}
-	if got.KeyHex != "from-cli" {
-		t.Errorf("KeyHex: got %q, want from-cli (CLI wins)", got.KeyHex)
-	}
-	if got.SOCKSPort != 9999 {
-		t.Errorf("SOCKSPort: got %d, want 9999 (CLI wins)", got.SOCKSPort)
-	}
-	if got.SOCKSHost != "0.0.0.0" {
-		t.Errorf("SOCKSHost: got %q, want 0.0.0.0 (YAML fills empty CLI)", got.SOCKSHost)
+
+	if got.SOCKSHost != "kept-host" {
+		t.Errorf("SOCKSHost: got %q, want kept-host (zero override keeps base)", got.SOCKSHost)
 	}
 }
 
-//nolint:cyclop // profile merge fixture intentionally checks many mapped fields
+func TestApplyMapsEverySection(t *testing.T) {
+	got := Apply(File{
+		Mode: testModeSrv,
+		Gen:  Gen{Amount: 2},
+		Settings: Settings{
+			Auth:      Auth{Provider: testAuthProvider, Token: "acct"},
+			Room:      Room{ID: testRoomID, Channel: "chan"},
+			Engine:    Engine{Name: "livekit", URL: "wss://x", Token: "tok"},
+			SOCKS:     SOCKS{ProxyAddr: "127.0.0.1", ProxyPort: 1080, ProxyUser: "pu", ProxyPass: "pp"},
+			Video:     Video{Width: 640, Height: 480, QRSize: 128, Codec: "tile", TileModule: 4, TileRS: 2},
+			SEI:       SEI{FPS: 15, BatchSize: 8, FragmentSize: 700, AckTimeoutMS: 1500},
+			Lifecycle: Lifecycle{MaxSessionDuration: "1h"},
+		},
+	})
+
+	want := session.Config{
+		Mode:               testModeSrv,
+		Amount:             2,
+		Auth:               testAuthProvider,
+		AuthToken:          "acct",
+		RoomID:             testRoomID,
+		ChannelID:          "chan",
+		Engine:             "livekit",
+		URL:                "wss://x",
+		Token:              "tok",
+		SOCKSProxyAddr:     "127.0.0.1",
+		SOCKSProxyPort:     1080,
+		SOCKSProxyUser:     "pu",
+		SOCKSProxyPass:     "pp",
+		Video:              session.VideoConfig{Width: 640, Height: 480, QRSize: 128, Codec: "tile", TileModule: 4, TileRS: 2},
+		SEI:                session.SEIConfig{FPS: 15, BatchSize: 8, FragmentSize: 700, AckTimeoutMS: 1500},
+		MaxSessionDuration: "1h",
+	}
+
+	if got != want {
+		t.Fatalf("Apply() = %+v, want %+v", got, want)
+	}
+}
+
+func TestLoadRejectsUnknownKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "olcrtc.yaml")
+	if err := os.WriteFile(path, []byte("mode: srv\nlink: direct\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load() error = nil, want failure for an unknown key")
+	}
+}
+
 func TestLoadAndApplyProfile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "olcrtc.yaml")
 	body := `
 mode: srv
-link: direct
 crypto:
   key: shared-key
 net:
@@ -203,7 +249,7 @@ failover:
 		t.Fatalf("Failover = %+v, want retry_delay 100ms max_cycles 2", f.Failover)
 	}
 
-	base := Apply(session.Config{}, f)
+	base := Apply(f)
 	first := ApplyProfile(base, f.Profiles[0])
 	if first.Auth != "wbstream" || first.Transport != "vp8channel" || first.RoomID != "wb-room" {
 		t.Fatalf("first profile = %+v", first)

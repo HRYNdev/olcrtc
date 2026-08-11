@@ -7,9 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	lksdk "github.com/owenewans/owenlivekit/v2"
 	"github.com/pion/webrtc/v4"
+
+	"github.com/openlibrecommunity/olcrtc/internal/engine"
 )
 
 const (
@@ -140,7 +141,6 @@ func waitFor(t *testing.T, cond func() bool) {
 	t.Fatal("condition was not met before timeout")
 }
 
-//nolint:cyclop // reconnect flow test keeps setup and postconditions in one scenario
 func TestReconnectRefreshesCredentialsAndReplacesRoom(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -212,7 +212,6 @@ func TestReconnectRefreshesCredentialsAndReplacesRoom(t *testing.T) {
 	}
 }
 
-//nolint:cyclop // terminal disconnect test keeps setup and cleanup assertions together
 func TestDisconnectedEndsWhenReconnectDisallowed(t *testing.T) {
 	ctx := context.Background()
 	sess, err := New(ctx, engine.Config{URL: testOldURL, Token: testOldToken})

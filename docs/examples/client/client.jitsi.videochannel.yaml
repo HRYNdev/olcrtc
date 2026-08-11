@@ -45,5 +45,4 @@ video:
   tile_rs: 20 # reed-solomon parity per tile
 ffmpeg: ffmpeg # ffmpeg binary path or name
 
-data: data # where to store / read data
 debug: false # log actions in more detail

@@ -137,7 +137,6 @@ crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
 net:
   transport: datachannel
-data: data
 ```
 
 ### wbstream + vp8channel
@@ -161,7 +160,6 @@ net:
 vp8:
   fps: 30
   batch_size: 64
-data: data
 ```
 
 ### wbstream + seichannel
@@ -187,7 +185,6 @@ sei:
   batch_size: 64
   fragment_size: 900
   ack_timeout_ms: 2000
-data: data
 ```
 
 ### telemost + videochannel
@@ -215,7 +212,6 @@ video:
   bitrate: "5000k"
   hw: none
   codec: qrcode
-data: data
 ```
 
 ---
@@ -241,7 +237,6 @@ crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
 net:
   transport: datachannel
-data: data
 ```
 
 ---

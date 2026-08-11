@@ -45,12 +45,12 @@ func TestRunWithArgsRequiresConfig(t *testing.T) {
 func TestRunGenModeValidationErrors(t *testing.T) {
 	session.RegisterDefaults()
 
-	if err := runWithConfig(loadedConfig{scfg: session.Config{Mode: modeGen}}); err == nil {
+	if err := runWithConfig(loadedConfig{scfg: session.Config{Mode: session.ModeGen}}); err == nil {
 		t.Fatal("runWithConfig(gen, no carrier) error = nil")
 	}
 
 	cfg := loadedConfig{scfg: session.Config{
-		Mode: modeGen, Auth: testAuthWBStream, DNSServer: testDNSServer,
+		Mode: session.ModeGen, Auth: testAuthWBStream, DNSServer: testDNSServer,
 	}}
 	if err := runWithConfig(cfg); err == nil {
 		t.Fatal("runWithConfig(gen, amount=0) error = nil")
@@ -72,7 +72,7 @@ func TestRunGenModeCallsGen(t *testing.T) {
 	}
 
 	cfg := loadedConfig{scfg: session.Config{
-		Mode: modeGen, Auth: testAuthWBStream, DNSServer: testDNSServer, Amount: 3,
+		Mode: session.ModeGen, Auth: testAuthWBStream, DNSServer: testDNSServer, Amount: 3,
 	}}
 	if err := runWithConfig(cfg); err != nil {
 		t.Fatalf("runWithConfig(gen) error = %v", err)
@@ -82,8 +82,25 @@ func TestRunGenModeCallsGen(t *testing.T) {
 	}
 }
 
-func TestRunWithConfigValidationAndDataDirErrors(t *testing.T) {
+func TestRunWithConfigRejectsInvalidConfig(t *testing.T) {
 	session.RegisterDefaults()
+
+	scfg := session.Config{
+		Transport: "datachannel",
+		Auth:      "jitsi",
+		RoomID:    "https://meet.systemli.org/test",
+		KeyHex:    "key",
+		DNSServer: "8.8.8.8:53",
+	}
+
+	if err := runWithConfig(loadedConfig{scfg: scfg}); err == nil {
+		t.Fatal("runWithConfig(invalid config) error = nil")
+	}
+}
+
+func TestRunWithConfigRejectsUnreadableDataOverride(t *testing.T) {
+	session.RegisterDefaults()
+
 	scfg := session.Config{
 		Mode:      "srv",
 		Transport: "datachannel",
@@ -92,13 +109,10 @@ func TestRunWithConfigValidationAndDataDirErrors(t *testing.T) {
 		KeyHex:    "key",
 		DNSServer: "8.8.8.8:53",
 	}
-	if err := runWithConfig(loadedConfig{scfg: scfg}); !errors.Is(err, ErrDataDirRequired) {
-		t.Fatalf("runWithConfig(no data dir) = %v, want %v", err, ErrDataDirRequired)
-	}
 
-	scfg.Mode = ""
-	if err := runWithConfig(loadedConfig{scfg: scfg}); err == nil {
-		t.Fatal("runWithConfig(invalid config) error = nil")
+	err := runWithConfig(loadedConfig{scfg: scfg, dataDir: filepath.Join(t.TempDir(), "missing")})
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("runWithConfig(bad data dir) = %v, want os.ErrNotExist", err)
 	}
 }
 
@@ -131,7 +145,6 @@ func TestRunWithArgsSuccessfulSessionReturn(t *testing.T) {
 
 	yamlPath := writeYAML(t, `
 mode: srv
-link: direct
 auth:
   provider: jitsi
 room:
@@ -172,7 +185,6 @@ func TestRunWithArgsAppliesTransportDefaults(t *testing.T) {
 
 	yamlPath := writeYAML(t, `
 mode: srv
-link: direct
 auth:
   provider: wbstream
 room:
@@ -212,7 +224,6 @@ func TestRunWithArgsFailoverProfiles(t *testing.T) {
 
 	yamlPath := writeYAML(t, `
 mode: srv
-link: direct
 crypto:
   key: key
 net:
@@ -250,7 +261,7 @@ data: `+dir+`
 
 func TestRunWithConfigRejectsProfilesInGenMode(t *testing.T) {
 	cfg := loadedConfig{
-		scfg:     session.Config{Mode: modeGen},
+		scfg:     session.Config{Mode: session.ModeGen},
 		profiles: []supervisor.Profile{{Name: "one"}},
 	}
 	if err := runWithConfig(cfg); !errors.Is(err, ErrProfilesUnsupportedForGen) {
@@ -293,33 +304,36 @@ func equalStrings(a, b []string) bool {
 
 func TestResolveDataDir(t *testing.T) {
 	abs := filepath.Join(t.TempDir(), "data")
-	got, err := resolveDataDir(abs)
-	if err != nil {
-		t.Fatalf("resolveDataDir(abs) error = %v", err)
-	}
-	if got != abs {
+	if got := resolveDataDir("/etc/olcrtc/server.yaml", abs); got != abs {
 		t.Fatalf("resolveDataDir(abs) = %q, want %q", got, abs)
 	}
 
-	got, err = resolveDataDir("data")
-	if err != nil {
-		t.Fatalf("resolveDataDir(rel) error = %v", err)
+	want := filepath.Join("/etc", "olcrtc", "data")
+	if got := resolveDataDir("/etc/olcrtc/server.yaml", "data"); got != want {
+		t.Fatalf("resolveDataDir(rel) = %q, want %q", got, want)
 	}
-	if filepath.Base(got) != "data" || !filepath.IsAbs(got) {
-		t.Fatalf("resolveDataDir(rel) = %q, want absolute path ending in data", got)
+
+	if got := resolveDataDir("/etc/olcrtc/server.yaml", ""); got != "" {
+		t.Fatalf("resolveDataDir(unset) = %q, want empty", got)
 	}
 }
 
-func TestLoadNames(t *testing.T) {
+func TestLoadNameOverrides(t *testing.T) {
+	if err := loadNameOverrides(""); err != nil {
+		t.Fatalf("loadNameOverrides(unset) error = %v", err)
+	}
+
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "names"), []byte("A\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile(names) error = %v", err)
 	}
+
 	if err := os.WriteFile(filepath.Join(dir, "surnames"), []byte("B\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile(surnames) error = %v", err)
 	}
-	if err := loadNames(dir); err != nil {
-		t.Fatalf("loadNames() error = %v", err)
+
+	if err := loadNameOverrides(dir); err != nil {
+		t.Fatalf("loadNameOverrides() error = %v", err)
 	}
 }
 
