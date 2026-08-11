@@ -104,7 +104,8 @@ type streamTransport struct {
 	// sampleWriter, when set, replaces the real track.WriteSample call.
 	// Tests inject a writer here to observe the exact byte stream that
 	// reaches the track and to assert that writeSampleLocked serializes
-	// concurrent callers. Always invoked under writeMu.
+	// concurrent callers. It must consume data before returning, matching
+	// TrackLocalStaticSample.WriteSample. Always invoked under writeMu.
 	sampleWriter func([]byte) bool
 	onData       func([]byte)
 	onPeerData   func(peerID string, data []byte)

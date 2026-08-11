@@ -165,9 +165,10 @@ func EncodeHello(role byte, binding uint32) []byte {
 	return out
 }
 
-// DecodeFrame parses one frame. Frames from an older wire version fail the
-// magic or version check and are reported as such rather than decoded against
-// mismatched offsets.
+// DecodeFrame parses one frame. Data payloads alias data and must be consumed
+// before the input buffer is reused. Frames from an older wire version fail
+// the magic or version check and are reported as such rather than decoded
+// against mismatched offsets.
 func DecodeFrame(data []byte) (Frame, error) {
 	if err := validateFrameHeader(data); err != nil {
 		return Frame{}, err
@@ -237,6 +238,6 @@ func decodeDataBody(frame Frame, data []byte) (Frame, error) {
 	frame.TotalLen = binary.BigEndian.Uint32(data[frameTotalLenOff:frameFragIdxOff])
 	frame.FragIdx = binary.BigEndian.Uint16(data[frameFragIdxOff:frameFragTotOff])
 	frame.FragTotal = binary.BigEndian.Uint16(data[frameFragTotOff:frameDataHdrLen])
-	frame.Payload = append([]byte(nil), data[frameDataHdrLen:]...)
+	frame.Payload = data[frameDataHdrLen:]
 	return frame, nil
 }

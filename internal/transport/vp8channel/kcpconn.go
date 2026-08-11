@@ -42,8 +42,11 @@ func fakeUDPAddr() *net.UDPAddr {
 // All packet boundaries are preserved by the underlying transport, which is
 // exactly what KCP expects from a UDP-like conn.
 type kcpConn struct {
-	out       chan<- []byte
-	in        chan []byte
+	out       chan<- *packetBuffer
+	in        chan *packetBuffer
+	inPools   [4]sync.Pool
+	outPools  [4]sync.Pool
+	addr      *net.UDPAddr
 	closed    chan struct{}
 	closeOnce sync.Once
 
@@ -71,6 +74,50 @@ type kcpConn struct {
 	wDeadline time.Time
 }
 
+type packetBuffer struct {
+	data []byte
+	pool *sync.Pool
+}
+
+func packetBufferClass(size int) (int, int, bool) {
+	switch {
+	case size <= 256:
+		return 0, 256, true
+	case size <= 512:
+		return 1, 512, true
+	case size <= 1024:
+		return 2, 1024, true
+	case size <= 1536:
+		return 3, 1536, true
+	default:
+		return 0, size, false
+	}
+}
+
+func acquirePacketBuffer(pools *[4]sync.Pool, size int) *packetBuffer {
+	class, capacity, pooled := packetBufferClass(size)
+	if !pooled {
+		return &packetBuffer{data: make([]byte, size)}
+	}
+	pool := &pools[class]
+	if value := pool.Get(); value != nil {
+		packet, ok := value.(*packetBuffer)
+		if ok {
+			packet.data = packet.data[:size]
+			return packet
+		}
+	}
+	return &packetBuffer{data: make([]byte, size, capacity), pool: pool}
+}
+
+func (p *packetBuffer) release() {
+	if p == nil || p.pool == nil {
+		return
+	}
+	p.data = p.data[:0]
+	p.pool.Put(p)
+}
+
 // setHeader re-points the outgoing frame header (used to update the dst epoch
 // after the peer is latched). Safe for concurrent use with WriteTo.
 func (c *kcpConn) setHeader(hdr [epochHdrLen]byte) {
@@ -79,16 +126,18 @@ func (c *kcpConn) setHeader(hdr [epochHdrLen]byte) {
 	c.hdrMu.Unlock()
 }
 
-func newKCPConn(out chan<- []byte, inboundCap int, epochHdr [epochHdrLen]byte) *kcpConn {
+func newKCPConn(out chan<- *packetBuffer, inboundCap int, epochHdr [epochHdrLen]byte) *kcpConn {
 	if inboundCap <= 0 {
 		inboundCap = 1024
 	}
-	return &kcpConn{
+	conn := &kcpConn{
 		out:      out,
-		in:       make(chan []byte, inboundCap),
+		in:       make(chan *packetBuffer, inboundCap),
+		addr:     fakeUDPAddr(),
 		closed:   make(chan struct{}),
 		epochHdr: epochHdr,
 	}
+	return conn
 }
 
 // deliver hands an incoming wire payload to the KCP read loop. The trailing
@@ -110,12 +159,14 @@ func (c *kcpConn) deliver(payload []byte) {
 		c.corrupt.Add(1)
 		return
 	}
-	cp := make([]byte, len(body))
-	copy(cp, body)
+	packet := acquirePacketBuffer(&c.inPools, len(body))
+	copy(packet.data, body)
 	select {
-	case c.in <- cp:
+	case c.in <- packet:
 	case <-c.closed:
+		packet.release()
 	default:
+		packet.release()
 		c.warnRateLimitedf("inbound queue full, dropped %d packet(s) (corrupt=%d)",
 			c.dropped.Add(1), c.corrupt.Load())
 	}
@@ -153,16 +204,18 @@ func (c *kcpConn) ReadFrom(p []byte) (int, net.Addr, error) {
 	}
 
 	select {
-	case msg := <-c.in:
-		n := copy(p, msg)
-		if n < len(msg) {
+	case packet := <-c.in:
+		n := copy(p, packet.data)
+		packetLen := len(packet.data)
+		packet.release()
+		if n < packetLen {
 			// KCP always reads with a full-MTU buffer, so this means the
 			// packet exceeded the MTU: the tail is lost and KCP will see a
 			// malformed segment. Never silently.
 			c.warnRateLimitedf("read buffer too small: %d of %d bytes, %d truncated read(s)",
-				n, len(msg), c.truncated.Add(1))
+				n, packetLen, c.truncated.Add(1))
 		}
-		return n, fakeUDPAddr(), nil
+		return n, c.addr, nil
 	case <-c.closed:
 		return 0, nil, net.ErrClosed
 	case <-timerC:
@@ -173,7 +226,8 @@ func (c *kcpConn) ReadFrom(p []byte) (int, net.Addr, error) {
 func (c *kcpConn) WriteTo(p []byte, _ net.Addr) (int, error) {
 	// Layout: [epoch header][KCP packet p][CRC32(p)]. The receiver strips the
 	// epoch header before deliver(), which then verifies and strips the CRC.
-	buf := make([]byte, epochHdrLen+len(p)+wireCRCLen)
+	packet := acquirePacketBuffer(&c.outPools, epochHdrLen+len(p)+wireCRCLen)
+	buf := packet.data
 	c.hdrMu.RLock()
 	copy(buf, c.epochHdr[:])
 	c.hdrMu.RUnlock()
@@ -196,11 +250,13 @@ func (c *kcpConn) WriteTo(p []byte, _ net.Addr) (int, error) {
 	}
 
 	select {
-	case c.out <- buf:
+	case c.out <- packet:
 		return len(p), nil
 	case <-c.closed:
+		packet.release()
 		return 0, net.ErrClosed
 	case <-timerC:
+		packet.release()
 		return 0, TimeoutError{}
 	}
 }
@@ -210,7 +266,7 @@ func (c *kcpConn) Close() error {
 	return nil
 }
 
-func (c *kcpConn) LocalAddr() net.Addr { return fakeUDPAddr() }
+func (c *kcpConn) LocalAddr() net.Addr { return c.addr }
 
 func (c *kcpConn) SetDeadline(t time.Time) error {
 	_ = c.SetReadDeadline(t)

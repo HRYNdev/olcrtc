@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func pumpPackets(stop <-chan struct{}, from <-chan []byte, to *kcpRuntime) {
+func pumpPackets(stop <-chan struct{}, from <-chan *packetBuffer, to *kcpRuntime) {
 	for {
 		select {
 		case <-stop:
@@ -16,9 +16,10 @@ func pumpPackets(stop <-chan struct{}, from <-chan []byte, to *kcpRuntime) {
 		case pkt := <-from:
 			// Strip the on-wire epoch header that kcpConn prepends;
 			// the real receive path does this before calling deliver().
-			if len(pkt) > epochHdrLen {
-				to.deliver(pkt[epochHdrLen:])
+			if len(pkt.data) > epochHdrLen {
+				to.deliver(pkt.data[epochHdrLen:])
 			}
+			pkt.release()
 		}
 	}
 }
@@ -66,8 +67,8 @@ func TestKCPLoopback(t *testing.T) {
 		bytes.Repeat([]byte("y"), 20000),
 	}
 
-	a2b := make(chan []byte, 256)
-	b2a := make(chan []byte, 256)
+	a2b := make(chan *packetBuffer, 256)
+	b2a := make(chan *packetBuffer, 256)
 
 	cb, doneB, getRecv := buildReceiver(len(msgs))
 
@@ -112,11 +113,11 @@ func TestVP8KeepaliveDoesNotLookLikeKCP(t *testing.T) {
 
 func TestBatchSampleCarriesMultipleKCPPackets(t *testing.T) {
 	hdr := testEpochHdr(1)
-	packet := func(payload string) []byte {
+	packet := func(payload string) *packetBuffer {
 		frame := make([]byte, epochHdrLen+len(payload))
 		copy(frame, hdr[:])
 		copy(frame[epochHdrLen:], payload)
-		return frame
+		return &packetBuffer{data: frame}
 	}
 
 	tr := &streamTransport{
@@ -127,7 +128,7 @@ func TestBatchSampleCarriesMultipleKCPPackets(t *testing.T) {
 	tr.data.out <- packet("three")
 	tr.data.out <- packet("four")
 
-	sample := tr.batchSample(packet("one"))
+	sample := tr.batchSampleFrom(tr.data.out, packet("one"), nil)
 	if !bytes.Equal(sample[:epochHdrLen], hdr[:]) {
 		t.Fatalf("sample epoch header = %x, want %x", sample[:epochHdrLen], hdr[:])
 	}
@@ -147,6 +148,32 @@ func TestBatchSampleCarriesMultipleKCPPackets(t *testing.T) {
 	}
 	if left := len(tr.data.out); left != 1 {
 		t.Fatalf("outbound left = %d, want 1", left)
+	}
+}
+
+func TestBatchSampleReusesWriterBuffer(t *testing.T) {
+	hdr := testEpochHdr(1)
+	frame := make([]byte, epochHdrLen+900)
+	copy(frame, hdr[:])
+	src := make(chan *packetBuffer, 1)
+	tr := &streamTransport{batchSize: 2}
+
+	src <- &packetBuffer{data: frame}
+	first := tr.batchSampleFrom(src, &packetBuffer{data: frame}, nil)
+	src <- &packetBuffer{data: frame}
+	second := tr.batchSampleFrom(src, &packetBuffer{data: frame}, first[:0])
+	if &first[0] != &second[0] {
+		t.Fatal("batchSampleFrom() did not reuse writer-owned storage")
+	}
+	count := 0
+	splitKCPPayload(second[epochHdrLen:], func(payload []byte) {
+		count++
+		if len(payload) != 900 {
+			t.Fatalf("batched payload length = %d", len(payload))
+		}
+	})
+	if count != 2 {
+		t.Fatalf("batched payload count = %d, want 2", count)
 	}
 }
 

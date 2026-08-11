@@ -13,10 +13,7 @@ func TestSEIRoundTrip(t *testing.T) {
 	payload := []byte("hello over seichannel")
 	accessUnit := buildVideoAccessUnit(payload)
 
-	got, err := extractVideoPayloads(accessUnit)
-	if err != nil {
-		t.Fatalf("extractVideoPayloads failed: %v", err)
-	}
+	got := extractVideoPayloads(accessUnit)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 payload, got %d", len(got))
 	}
@@ -53,10 +50,7 @@ func TestSEIRoundTripThroughRTPPacketizerAndSampleBuilder(t *testing.T) {
 		t.Fatal("samplebuilder returned nil sample")
 	}
 
-	got, err := extractVideoPayloads(sample.Data)
-	if err != nil {
-		t.Fatalf("extractVideoPayloads(sample) error = %v", err)
-	}
+	got := extractVideoPayloads(sample.Data)
 	if len(got) != 1 || !bytes.Equal(got[0], payload) {
 		t.Fatalf("RTP SEI payloads = %q, want %q", got, payload)
 	}

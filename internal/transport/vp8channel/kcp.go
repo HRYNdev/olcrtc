@@ -60,7 +60,7 @@ type kcpRuntime struct {
 	closeOnce sync.Once
 }
 
-func startKCP(out chan<- []byte, onData func([]byte), epochHdr [epochHdrLen]byte) (*kcpRuntime, error) {
+func startKCP(out chan<- *packetBuffer, onData func([]byte), epochHdr [epochHdrLen]byte) (*kcpRuntime, error) {
 	c := newKCPConn(out, inboundQueueSize, epochHdr)
 
 	sess, err := kcp.NewConn3(kcpConvID, fakeUDPAddr(), nil, 0, 0, c)
@@ -167,7 +167,7 @@ func (r *kcpRuntime) close() {
 // identical lifecycle rules, so start/restart/drain/close live here once
 // instead of being written twice with only the field names changed.
 type kcpPlane struct {
-	out    chan []byte
+	out    chan *packetBuffer
 	onData func([]byte)
 
 	mu   sync.RWMutex
@@ -176,7 +176,7 @@ type kcpPlane struct {
 }
 
 func newKCPPlane(queueSize int, onData func([]byte)) *kcpPlane {
-	return &kcpPlane{out: make(chan []byte, queueSize), onData: onData}
+	return &kcpPlane{out: make(chan *packetBuffer, queueSize), onData: onData}
 }
 
 // get returns the live runtime, or nil when the plane has not started (or is
@@ -240,7 +240,8 @@ func (p *kcpPlane) restart(hdr [epochHdrLen]byte) {
 func (p *kcpPlane) drain() {
 	for {
 		select {
-		case <-p.out:
+		case packet := <-p.out:
+			packet.release()
 		default:
 			return
 		}

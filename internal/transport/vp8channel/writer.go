@@ -17,7 +17,8 @@ type writerState struct {
 	ticksSinceKeepalive int
 	// pendingControl holds a control frame that failed WriteSample and must be
 	// retried on the next tick before consuming more frames.
-	pendingControl []byte
+	pendingControl *packetBuffer
+	batchBuf       []byte
 }
 
 func (w *writerState) writeSample(data []byte) bool {
@@ -35,7 +36,9 @@ func (w *writerState) writeSample(data []byte) bool {
 // server->client bulk-data stall in issue #95 (the server runs a per-peer
 // peerWriterPump for data plus writerLoop for control/keepalive, both hitting
 // this track at once). Funneling all writes through this mutex makes each
-// sample's packetize+send atomic and keeps sequence numbers monotonic.
+// sample's packetize+send atomic and keeps sequence numbers monotonic. Pion's
+// VP8 payloader copies sample.Data into RTP payloads during Packetize, before
+// WriteSample returns, so the writer can release its packet buffer afterward.
 func (p *streamTransport) writeSampleLocked(data []byte) bool {
 	p.writeMu.Lock()
 	defer p.writeMu.Unlock()
@@ -68,19 +71,21 @@ func (w *writerState) forceKeepalive() {
 // failed to send (stored in pendingControl for retry next tick).
 func (w *writerState) drainControl() bool {
 	if w.pendingControl != nil {
-		if !w.writeSample(w.pendingControl) {
+		if !w.writeSample(w.pendingControl.data) {
 			return false
 		}
+		w.pendingControl.release()
 		w.pendingControl = nil
 	}
 	for {
 		select {
 		case frame := <-w.p.control.out:
 			w.idleTicks = 0
-			if !w.writeSample(frame) {
+			if !w.writeSample(frame.data) {
 				w.pendingControl = frame
 				return false
 			}
+			frame.release()
 		default:
 			return true
 		}
@@ -91,9 +96,15 @@ func (w *writerState) drainControl() bool {
 func (w *writerState) drainData() {
 	select {
 	case frame := <-w.p.data.out:
-		sample := w.p.batchSample(frame)
 		w.idleTicks = 0
+		if !w.p.canBatch(frame.data) {
+			_ = w.writeSample(frame.data)
+			frame.release()
+			return
+		}
+		sample := w.p.batchSampleFrom(w.p.data.out, frame, w.batchBuf[:0])
 		_ = w.writeSample(sample)
+		w.batchBuf = sample[:0]
 	default:
 		w.idleTicks++
 		if w.idleTicks >= w.keepaliveEvery {
@@ -140,7 +151,7 @@ func (p *streamTransport) writerLoop() {
 // queued) keeps the per-peer writes interleaved with the keyframe injection
 // below and lets batchSampleFrom coalesce segments into full samples. Stops
 // when the channel is closed or the transport shuts down.
-func (p *streamTransport) peerWriterPump(out chan []byte) {
+func (p *streamTransport) peerWriterPump(out chan *packetBuffer) {
 	ticker := time.NewTicker(p.frameInterval)
 	defer ticker.Stop()
 
@@ -154,6 +165,7 @@ func (p *streamTransport) peerWriterPump(out chan []byte) {
 	// client->server direction kept flowing (issue #95).
 	keyframeEvery := max(int(forceKeepalivePeriod/p.frameInterval), 1)
 	ticksSinceKeyframe := 0
+	var batchBuf []byte
 
 	for {
 		select {
@@ -171,16 +183,22 @@ func (p *streamTransport) peerWriterPump(out chan []byte) {
 				if !ok {
 					return
 				}
-				sample := p.batchSampleFrom(out, frame)
+				if !p.canBatch(frame.data) {
+					_ = p.writeSampleLocked(frame.data)
+					frame.release()
+					continue
+				}
+				sample := p.batchSampleFrom(out, frame, batchBuf[:0])
 				_ = p.writeSampleLocked(sample)
+				batchBuf = sample[:0]
 			default:
 			}
 		}
 	}
 }
 
-func (p *streamTransport) batchSample(first []byte) []byte {
-	return p.batchSampleFrom(p.data.out, first)
+func (p *streamTransport) canBatch(frame []byte) bool {
+	return len(frame) > epochHdrLen && p.batchSize > 1
 }
 
 // batchSampleFrom coalesces up to batchSize KCP frames drained from src into a
@@ -188,32 +206,49 @@ func (p *streamTransport) batchSample(first []byte) []byte {
 // drains the single-peer outbound queue; per-peer pumps drain their own queue
 // through the same batching so the server->client path is built identically to
 // the client.
-func (p *streamTransport) batchSampleFrom(src <-chan []byte, first []byte) []byte {
-	if len(first) <= epochHdrLen || p.batchSize <= 1 {
-		return first
+func (p *streamTransport) batchSampleFrom(src <-chan *packetBuffer, first *packetBuffer, dst []byte) []byte {
+	if !p.canBatch(first.data) {
+		return first.data
 	}
 
-	sample := make([]byte, 0, defaultMaxPayloadSize)
-	sample = append(sample, first[:epochHdrLen]...)
+	sample := p.prepareBatchBuffer(dst, src, first.data)
+	sample = append(sample, first.data[:epochHdrLen]...)
 	sample = append(sample, kcpBatchMagic[:]...)
-	sample = appendBatchPacket(sample, first[epochHdrLen:])
+	sample = appendBatchPacket(sample, first.data[epochHdrLen:])
+	first.release()
 
 	for packets := 1; packets < p.batchSize; packets++ {
 		select {
 		case frame := <-src:
-			if len(frame) <= epochHdrLen {
+			if len(frame.data) <= epochHdrLen {
+				frame.release()
 				continue
 			}
-			payload := frame[epochHdrLen:]
+			payload := frame.data[epochHdrLen:]
 			if len(sample)+2+len(payload) > defaultMaxPayloadSize {
+				frame.release()
 				return sample
 			}
 			sample = appendBatchPacket(sample, payload)
+			frame.release()
 		default:
 			return sample
 		}
 	}
 	return sample
+}
+
+func (p *streamTransport) prepareBatchBuffer(dst []byte, src <-chan *packetBuffer, first []byte) []byte {
+	packetSize := len(first) - epochHdrLen
+	packetCount := min(p.batchSize, len(src)+1)
+	want := epochHdrLen + len(kcpBatchMagic) + packetCount*(2+packetSize)
+	if want > defaultMaxPayloadSize {
+		want = defaultMaxPayloadSize
+	}
+	if cap(dst) < want {
+		return make([]byte, 0, want)
+	}
+	return dst[:0]
 }
 
 func appendBatchPacket(dst, packet []byte) []byte {

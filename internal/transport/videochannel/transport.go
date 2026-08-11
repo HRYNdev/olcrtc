@@ -79,6 +79,9 @@ type streamTransport struct {
 	videoCodec      string
 	videoTileModule int
 	videoTileRS     int
+	visualOnce      sync.Once
+	visual          *visualCodec
+	visualErr       error
 	remoteRole      byte
 	bindingToken    uint32
 	shaper          *transport.Shaper
@@ -299,6 +302,8 @@ func (p *streamTransport) writeIdleFrame(enc *goEncoder, frameDuration time.Dura
 		logger.Debugf("videochannel render idle error: %v", err)
 		return
 	}
+	// The Go encoder copies grayscale input into its own pad buffer before
+	// returning, so the transport's immutable idle frame remains reusable.
 	sample, err := enc.EncodeFrame(rawFrame)
 	if err != nil {
 		logger.Warnf("videochannel encoder idle error: %v", err)
@@ -366,12 +371,30 @@ func (p *streamTransport) writerLoop() {
 }
 
 func (p *streamTransport) renderFrame(payload []byte) ([]byte, error) {
-	return renderVisualFrame(
-		payload,
-		p.videoW, p.videoH,
-		p.videoCodec, p.videoQRRecovery,
-		p.videoTileModule, p.videoTileRS,
-	)
+	visual, err := p.getVisualCodec()
+	if err != nil {
+		return nil, err
+	}
+	return visual.render(payload)
+}
+
+func (p *streamTransport) getVisualCodec() (*visualCodec, error) {
+	p.visualOnce.Do(func() {
+		p.visual, p.visualErr = newVisualCodec(
+			p.videoW, p.videoH,
+			p.videoCodec, p.videoQRRecovery,
+			p.videoTileModule, p.videoTileRS,
+		)
+	})
+	return p.visual, p.visualErr
+}
+
+func (p *streamTransport) extractFrame(frame []byte) ([]byte, error) {
+	visual, err := p.getVisualCodec()
+	if err != nil {
+		return nil, err
+	}
+	return visual.extract(frame)
 }
 
 func (p *streamTransport) popDecoderFrames(decoder *goDecoder) {
@@ -452,7 +475,7 @@ func (p *streamTransport) handleRemoteTrack(track *webrtc.TrackRemote, _ *webrtc
 }
 
 func (p *streamTransport) handleFrame(frame []byte) {
-	payload, err := extractVisualPayload(frame, p.videoW, p.videoH, p.videoCodec, p.videoTileModule, p.videoTileRS)
+	payload, err := p.extractFrame(frame)
 	if err != nil || len(payload) == 0 {
 		if err != nil {
 			logger.Debugf("videochannel extract visual payload error: %v", err)

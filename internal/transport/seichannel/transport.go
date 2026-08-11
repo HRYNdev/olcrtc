@@ -230,38 +230,44 @@ func (p *streamTransport) writerLoop() {
 	defer ticker.Stop()
 
 	idle := buildVideoAccessUnit(p.sender.Hello())
+	var scratch []byte
 
 	for {
 		select {
 		case <-p.closeCh:
 			return
 		case <-ticker.C:
-			if !p.writeBatch(idle) {
+			var ok bool
+			scratch, ok = p.writeBatch(idle, scratch)
+			if !ok {
 				return
 			}
 		}
 	}
 }
 
-func (p *streamTransport) writeBatch(idle []byte) bool {
+func (p *streamTransport) writeBatch(idle, scratch []byte) ([]byte, bool) {
 	for i := range p.batchSize {
 		payload, ok := p.queue.Next()
 		if !ok {
-			return false
+			return scratch, false
 		}
 		if payload == nil {
 			if i > 0 {
-				return true
+				return scratch, true
 			}
 			_ = p.track.WriteSample(media.Sample{Data: idle, Duration: p.frameInterval})
-			return true
+			return scratch, true
 		}
+		// Pion's H264 payloader copies every NAL into RTP-owned storage before
+		// WriteSample returns, so this writer-owned access unit can be reused.
+		scratch = buildVideoAccessUnitInto(scratch[:0], payload)
 		_ = p.track.WriteSample(media.Sample{
-			Data:     buildVideoAccessUnit(payload),
+			Data:     scratch,
 			Duration: p.frameInterval,
 		})
 	}
-	return true
+	return scratch, true
 }
 
 func (p *streamTransport) handleRemoteTrack(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
@@ -289,11 +295,7 @@ func (p *streamTransport) handleRemoteTrack(track *webrtc.TrackRemote, _ *webrtc
 }
 
 func (p *streamTransport) handleSample(sample []byte) {
-	payloads, err := extractVideoPayloads(sample)
-	if err != nil {
-		return
-	}
-
+	payloads := extractVideoPayloads(sample)
 	for _, payload := range payloads {
 		frame, err := common.DecodeFrame(payload)
 		if err != nil {

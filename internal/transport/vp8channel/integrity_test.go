@@ -16,7 +16,7 @@ import (
 // and broke the muxconn AEAD above it (issue #109).
 func corruptPump(
 	stop <-chan struct{},
-	from <-chan []byte,
+	from <-chan *packetBuffer,
 	to *kcpRuntime,
 	corruptRatio float64,
 	seed uint64,
@@ -31,10 +31,12 @@ func corruptPump(
 		case <-stop:
 			return
 		case pkt := <-from:
-			if len(pkt) <= epochHdrLen {
+			if len(pkt.data) <= epochHdrLen {
+				pkt.release()
 				continue
 			}
-			body := append([]byte(nil), pkt[epochHdrLen:]...)
+			body := append([]byte(nil), pkt.data[epochHdrLen:]...)
+			pkt.release()
 			// Flip a byte in the KCP-packet region, but leave the trailing
 			// CRC intact so the corruption is what the CRC must catch.
 			if len(body) > wireCRCLen+1 && rng.Float64() < corruptRatio {
@@ -65,8 +67,8 @@ func TestKCPDropsCarrierCorruptedPackets(t *testing.T) {
 		bytes.Repeat([]byte("D"), 20000),
 	}
 
-	a2b := make(chan []byte, 1024)
-	b2a := make(chan []byte, 1024)
+	a2b := make(chan *packetBuffer, 1024)
+	b2a := make(chan *packetBuffer, 1024)
 	cb, doneB, getRecv := buildReceiver(len(msgs))
 
 	rtA, err := startKCP(a2b, nil, testEpochHdr(1))

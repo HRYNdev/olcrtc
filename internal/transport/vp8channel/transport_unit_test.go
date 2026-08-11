@@ -255,7 +255,7 @@ func TestEpochHeaderTokenAndOutboundCapacity(t *testing.T) {
 	tr.data.set(rt)
 
 	for len(tr.data.out) < cap(tr.data.out)*canSendHighWatermark/100 {
-		tr.data.out <- []byte("queued")
+		tr.data.out <- &packetBuffer{data: []byte("queued")}
 	}
 	if tr.CanSend() {
 		t.Fatal("CanSend() = true at high watermark")
@@ -289,7 +289,7 @@ func TestResetPeerRestartsKCPAndDrainsOutbound(t *testing.T) {
 		t.Fatalf("startKCP: %v", err)
 	}
 	tr.data.set(rt)
-	tr.data.out <- []byte("stale")
+	tr.data.out <- &packetBuffer{data: []byte("stale")}
 	oldEpoch := tr.localEpoch
 
 	tr.ResetPeer()
@@ -639,11 +639,11 @@ func TestNotifyLinkHealthTogglesGuard(t *testing.T) {
 	}
 }
 
-func seqList(pkts []*rtp.Packet) []uint16 {
-	out := make([]uint16, len(pkts))
-	for i, p := range pkts {
-		out[i] = p.SequenceNumber
-	}
+func pushedSeqs(buffer *reorderBuffer, packet *rtp.Packet) []uint16 {
+	var out []uint16
+	buffer.push(packet, func(delivered *rtp.Packet) {
+		out = append(out, delivered.SequenceNumber)
+	})
 	return out
 }
 
@@ -652,7 +652,7 @@ func TestReorderBufferRestoresOrderAndSurvivesLoss(t *testing.T) {
 	b := newReorderBuffer()
 	got := make([]uint16, 0, 3)
 	for _, seq := range []uint16{100, 101, 102} {
-		got = append(got, seqList(b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: seq}}))...)
+		got = append(got, pushedSeqs(b, &rtp.Packet{Header: rtp.Header{SequenceNumber: seq}})...)
 	}
 	if !reflect.DeepEqual(got, []uint16{100, 101, 102}) {
 		t.Fatalf("in-order drain = %v, want [100 101 102]", got)
@@ -660,27 +660,27 @@ func TestReorderBufferRestoresOrderAndSurvivesLoss(t *testing.T) {
 
 	// A reordered packet is held until the gap fills, then both drain in order.
 	b = newReorderBuffer()
-	if out := b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 10}}); !reflect.DeepEqual(seqList(out), []uint16{10}) {
-		t.Fatalf("first packet = %v, want [10]", seqList(out))
+	if out := pushedSeqs(b, &rtp.Packet{Header: rtp.Header{SequenceNumber: 10}}); !reflect.DeepEqual(out, []uint16{10}) {
+		t.Fatalf("first packet = %v, want [10]", out)
 	}
 	// 12 arrives before 11: must be buffered, nothing delivered yet.
-	if out := b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 12}}); out != nil {
-		t.Fatalf("out-of-order packet drained early = %v, want nil", seqList(out))
+	if out := pushedSeqs(b, &rtp.Packet{Header: rtp.Header{SequenceNumber: 12}}); out != nil {
+		t.Fatalf("out-of-order packet drained early = %v, want nil", out)
 	}
 	// 11 fills the hole: 11 and 12 drain in order.
-	out := b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 11}})
-	if !reflect.DeepEqual(seqList(out), []uint16{11, 12}) {
-		t.Fatalf("gap fill drain = %v, want [11 12]", seqList(out))
+	out := pushedSeqs(b, &rtp.Packet{Header: rtp.Header{SequenceNumber: 11}})
+	if !reflect.DeepEqual(out, []uint16{11, 12}) {
+		t.Fatalf("gap fill drain = %v, want [11 12]", out)
 	}
 
 	// Genuine loss: a full window piles up behind a hole, buffer skips the
 	// lost sequence rather than stalling forever.
 	b = newReorderBuffer()
-	_ = b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 0}})
+	_ = pushedSeqs(b, &rtp.Packet{Header: rtp.Header{SequenceNumber: 0}})
 	var delivered int
 	for i := 2; i <= reorderWindow+2; i++ {
 		seq := uint16(i & 0xffff)
-		delivered += len(b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: seq}}))
+		delivered += len(pushedSeqs(b, &rtp.Packet{Header: rtp.Header{SequenceNumber: seq}}))
 	}
 	if delivered == 0 {
 		t.Fatal("buffer stalled on lost packet: nothing delivered after window overflow")
@@ -688,10 +688,37 @@ func TestReorderBufferRestoresOrderAndSurvivesLoss(t *testing.T) {
 
 	// Stale packets older than the current position are dropped.
 	b = newReorderBuffer()
-	_ = b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 50}})
-	if out := b.push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 49}}); out != nil {
-		t.Fatalf("stale packet delivered = %v, want nil", seqList(out))
+	_ = pushedSeqs(b, &rtp.Packet{Header: rtp.Header{SequenceNumber: 50}})
+	if out := pushedSeqs(b, &rtp.Packet{Header: rtp.Header{SequenceNumber: 49}}); out != nil {
+		t.Fatalf("stale packet delivered = %v, want nil", out)
 	}
+}
+
+func TestReorderBufferReusesPacketStorage(t *testing.T) {
+	buffer := newReorderBuffer()
+	firstInput := &rtp.Packet{
+		Header:  rtp.Header{SequenceNumber: 1},
+		Payload: []byte("first"),
+	}
+	var first *rtp.Packet
+	buffer.push(firstInput, func(packet *rtp.Packet) {
+		first = packet
+		if string(packet.Payload) != "first" {
+			t.Fatalf("first payload = %q", packet.Payload)
+		}
+	})
+	secondInput := &rtp.Packet{
+		Header:  rtp.Header{SequenceNumber: 2},
+		Payload: []byte("second"),
+	}
+	buffer.push(secondInput, func(packet *rtp.Packet) {
+		if packet != first {
+			t.Fatal("reorder buffer did not reuse delivered packet storage")
+		}
+		if string(packet.Payload) != "second" {
+			t.Fatalf("second payload = %q", packet.Payload)
+		}
+	})
 }
 
 func TestSeqLessWrapAround(t *testing.T) {

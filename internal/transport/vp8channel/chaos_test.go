@@ -27,7 +27,7 @@ type chaosCfg struct {
 func chaosPump(
 	t *testing.T,
 	stop <-chan struct{},
-	from <-chan []byte,
+	from <-chan *packetBuffer,
 	to *kcpRuntime,
 	cfg chaosCfg,
 	dropped *atomic.Uint64,
@@ -42,22 +42,26 @@ func chaosPump(
 	// Held packets to be released after `reorderHold`.
 	type held struct {
 		release time.Time
-		pkt     []byte
+		pkt     *packetBuffer
 	}
 	var holdMu sync.Mutex
 	var holdQ []held
 	releaseTick := time.NewTicker(2 * time.Millisecond)
 	defer releaseTick.Stop()
 
-	forward := func(p []byte) {
-		if len(p) > epochHdrLen {
-			to.deliver(p[epochHdrLen:])
+	forward := func(p *packetBuffer) {
+		if len(p.data) > epochHdrLen {
+			to.deliver(p.data[epochHdrLen:])
 		}
+		p.release()
 	}
 
 	for {
 		select {
 		case <-stop:
+			for _, packet := range holdQ {
+				packet.pkt.release()
+			}
 			return
 		case <-releaseTick.C:
 			holdMu.Lock()
@@ -73,11 +77,11 @@ func chaosPump(
 			holdQ = kept
 			holdMu.Unlock()
 		case pkt := <-from:
-			pkt = append([]byte(nil), pkt...) // detach from sender buffer
 			if cfg.lossRatio > 0 && rng.Float64() < cfg.lossRatio {
 				if dropped != nil {
 					dropped.Add(1)
 				}
+				pkt.release()
 				continue
 			}
 			if cfg.latency > 0 {
@@ -99,8 +103,8 @@ func chaosPump(
 func runChaosLoopback(t *testing.T, msgs [][]byte, cfg chaosCfg, timeout time.Duration) (time.Duration, uint64) {
 	t.Helper()
 
-	a2b := make(chan []byte, 1024)
-	b2a := make(chan []byte, 1024)
+	a2b := make(chan *packetBuffer, 1024)
+	b2a := make(chan *packetBuffer, 1024)
 
 	cb, doneB, getRecv := buildReceiver(len(msgs))
 
@@ -199,8 +203,8 @@ func TestKCPRecoversFromBurstLoss(t *testing.T) {
 		bytes.Repeat([]byte("Z"), 1500),
 	}
 
-	a2b := make(chan []byte, 1024)
-	b2a := make(chan []byte, 1024)
+	a2b := make(chan *packetBuffer, 1024)
+	b2a := make(chan *packetBuffer, 1024)
 	cb, doneB, getRecv := buildReceiver(len(msgs))
 
 	rtA, err := startKCP(a2b, nil, testEpochHdr(1))
@@ -218,18 +222,20 @@ func TestKCPRecoversFromBurstLoss(t *testing.T) {
 	defer close(stop)
 
 	var blackout atomic.Bool
-	gate := func(stop <-chan struct{}, from <-chan []byte, to *kcpRuntime) {
+	gate := func(stop <-chan struct{}, from <-chan *packetBuffer, to *kcpRuntime) {
 		for {
 			select {
 			case <-stop:
 				return
 			case pkt := <-from:
 				if blackout.Load() {
+					pkt.release()
 					continue // drop everything during blackout
 				}
-				if len(pkt) > epochHdrLen {
-					to.deliver(pkt[epochHdrLen:])
+				if len(pkt.data) > epochHdrLen {
+					to.deliver(pkt.data[epochHdrLen:])
 				}
+				pkt.release()
 			}
 		}
 	}

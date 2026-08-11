@@ -58,6 +58,20 @@ var (
 	ErrCounterExhausted = errors.New("record counter exhausted")
 )
 
+var noncePool = sync.Pool{ //nolint:gochecknoglobals // fixed-size AEAD nonce scratch is shared across key sets
+	New: func() any {
+		return new([chacha20poly1305.NonceSizeX]byte)
+	},
+}
+
+func acquireNonce() *[chacha20poly1305.NonceSizeX]byte {
+	nonce, ok := noncePool.Get().(*[chacha20poly1305.NonceSizeX]byte)
+	if ok {
+		return nonce
+	}
+	return new([chacha20poly1305.NonceSizeX]byte)
+}
+
 // Role selects the directional send and receive keys.
 type Role uint8
 
@@ -181,10 +195,12 @@ func (k *KeySet) SealInto(dst, plaintext, aad []byte) ([]byte, error) {
 	binary.BigEndian.PutUint64(header[len(recordMagic):], counter)
 	copy(header[len(recordMagic)+8:], k.send.prefix[:])
 
-	var nonce [chacha20poly1305.NonceSizeX]byte
+	nonce := acquireNonce()
 	copy(nonce[:noncePrefixSize], k.send.prefix[:])
 	binary.BigEndian.PutUint64(nonce[noncePrefixSize:], counter)
-	return k.send.aead.Seal(out[:base+recordHeaderSize], nonce[:], plaintext, aad), nil
+	sealed := k.send.aead.Seal(out[:base+recordHeaderSize], nonce[:], plaintext, aad)
+	noncePool.Put(nonce)
+	return sealed, nil
 }
 
 func appendSpace(dst []byte, size int) []byte {
@@ -226,11 +242,12 @@ func (k *KeySet) OpenInto(dst, record, aad []byte) ([]byte, error) {
 	}
 	var prefix [noncePrefixSize]byte
 	copy(prefix[:], record[len(recordMagic)+8:recordHeaderSize])
-	var nonce [chacha20poly1305.NonceSizeX]byte
+	nonce := acquireNonce()
 	copy(nonce[:noncePrefixSize], prefix[:])
 	binary.BigEndian.PutUint64(nonce[noncePrefixSize:], counter)
 
 	plaintext, err := k.receive.Open(dst, nonce[:], record[recordHeaderSize:], aad)
+	noncePool.Put(nonce)
 	if err != nil {
 		return nil, fmt.Errorf("open record: %w", ErrAuthentication)
 	}

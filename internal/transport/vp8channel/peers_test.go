@@ -10,7 +10,7 @@ import (
 func newStubPeerSession(t *testing.T, epoch uint32) *peerSession {
 	t.Helper()
 
-	out := make(chan []byte, 1)
+	out := make(chan *packetBuffer, 1)
 
 	rt, err := startKCP(out, nil, buildEpochHeader(0, epoch))
 	if err != nil {

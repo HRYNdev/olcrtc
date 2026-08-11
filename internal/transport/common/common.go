@@ -31,14 +31,16 @@ func RandomID() string {
 
 // FragmentPayload splits data into chunks of at most maxSize bytes. An empty
 // payload produces a single empty fragment so the caller can still ack a
-// zero-byte message round-trip. A non-positive maxSize yields one chunk
-// holding everything: misconfigured sizing must not spin here forever.
+// zero-byte message round-trip. Fragments alias data and are valid until the
+// caller reuses it. Sender encodes each fragment into an owned wire frame
+// before Send returns. A non-positive maxSize yields one chunk holding
+// everything: misconfigured sizing must not spin here forever.
 func FragmentPayload(data []byte, maxSize int) [][]byte {
 	if len(data) == 0 {
 		return [][]byte{{}}
 	}
 	if maxSize <= 0 {
-		return [][]byte{append([]byte(nil), data...)}
+		return [][]byte{data}
 	}
 	out := make([][]byte, 0, (len(data)+maxSize-1)/maxSize)
 	for start := 0; start < len(data); start += maxSize {
@@ -46,9 +48,7 @@ func FragmentPayload(data []byte, maxSize int) [][]byte {
 		if end > len(data) {
 			end = len(data)
 		}
-		chunk := make([]byte, end-start)
-		copy(chunk, data[start:end])
-		out = append(out, chunk)
+		out = append(out, data[start:end])
 	}
 	return out
 }

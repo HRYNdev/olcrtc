@@ -37,3 +37,21 @@ func TestSEIHelpersAndErrors(t *testing.T) {
 		t.Fatalf("extractTransportSEI(non-transport) = %v, want none", payloads)
 	}
 }
+
+func TestBuildVideoAccessUnitIntoReusesBuffer(t *testing.T) {
+	payload := make([]byte, 900)
+	first := buildVideoAccessUnitInto(nil, payload)
+	want := bytes.Clone(first)
+	second := buildVideoAccessUnitInto(first[:0], payload)
+	if &first[0] != &second[0] {
+		t.Fatal("buildVideoAccessUnitInto() did not reuse writer-owned storage")
+	}
+	if !bytes.Equal(second, want) {
+		t.Fatal("buildVideoAccessUnitInto() changed output while reusing storage")
+	}
+	if allocs := testing.AllocsPerRun(100, func() {
+		second = buildVideoAccessUnitInto(second[:0], payload)
+	}); allocs != 0 {
+		t.Fatalf("buildVideoAccessUnitInto() allocations = %v, want 0", allocs)
+	}
+}

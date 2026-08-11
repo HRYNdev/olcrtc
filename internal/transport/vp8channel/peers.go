@@ -35,7 +35,7 @@ const (
 type peerSession struct {
 	epoch uint32
 	data  *kcpRuntime
-	out   chan []byte
+	out   chan *packetBuffer
 
 	controlMu sync.Mutex
 	control   *kcpRuntime
@@ -214,7 +214,7 @@ func (p *streamTransport) peerSessionFor(epoch uint32) *peerSession {
 	}
 
 	peerID := formatPeerID(epoch)
-	out := make(chan []byte, outboundQueueSize)
+	out := make(chan *packetBuffer, outboundQueueSize)
 
 	// Address downlink frames to the specific client epoch so other clients
 	// do not ingest them (issue #95 multi-client cross-talk).
