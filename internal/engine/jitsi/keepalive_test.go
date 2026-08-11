@@ -145,6 +145,36 @@ func TestTeardownPCCancelsPCContext(t *testing.T) {
 	js.pcMu.Unlock()
 }
 
+func TestInstallPeerConnectionStateCancelsReplacedContext(t *testing.T) {
+	js := newSilentSession(t)
+	first, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("create first peer connection: %v", err)
+	}
+	t.Cleanup(func() { _ = first.Close() })
+	second, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("create second peer connection: %v", err)
+	}
+
+	firstCtx := js.installPeerConnectionState(first)
+	secondCtx := js.installPeerConnectionState(second)
+	select {
+	case <-firstCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("replaced peer connection context was not cancelled")
+	}
+	if secondCtx.Err() != nil {
+		t.Fatal("new peer connection context was cancelled during install")
+	}
+	js.pcMu.Lock()
+	installed := js.pc
+	js.pcMu.Unlock()
+	if installed != second {
+		t.Fatal("new peer connection was not installed")
+	}
+}
+
 // TestXMPPKeepaliveSurvivesNilJSess simulates the boot window and the
 // reconnect window where s.jSess is briefly nil. The keepalive goroutine
 // must keep ticking — exiting on first nil leaves a permanent gap once
