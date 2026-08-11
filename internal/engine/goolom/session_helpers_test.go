@@ -22,7 +22,7 @@ func TestSessionReconnectAndEndedHelpers(t *testing.T) {
 	s.subscriberReady.Store(true)
 	s.publisherReady.Store(true)
 	s.resetMediaState()
-	if s.subscriberReady.Load() || s.publisherReady.Load() || s.subscriberConn == nil || s.publisherConn == nil {
+	if s.subscriberReady.Load() || s.publisherReady.Load() || s.subscriberConnCh() == nil {
 		t.Fatal("resetMediaState() did not reset readiness")
 	}
 

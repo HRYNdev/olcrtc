@@ -2,6 +2,7 @@ package goolom
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -50,27 +51,33 @@ func (s *Session) sendHello() error {
 		},
 	}
 
-	s.wsMu.Lock()
-	defer s.wsMu.Unlock()
-	if err := s.ws.WriteJSON(hello); err != nil {
+	if err := s.writeJSON(hello); err != nil {
 		return fmt.Errorf("write hello: %w", err)
 	}
 	return nil
 }
 
+// handleSignaling drives the signaling read loop. The connection is captured
+// once: gorilla allows a single concurrent reader, and a reconnect starts a
+// fresh loop over the new connection while this one unwinds on the read error
+// its own connection produces.
 func (s *Session) handleSignaling(ctx context.Context) {
+	conn := s.wsConn()
+	if conn == nil {
+		return
+	}
 	pubSent := false
 
 	for {
 		var msg map[string]any
-		if err := s.ws.ReadJSON(&msg); err != nil {
+		if err := conn.ReadJSON(&msg); err != nil {
 			if !s.closed.Load() {
 				logger.Debugf("ws read error: %v", err)
 				s.queueReconnect()
 			}
 			return
 		}
-		s.updateWSDeadline()
+		_ = conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
 
 		uid, _ := msg[keyUID].(string)
 		s.handleMessageEvents(ctx, msg, uid)
@@ -115,14 +122,6 @@ func (s *Session) handleSignalingResponses(msg map[string]any, uid string) {
 	}
 }
 
-func (s *Session) updateWSDeadline() {
-	s.wsMu.Lock()
-	if s.ws != nil {
-		_ = s.ws.SetReadDeadline(time.Now().Add(wsReadTimeout))
-	}
-	s.wsMu.Unlock()
-}
-
 func (s *Session) handleCommonMessages(msg map[string]any, uid string) {
 	if _, ok := msg["updateDescription"]; ok {
 		s.sendAck(uid)
@@ -154,23 +153,23 @@ func (s *Session) sendAck(uid string) {
 	if uid == "" {
 		return
 	}
-	s.wsMu.Lock()
-	defer s.wsMu.Unlock()
-	_ = s.ws.WriteJSON(map[string]any{
+	if err := s.writeJSON(map[string]any{
 		keyUID: uid,
 		"ack": map[string]any{
 			"status": map[string]any{"code": "OK"},
 		},
-	})
+	}); err != nil {
+		logger.Debugf("goolom: ack %s: %v", uid, err)
+	}
 }
 
 func (s *Session) sendPong(uid string) {
-	s.wsMu.Lock()
-	defer s.wsMu.Unlock()
-	_ = s.ws.WriteJSON(map[string]any{
+	if err := s.writeJSON(map[string]any{
 		keyUID: uid,
 		"pong": map[string]any{},
-	})
+	}); err != nil {
+		logger.Debugf("goolom: pong %s: %v", uid, err)
+	}
 }
 
 func (s *Session) registerAckWaiter(uid string) chan struct{} {
@@ -217,17 +216,11 @@ func (s *Session) resolveAck(uid string) {
 }
 
 func (s *Session) sendLeave(uid string) bool {
-	s.wsMu.Lock()
-	defer s.wsMu.Unlock()
-
-	if s.ws == nil {
-		return false
-	}
-	leave := map[string]any{
+	if err := s.writeJSON(map[string]any{
 		keyUID:  uid,
 		"leave": map[string]any{},
-	}
-	if err := s.ws.WriteJSON(leave); err != nil {
+	}); err != nil {
+		logger.Debugf("goolom: leave %s: %v", uid, err)
 		return false
 	}
 	return true
@@ -260,30 +253,28 @@ func (s *Session) keepAlive(keepAliveCh <-chan struct{}) {
 func (s *Session) sendWSPing() bool {
 	s.wsMu.Lock()
 	defer s.wsMu.Unlock()
-	if s.ws != nil {
-		if err := s.ws.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(10*time.Second)); err != nil {
-			logger.Debugf("ws ping error: %v", err)
-			s.queueReconnect()
-			return false
-		}
+	if s.ws == nil {
+		return true
+	}
+	if err := s.ws.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(10*time.Second)); err != nil {
+		logger.Debugf("ws ping error: %v", err)
+		s.queueReconnect()
+		return false
 	}
 	return true
 }
 
 func (s *Session) sendAppPing() bool {
-	s.wsMu.Lock()
-	defer s.wsMu.Unlock()
-	if s.ws != nil {
-		if err := s.ws.WriteJSON(map[string]any{
-			keyUID: uuid.New().String(),
-			"ping": map[string]any{},
-		}); err != nil {
-			logger.Debugf("app ping error: %v", err)
-			s.queueReconnect()
-			return false
-		}
+	err := s.writeJSON(map[string]any{
+		keyUID: uuid.New().String(),
+		"ping": map[string]any{},
+	})
+	if err == nil || errors.Is(err, ErrWebSocketClosed) {
+		return true
 	}
-	return true
+	logger.Debugf("app ping error: %v", err)
+	s.queueReconnect()
+	return false
 }
 
 func isConferenceEndMessage(msg map[string]any) bool {

@@ -17,7 +17,6 @@ import (
 	"github.com/pion/webrtc/v4/pkg/media/samplebuilder"
 
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
-	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
 	"github.com/openlibrecommunity/olcrtc/internal/transport/common"
 )
@@ -105,6 +104,7 @@ type streamTransport struct {
 	ackTimeout    time.Duration
 	frameInterval time.Duration
 	batchSize     int
+	shaper        *transport.Shaper
 }
 
 // New creates a seichannel transport backed by a carrier.
@@ -114,21 +114,16 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		return nil, err
 	}
 
-	session, err := enginebuiltin.Open(ctx, cfg.Carrier, enginebuiltin.Config{
-		RoomURL:   cfg.RoomURL,
-		Name:      cfg.Name,
-		OnData:    nil,
-		DNSServer: cfg.DNSServer,
-		Resolver:  cfg.Resolver,
-		ProxyAddr: cfg.ProxyAddr,
-		ProxyPort: cfg.ProxyPort,
-		Engine:    cfg.Engine,
-		URL:       cfg.URL,
-		Token:     cfg.Token,
-		AuthToken: cfg.AuthToken,
-	})
+	// Payloads ride the video track, so the engine stays in pure-video mode:
+	// no data callbacks, otherwise it would gate readiness on a bridge this
+	// transport never uses and deliver carrier bytes behind our back.
+	engineCfg := cfg
+	engineCfg.OnData = nil
+	engineCfg.OnPeerData = nil
+
+	session, err := engineCfg.OpenEngine(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("open engine session: %w", err)
+		return nil, err
 	}
 
 	vt, ok := session.(engine.VideoTrackCapable)
@@ -170,6 +165,7 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		frameInterval: time.Second / time.Duration(opts.FPS),
 		batchSize:     opts.BatchSize,
 	}
+	tr.shaper = transport.NewShaper(cfg.Traffic, tr.Features())
 
 	if err := stream.AddTrack(track); err != nil {
 		return nil, fmt.Errorf("attach local video track: %w", err)
@@ -198,6 +194,10 @@ func (p *streamTransport) Connect(ctx context.Context) error {
 
 // Send transmits data through the transport.
 func (p *streamTransport) Send(data []byte) error {
+	return p.shaper.Send(p.send, data)
+}
+
+func (p *streamTransport) send(data []byte) error {
 	if p.closed.Load() {
 		return ErrTransportClosed
 	}
@@ -311,12 +311,12 @@ func (p *streamTransport) CanSend() bool {
 
 // Features describes the current seichannel transport semantics.
 func (p *streamTransport) Features() transport.Features {
-	return transport.Features{
+	return p.shaper.Features(transport.Features{
 		Reliable:        true,
 		Ordered:         true,
 		MessageOriented: true,
 		MaxPayloadSize:  p.effectiveFragmentSize() * 8,
-	}
+	})
 }
 
 func (p *streamTransport) effectiveFragmentSize() int {

@@ -41,13 +41,13 @@ func (s *Session) Connect(ctx context.Context) error {
 	keepAliveCh, sessionCloseCh := s.resetSession()
 	var dcReady chan struct{}
 	if s.onData != nil {
-		var err error
-		s.dc, err = s.pcPub.CreateDataChannel("olcrtc", nil)
+		dc, err := s.pubPC().CreateDataChannel("olcrtc", nil)
 		if err != nil {
 			return fmt.Errorf("create dc: %w", err)
 		}
+		s.dc.Store(dc)
 		dcReady = make(chan struct{})
-		s.setupDataChannelHandlers(dcReady, sessionCloseCh)
+		s.setupDataChannelHandlers(dc, dcReady, sessionCloseCh)
 	}
 
 	if err := s.dialWebSocket(); err != nil {
@@ -71,12 +71,17 @@ func (s *Session) Connect(ctx context.Context) error {
 	return s.waitForMediaReady(ctx, 20*time.Second)
 }
 
+// waitForMediaReady blocks until the subscriber PC reports Connected.
+//
+// Only the subscriber side gates readiness: publisher readiness deliberately
+// does not gate sending (see CanSend), because KCP buffers and retransmits
+// while the publisher PC is still negotiating.
 func (s *Session) waitForMediaReady(ctx context.Context, timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
 	select {
-	case <-s.subscriberConn:
+	case <-s.subscriberConnCh():
 	case <-timer.C:
 		return ErrSubscriberMediaTimeout
 	case <-ctx.Done():
@@ -91,23 +96,22 @@ func (s *Session) setupPeerConnections(config webrtc.Configuration) error {
 		return err
 	}
 
-	s.pcSub, err = api.NewPeerConnection(config)
+	sub, err := api.NewPeerConnection(config)
 	if err != nil {
 		return fmt.Errorf("new sub pc: %w", err)
 	}
-	s.pcSub.OnConnectionStateChange(s.onSubscriberConnectionStateChange)
-	s.pcSub.OnTrack(s.onSubscriberTrack)
+	sub.OnConnectionStateChange(s.onSubscriberConnectionStateChange)
+	sub.OnTrack(s.onSubscriberTrack)
+	s.pcSub.Store(sub)
 
-	s.pcPub, err = api.NewPeerConnection(config)
+	pub, err := api.NewPeerConnection(config)
 	if err != nil {
 		return fmt.Errorf("new pub pc: %w", err)
 	}
-	s.pcPub.OnConnectionStateChange(s.onPublisherConnectionStateChange)
+	pub.OnConnectionStateChange(s.onPublisherConnectionStateChange)
+	s.pcPub.Store(pub)
 
-	if err := s.attachPendingVideoTracks(); err != nil {
-		return err
-	}
-	return nil
+	return s.attachPendingVideoTracks(pub)
 }
 
 // newWebRTCAPI builds a pion API with IPv4-only ICE and the default media
@@ -191,7 +195,9 @@ func (s *Session) dialWebSocket() error {
 	if resp != nil && resp.Body != nil {
 		_ = resp.Body.Close()
 	}
+	s.wsMu.Lock()
 	s.ws = ws
+	s.wsMu.Unlock()
 
 	ws.SetPongHandler(func(string) error {
 		_ = ws.SetReadDeadline(time.Now().Add(wsReadTimeout))
@@ -208,7 +214,9 @@ func (s *Session) startBackgroundGoroutines(ctx context.Context, keepAliveCh cha
 		s.keepAlive(keepAliveCh)
 	}()
 
-	_ = s.sendHello()
+	if err := s.sendHello(); err != nil {
+		logger.Debugf("goolom: hello: %v", err)
+	}
 
 	s.wg.Add(1)
 	go func() {
@@ -228,7 +236,7 @@ func (s *Session) onSubscriberConnectionStateChange(state webrtc.PeerConnectionS
 	switch state {
 	case webrtc.PeerConnectionStateConnected:
 		s.subscriberReady.Store(true)
-		closeSignal(s.subscriberConn)
+		s.signalSubscriberConn()
 	case webrtc.PeerConnectionStateDisconnected,
 		webrtc.PeerConnectionStateFailed,
 		webrtc.PeerConnectionStateClosed:
@@ -245,7 +253,6 @@ func (s *Session) onPublisherConnectionStateChange(state webrtc.PeerConnectionSt
 	switch state {
 	case webrtc.PeerConnectionStateConnected:
 		s.publisherReady.Store(true)
-		closeSignal(s.publisherConn)
 	case webrtc.PeerConnectionStateDisconnected,
 		webrtc.PeerConnectionStateFailed,
 		webrtc.PeerConnectionStateClosed:
@@ -277,7 +284,7 @@ const pcCloseTimeout = 2 * time.Second
 // pcCloseTimeout elapses, whichever comes first.
 func (s *Session) closePeerConns() {
 	var wg sync.WaitGroup
-	for _, pc := range []*webrtc.PeerConnection{s.pcPub, s.pcSub} {
+	for _, pc := range []*webrtc.PeerConnection{s.pubPC(), s.subPC()} {
 		if pc == nil {
 			continue
 		}
@@ -297,6 +304,30 @@ func (s *Session) closePeerConns() {
 	case <-time.After(pcCloseTimeout):
 		logger.Warnf("goolom: peer connection close timed out after %s (stuck TURN dealloc?)", pcCloseTimeout)
 	}
+}
+
+// closeDataChannel closes the live data channel, if any.
+func (s *Session) closeDataChannel() {
+	if dc := s.dc.Swap(nil); dc != nil {
+		_ = dc.Close()
+	}
+}
+
+// closeWebSocket sends the WebSocket close frame and tears the connection
+// down. Clearing the pointer under wsMu makes every later writeJSON fail with
+// ErrWebSocketClosed instead of writing to a dead socket.
+func (s *Session) closeWebSocket() {
+	s.wsMu.Lock()
+	ws := s.ws
+	s.ws = nil
+	s.wsMu.Unlock()
+	if ws == nil {
+		return
+	}
+	_ = ws.WriteControl(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+		time.Now().Add(time.Second))
+	_ = ws.Close()
 }
 
 // sleepCtx waits for d or until ctx is cancelled, returning ctx.Err() when
@@ -333,21 +364,12 @@ func (s *Session) Close() error {
 		}
 	}
 
-	closeSignal(s.closeCh)
+	s.closeOnce.Do(func() { close(s.closeCh) })
 	s.stopSession()
 
-	if s.dc != nil {
-		_ = s.dc.Close()
-	}
+	s.closeDataChannel()
 	s.closePeerConns()
-	if s.ws != nil {
-		s.wsMu.Lock()
-		_ = s.ws.WriteControl(websocket.CloseMessage,
-			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
-			time.Now().Add(time.Second))
-		_ = s.ws.Close()
-		s.wsMu.Unlock()
-	}
+	s.closeWebSocket()
 
 	done := make(chan struct{})
 	go func() {
@@ -429,18 +451,9 @@ func (s *Session) reconnect(ctx context.Context) error {
 	}
 	s.stopSession()
 
-	if s.dc != nil {
-		_ = s.dc.Close()
-	}
+	s.closeDataChannel()
 	s.closePeerConns()
-	if s.ws != nil {
-		s.wsMu.Lock()
-		_ = s.ws.WriteControl(websocket.CloseMessage,
-			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
-			time.Now().Add(time.Second))
-		_ = s.ws.Close()
-		s.wsMu.Unlock()
-	}
+	s.closeWebSocket()
 
 	if err := sleepCtx(ctx, 3*time.Second); err != nil {
 		return err
@@ -458,7 +471,7 @@ func (s *Session) reconnect(ctx context.Context) error {
 		return err
 	}
 	if s.onReconnect != nil {
-		s.onReconnect(s.dc)
+		s.onReconnect(s.dataChannel())
 	}
 	s.drainReconnectQueue()
 	return nil
@@ -543,8 +556,9 @@ func (s *Session) resetSession() (chan struct{}, chan struct{}) {
 func (s *Session) resetMediaState() {
 	s.subscriberReady.Store(false)
 	s.publisherReady.Store(false)
+	s.mediaMu.Lock()
 	s.subscriberConn = make(chan struct{})
-	s.publisherConn = make(chan struct{})
+	s.mediaMu.Unlock()
 }
 
 func (s *Session) signalEnded(reason string) {

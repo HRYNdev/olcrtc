@@ -31,7 +31,7 @@ func renderVisualFrame(
 	codec, recoveryLevel string,
 	tileModule, tileRS int,
 ) ([]byte, error) {
-	if codec == "tile" {
+	if codec == codecTile {
 		return renderTileFrame(payload, tileModule, tileRS)
 	}
 	return renderQRFrame(payload, width, height, recoveryLevel)
@@ -85,7 +85,7 @@ func renderTileFrame(payload []byte, tileModule, tileRS int) ([]byte, error) {
 }
 
 func extractVisualPayload(frame []byte, width, height int, codec string, tileModule, tileRS int) ([]byte, error) {
-	if codec == "tile" {
+	if codec == codecTile {
 		return extractTilePayload(frame, tileModule, tileRS)
 	}
 	return extractQRPayload(frame, width, height)

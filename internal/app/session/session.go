@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -789,9 +790,25 @@ func ValidateGen(cfg Config) error {
 		return fmt.Errorf("%w: %s", ErrUnsupportedCarrier, cfg.Auth)
 	}
 	if _, ok := p.(auth.RoomCreator); !ok {
-		return fmt.Errorf("%w: %s does not support room generation", ErrUnsupportedCarrier, cfg.Auth)
+		return errNoRoomCreation(cfg.Auth)
 	}
 	return nil
+}
+
+// errNoRoomCreation explains that an auth provider cannot back `-mode gen`
+// and names the providers that can, so the operator knows what to switch to
+// instead of only learning what failed.
+func errNoRoomCreation(name string) error {
+	creators := auth.RoomCreators()
+	if len(creators) == 0 {
+		return fmt.Errorf(
+			"%w: %s does not support room generation, and no registered auth provider does "+
+				"(pass an existing room with -url instead of -mode gen)",
+			ErrUnsupportedCarrier, name)
+	}
+	return fmt.Errorf(
+		"%w: %s does not support room generation (providers that do: %s)",
+		ErrUnsupportedCarrier, name, strings.Join(creators, ", "))
 }
 
 const (
@@ -826,7 +843,7 @@ func Gen(ctx context.Context, cfg Config, out func(string)) error {
 	}
 	creator, ok := p.(auth.RoomCreator)
 	if !ok {
-		return fmt.Errorf("%w: %s does not support room generation", ErrUnsupportedCarrier, cfg.Auth)
+		return errNoRoomCreation(cfg.Auth)
 	}
 	for i := range cfg.Amount {
 		var roomID string

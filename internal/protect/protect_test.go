@@ -85,9 +85,9 @@ func TestControlFuncWrapsControlError(t *testing.T) {
 }
 
 func TestNewDialerAndHTTPClient(t *testing.T) {
-	dialer := NewDialer()
+	dialer := newDialer()
 	if dialer.Timeout != 10*time.Second || dialer.KeepAlive != 30*time.Second || dialer.Control == nil {
-		t.Fatalf("NewDialer() = %+v", dialer)
+		t.Fatalf("newDialer() = %+v", dialer)
 	}
 
 	client := NewHTTPClient()
@@ -110,11 +110,11 @@ func TestNewDialerAndHTTPClient(t *testing.T) {
 func TestCustomResolverInjection(t *testing.T) {
 	resolver := &net.Resolver{PreferGo: true}
 
-	if got := NewDialerWithResolver(resolver).Resolver; got != resolver {
-		t.Fatalf("NewDialerWithResolver().Resolver = %p, want %p", got, resolver)
+	if got := newDialerWithResolver(resolver).Resolver; got != resolver {
+		t.Fatalf("newDialerWithResolver().Resolver = %p, want %p", got, resolver)
 	}
-	if got := NewDialerWithResolver(nil).Resolver; got != nil {
-		t.Fatalf("NewDialerWithResolver(nil).Resolver = %p, want nil", got)
+	if got := newDialerWithResolver(nil).Resolver; got != nil {
+		t.Fatalf("newDialerWithResolver(nil).Resolver = %p, want nil", got)
 	}
 	if got := NewProxyDialer(resolver).resolver; got != resolver {
 		t.Fatalf("NewProxyDialer().resolver = %p, want %p", got, resolver)
@@ -183,9 +183,9 @@ func TestStatusErrorRedactsAndLimitsBody(t *testing.T) {
 }
 
 func TestRedactSensitiveBearer(t *testing.T) {
-	got := RedactSensitive("Authorization: Bearer abc.def")
+	got := redactSensitive("Authorization: Bearer abc.def")
 	if strings.Contains(got, "abc.def") || !strings.Contains(got, "Bearer <redacted>") {
-		t.Fatalf("RedactSensitive() = %q", got)
+		t.Fatalf("redactSensitive() = %q", got)
 	}
 }
 
@@ -195,7 +195,7 @@ type ioNopCloser struct {
 
 func (c ioNopCloser) Close() error { return nil }
 
-func TestDialContextAndProxyDialer(t *testing.T) {
+func TestProxyDialerDials(t *testing.T) {
 	var lc net.ListenConfig
 	ln, err := lc.Listen(context.Background(), "tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -203,23 +203,15 @@ func TestDialContextAndProxyDialer(t *testing.T) {
 	}
 	defer func() { _ = ln.Close() }()
 
-	accepted := make(chan struct{}, 2)
+	accepted := make(chan struct{}, 1)
 	go func() {
-		for range 2 {
-			conn, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			_ = conn.Close()
-			accepted <- struct{}{}
+		conn, acceptErr := ln.Accept()
+		if acceptErr != nil {
+			return
 		}
+		_ = conn.Close()
+		accepted <- struct{}{}
 	}()
-
-	conn, err := DialContext(context.Background(), "tcp4", ln.Addr().String())
-	if err != nil {
-		t.Fatalf("DialContext() error = %v", err)
-	}
-	_ = conn.Close()
 
 	proxyConn, err := NewProxyDialer().Dial("tcp4", ln.Addr().String())
 	if err != nil {
@@ -228,16 +220,9 @@ func TestDialContextAndProxyDialer(t *testing.T) {
 	_ = proxyConn.Close()
 
 	<-accepted
-	<-accepted
 }
 
 func TestDialFailuresAreWrapped(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-
-	if _, err := DialContext(ctx, "tcp4", "127.0.0.1:1"); err == nil {
-		t.Fatal("DialContext() unexpectedly succeeded")
-	}
 	if _, err := NewProxyDialer().Dial("tcp4", "127.0.0.1:1"); err == nil {
 		t.Fatal("ProxyDialer.Dial() unexpectedly succeeded")
 	}

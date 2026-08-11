@@ -239,6 +239,10 @@ linters:
         - .Wrap(
         - .Wrapf(
         - .WithMessage(
+        # In-package helpers that already return wrapped or sentinel errors;
+        # re-wrapping at every transport call site only duplicates context.
+        - internal/transport.Config).OpenEngine(
+        - internal/transport.Shaper).Send(
 
   exclusions:
     generated: lax

@@ -25,7 +25,7 @@ func TestDecodeTransportFrameErrorsAndAck(t *testing.T) {
 		}
 	}
 
-	ack, err := decodeTransportFrame(encodeAckFrame(7, 0x1234, 5))
+	ack, err := decodeTransportFrame(encodeAckFrameForBinding(frameRoleAny, 0, 7, 0x1234, 5))
 	if err != nil {
 		t.Fatalf("decode ack error = %v", err)
 	}
@@ -40,14 +40,14 @@ func TestCodecSpecForMime(t *testing.T) {
 		if !ok {
 			t.Fatalf("codecSpecForMime(%q) ok = false", mime)
 		}
-		if spec.mimeType != mime || spec.depacketizer == nil || spec.capability.ClockRate != 90000 {
+		if spec.capability.MimeType != mime || spec.depacketizer == nil || spec.capability.ClockRate != 90000 {
 			t.Fatalf("codec spec = %+v", spec)
 		}
 	}
 	if _, ok := codecSpecForMime("video/unknown"); ok {
 		t.Fatal("codecSpecForMime() accepted unknown mime")
 	}
-	if got := codecSpecForCarrier("any-carrier"); got.mimeType != webrtc.MimeTypeVP8 {
-		t.Fatalf("codecSpecForCarrier() = %+v, want vp8", got)
+	if got := vp8CodecSpec(); got.capability.MimeType != webrtc.MimeTypeVP8 {
+		t.Fatalf("vp8CodecSpec() = %+v, want vp8", got)
 	}
 }

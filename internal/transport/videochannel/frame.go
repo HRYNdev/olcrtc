@@ -78,10 +78,6 @@ func encodeDataFrameForBinding(
 	return out
 }
 
-func encodeAckFrame(seq, crc uint32, fragIdx uint16) []byte {
-	return encodeAckFrameForBinding(frameRoleAny, 0, seq, crc, fragIdx)
-}
-
 func encodeAckFrameForBinding(role byte, binding, seq, crc uint32, fragIdx uint16) []byte {
 	out := make([]byte, frameAckLen)
 	binary.BigEndian.PutUint32(out[0:4], protocolMagic)

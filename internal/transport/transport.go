@@ -12,7 +12,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
+	"sync"
 	"time"
+
+	"github.com/openlibrecommunity/olcrtc/internal/engine"
+	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 )
 
 // ErrTransportNotFound is returned when a requested transport is not registered.
@@ -98,10 +103,15 @@ type PeerReadyTransport interface {
 // heuristics want corroborating evidence from a session-specific liveness
 // signal before acting on carrier-level noise (e.g. unrelated room
 // participants).
-//
-// peer-restart heuristic on control-plane health" PR.
 type LinkHealthObserver interface {
 	NotifyLinkHealth(unhealthy bool)
+}
+
+// PeerResetter is implemented by transports (and engines) that latch onto a
+// single remote peer and can be told to forget it, so the next frame from any
+// peer re-latches. Used when a session is torn down and rebuilt.
+type PeerResetter interface {
+	ResetPeer()
 }
 
 // Options is a marker for per-transport option structs. Each transport package
@@ -157,34 +167,78 @@ type Config struct {
 	Traffic TrafficConfig
 }
 
+// EngineConfig projects the carrier-facing part of the transport config onto
+// the engine builder config, so every transport opens its engine session the
+// same way instead of copying the field list by hand.
+func (c Config) EngineConfig() enginebuiltin.Config {
+	return enginebuiltin.Config{
+		RoomURL:             c.RoomURL,
+		Name:                c.Name,
+		OnData:              c.OnData,
+		OnPeerData:          c.OnPeerData,
+		DNSServer:           c.DNSServer,
+		Resolver:            c.Resolver,
+		ProxyAddr:           c.ProxyAddr,
+		ProxyPort:           c.ProxyPort,
+		RequireTargetedPeer: c.RequireTargetedPeer,
+		Engine:              c.Engine,
+		URL:                 c.URL,
+		Token:               c.Token,
+		AuthToken:           c.AuthToken,
+	}
+}
+
+// OpenEngine resolves the configured provider and opens an engine session.
+func (c Config) OpenEngine(ctx context.Context) (engine.Session, error) {
+	sess, err := enginebuiltin.Open(ctx, c.Carrier, c.EngineConfig())
+	if err != nil {
+		return nil, fmt.Errorf("open engine session: %w", err)
+	}
+
+	return sess, nil
+}
+
 // Factory creates a transport instance.
 type Factory func(ctx context.Context, cfg Config) (Transport, error)
 
-var registry = make(map[string]Factory) //nolint:gochecknoglobals // package-level state intentional
+//nolint:gochecknoglobals // process-wide transport registry
+var (
+	registryMu sync.RWMutex
+	registry   = make(map[string]Factory)
+)
 
 // Register adds a transport factory to the registry.
 func Register(name string, factory Factory) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+
 	registry[name] = factory
 }
 
 // New creates a transport instance by name.
 func New(ctx context.Context, name string, cfg Config) (Transport, error) {
+	registryMu.RLock()
 	factory, ok := registry[name]
+	registryMu.RUnlock()
+
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrTransportNotFound, name)
 	}
-	tr, err := factory(ctx, cfg)
-	if err != nil {
-		return nil, err
-	}
-	return WithTraffic(tr, cfg.Traffic), nil
+
+	return factory(ctx, cfg)
 }
 
-// Available returns a list of registered transport names.
+// Available returns the sorted list of registered transport names.
 func Available() []string {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+
 	names := make([]string, 0, len(registry))
 	for name := range registry {
 		names = append(names, name)
 	}
+
+	slices.Sort(names)
+
 	return names
 }

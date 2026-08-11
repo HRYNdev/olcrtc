@@ -26,15 +26,10 @@ import (
 	"github.com/pion/transport/v4"
 )
 
-var (
-	// ErrUnexpectedConnType is returned when a protected listen/dial yields an
-	// unexpected concrete type. The caller closes that connection instead of
-	// using an unprotected fallback.
-	ErrUnexpectedConnType = errors.New("protect: unexpected connection type")
-
-	// ErrInterfacesUnavailable is returned when interface enumeration fails.
-	ErrInterfacesUnavailable = errors.New("protect: interfaces unavailable")
-)
+// ErrUnexpectedConnType is returned when a protected listen/dial yields an
+// unexpected concrete type. The caller closes that connection instead of
+// using an unprotected fallback.
+var ErrUnexpectedConnType = errors.New("protect: unexpected connection type")
 
 // tunInterfacePrefixes lists interface name prefixes excluded from candidate
 // gathering. Keep pptp explicit; it does not match the ppp prefix.
@@ -56,10 +51,15 @@ type ProtectedNet struct {
 
 // NewProtectedNet builds a ProtectedNet with platform-specific interface
 // enumeration.
+//
+// Enumeration is deliberately not probed or cached here: every Interfaces()
+// call re-reads the live list because interfaces come and go at runtime on
+// mobile (Wi-Fi to cellular handover), and a snapshot taken at construction
+// would hand pion a stale set for the rest of the session. Enumeration
+// failures therefore surface from Interfaces(), not from here.
+//
+//nolint:unparam // error kept so the signature stays stable for the engine call sites
 func NewProtectedNet(resolvers ...*net.Resolver) (*ProtectedNet, error) {
-	if _, err := loadInterfaces(); err != nil {
-		return nil, fmt.Errorf("load interfaces: %w", err)
-	}
 	return &ProtectedNet{resolver: firstResolver(resolvers)}, nil
 }
 

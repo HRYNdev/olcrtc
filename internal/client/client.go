@@ -27,6 +27,7 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/names"
 	"github.com/openlibrecommunity/olcrtc/internal/protect"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
+	"github.com/openlibrecommunity/olcrtc/internal/server"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
 )
 
@@ -52,8 +53,44 @@ var (
 	ErrSOCKSCredTooLong = errors.New("socks5 user/pass exceeds 255 bytes")
 )
 
+// Reconnect reasons, as reported to the health log and used to pick the
+// handshake retry budget.
+const (
+	reconnectCarrier  = "carrier"
+	reconnectLiveness = "liveness"
+	// reconnectFallback is the self-driven retry that runs when the carrier
+	// never calls back after a liveness-triggered rebuild.
+	reconnectFallback = "liveness-fallback"
+)
+
+const (
+	// defaultLivenessFallback bounds the wait for the carrier reconnect
+	// callback after a liveness-triggered carrier rebuild. A rebuild that has
+	// not produced a callback by then is assumed lost.
+	defaultLivenessFallback = 30 * time.Second
+	// defaultShutdownGrace bounds how long shutdown waits for the tracked
+	// goroutines. Exceeding it is logged, never fatal, so a wedged transport
+	// callback cannot hang the process on exit.
+	defaultShutdownGrace = 5 * time.Second
+)
+
+// SOCKS5 wire constants (RFC 1928).
+const (
+	socksVersion    = 5
+	socksAddrIPv4   = 1
+	socksAddrDomain = 3
+	socksAddrIPv6   = 4
+
+	socksRepSuccess         = 0
+	socksRepHostUnreachable = 4
+)
+
 // Client handles local SOCKS5 connections and tunnels them to the server.
 type Client struct {
+	// ln is assigned once by bringUpLink, before the transport is connected
+	// and before any goroutine can observe the Client, and is never reassigned.
+	// It is therefore read without sessMu everywhere; locking it in some
+	// readers and not others only implies a synchronisation that is not there.
 	ln     transport.Transport
 	cipher *crypto.Cipher
 	conn   *muxconn.Conn
@@ -87,6 +124,18 @@ type Client struct {
 	// established (sessionID != ""). Tunnel handlers wait on it so they do
 	// not open smux streams before the server has accepted the handshake.
 	sessionReady chan struct{}
+	// wg tracks the long-lived goroutines the client owns: the SOCKS accept
+	// loop, the transport watcher, the control loop and its staleness watcher,
+	// and the liveness fallback timer. shutdown waits on it (bounded) so a
+	// finished Run leaves nothing running behind it.
+	wg sync.WaitGroup
+	// livenessFallback and shutdownGrace override defaultLivenessFallback and
+	// defaultShutdownGrace. Zero means the default; tests shorten them.
+	livenessFallback time.Duration
+	shutdownGrace    time.Duration
+	// fallbackPending keeps repeated liveness reconnects from stacking
+	// fallback timers on top of each other.
+	fallbackPending atomic.Bool
 }
 
 // HealthFunc is called when the client control health snapshot changes.
@@ -168,7 +217,14 @@ func RunWithReady(ctx context.Context, cfg Config, onReady func()) error {
 	// presence behind as a ghost participant in the next test that
 	// joined the same room. shutdown is nil-safe - it skips fields
 	// that bringUpLink hadn't populated yet.
-	defer c.shutdown()
+	// cancel before shutdown: shutdown waits for the tracked goroutines and
+	// they unwind on ctx cancellation, so cancelling first keeps the error
+	// paths (which return before <-runCtx.Done()) from burning the grace
+	// window. Both calls are idempotent.
+	defer func() {
+		cancel()
+		c.shutdown()
+	}()
 
 	if err := c.bringUpLink(runCtx, cfg, cancel); err != nil {
 		return err
@@ -187,10 +243,19 @@ func RunWithReady(ctx context.Context, cfg Config, onReady func()) error {
 		onReady()
 	}
 
-	go c.acceptLoop(runCtx, listener)
+	c.goTracked(func() { c.acceptLoop(runCtx, listener) })
 
 	<-runCtx.Done()
 	return nil
+}
+
+// goTracked runs fn in a goroutine tracked by c.wg, so shutdown can wait for it.
+func (c *Client) goTracked(fn func()) {
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		fn()
+	}()
 }
 
 func (c *Client) bringUpLink(
@@ -233,7 +298,7 @@ func (c *Client) bringUpLink(
 		// still fails it usually means the server hasn't completed its
 		// own reinstall yet - keep the listener up and wait for either
 		// another callback or a future liveness loss to re-trigger.
-		c.handleReconnect(ctx, cfg, cancel, "carrier")
+		c.handleReconnect(ctx, cfg, cancel, reconnectCarrier)
 	})
 
 	if err := ln.Connect(ctx); err != nil {
@@ -279,7 +344,7 @@ func (c *Client) bringUpLink(
 	c.recordSession(sid)
 	c.startControlLoop(ctx, cfg, cancel, control)
 
-	go ln.WatchConnection(ctx)
+	c.goTracked(func() { ln.WatchConnection(ctx) })
 	return nil
 }
 
@@ -419,10 +484,6 @@ func resolveDeviceID(deviceID, path string) (string, error) {
 	return id, nil
 }
 
-func smuxConfig(maxWirePayload int) *smux.Config {
-	return runtime.SmuxConfig(maxWirePayload)
-}
-
 // controlSmuxConfig returns a lean smux config for the isolated control-plane
 // session. The control session carries only ping/pong frames, so we use
 // small buffers and disable smux keepalives (our own control.Run ping loop
@@ -489,17 +550,62 @@ func (c *Client) handleReconnect(ctx context.Context, cfg Config, cancel context
 	// Re-handshaking over the dead carrier just times out repeatedly, so
 	// ask the carrier to rebuild itself; the new carrier will fire its own
 	// reconnect callback which then drives a fresh handshake.
-	if reason == "liveness" && c.ln != nil {
-		c.ln.Reconnect("liveness")
+	if reason == reconnectLiveness && c.ln != nil {
+		c.ln.Reconnect(reconnectLiveness)
 		// Return immediately - retryHandshake over the dead link would
 		// loop forever with "open control stream: timeout" while holding
 		// reconnectMu, blocking the carrier callback that fires once the
 		// link is actually back up. Let that callback (reason="carrier")
-		// drive the handshake when the transport is ready.
+		// drive the handshake when the transport is ready, and arm a
+		// fallback in case it never arrives.
+		c.scheduleLivenessFallback(ctx, cfg, cancel)
 		return
 	}
 
 	c.retryHandshake(ctx, cfg, cancel, reason)
+}
+
+// scheduleLivenessFallback re-establishes the session on our own if the carrier
+// has not called back within the fallback window. Handing the rebuild entirely
+// to the carrier callback means a carrier that silently never fires leaves
+// sessionReady unsignalled forever, and every SOCKS connection then fails after
+// the 60s readiness gate with no way back.
+func (c *Client) scheduleLivenessFallback(ctx context.Context, cfg Config, cancel context.CancelFunc) {
+	if !c.fallbackPending.CompareAndSwap(false, true) {
+		return
+	}
+	delay := c.livenessFallback
+	if delay <= 0 {
+		delay = defaultLivenessFallback
+	}
+	c.goTracked(func() {
+		defer c.fallbackPending.Store(false)
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		if c.sessionEstablished() {
+			return
+		}
+		logger.Warnf("client reconnect: no carrier callback within %s - re-establishing session", delay)
+		c.reconnectMu.Lock()
+		defer c.reconnectMu.Unlock()
+		if ctx.Err() != nil || c.sessionEstablished() {
+			return
+		}
+		c.retryHandshake(ctx, cfg, cancel, reconnectFallback)
+	})
+}
+
+// sessionEstablished reports whether a live session with a completed handshake
+// is installed.
+func (c *Client) sessionEstablished() bool {
+	c.sessMu.RLock()
+	defer c.sessMu.RUnlock()
+	return c.session != nil && !c.session.IsClosed() && c.sessionID != ""
 }
 
 func (c *Client) retryHandshake(ctx context.Context, cfg Config, cancel context.CancelFunc, reason string) {
@@ -508,6 +614,7 @@ func (c *Client) retryHandshake(ctx context.Context, cfg Config, cancel context.
 		maxDelay     = 5 * time.Second
 	)
 	delay := initialDelay
+	maxAttempts := maxHandshakeAttempts(reason)
 	for attempt := 1; ; attempt++ {
 		if ctx.Err() != nil {
 			return
@@ -516,13 +623,7 @@ func (c *Client) retryHandshake(ctx context.Context, cfg Config, cancel context.
 		if c.tryReopenSession(ctx, cfg, cancel, attempt) {
 			return
 		}
-		// Don't fail the whole process on liveness reconnect: the carrier
-		// rebuild may take dozens of seconds (e.g. ICE restart on a flaky
-		// network). Keep the SOCKS5 listener open and wait - handleSocks5
-		// will return host-unreachable to clients until we recover. For
-		// carrier-driven reconnects the callback fires after the link is
-		// already up, so a missed handshake is more suspicious; cap it.
-		if reason == "carrier" && attempt >= 5 {
+		if maxAttempts > 0 && attempt >= maxAttempts {
 			logger.Warnf("client reconnect: exhausted %d handshake attempts (reason=%s) - keeping listener up", attempt, reason)
 			return
 		}
@@ -540,11 +641,30 @@ func (c *Client) retryHandshake(ctx context.Context, cfg Config, cancel context.
 	}
 }
 
+// maxHandshakeAttempts caps the reconnect handshake loop per reason; 0 means
+// unbounded. A plain liveness reconnect keeps retrying because the carrier
+// rebuild can take dozens of seconds (ICE restart on a flaky network) and the
+// SOCKS5 listener must stay up meanwhile - handleSocks5 answers
+// host-unreachable until we recover. A carrier-driven reconnect fires only
+// after the link is already up, so a failing handshake there is suspicious and
+// capped, and the fallback is capped harder still because it retries while
+// holding reconnectMu.
+func maxHandshakeAttempts(reason string) int {
+	switch reason {
+	case reconnectCarrier:
+		return 5
+	case reconnectFallback:
+		return 3
+	default:
+		return 0
+	}
+}
+
+// resetLinkPeer asks the transport to drop its peer epoch. c.ln is fixed by
+// bringUpLink before anything can observe the Client, so no lock is taken here
+// - the same as every other c.ln reader.
 func (c *Client) resetLinkPeer() {
-	c.sessMu.RLock()
-	ln := c.ln
-	c.sessMu.RUnlock()
-	if resetter, ok := ln.(interface{ ResetPeer() }); ok {
+	if resetter, ok := c.ln.(interface{ ResetPeer() }); ok {
 		resetter.ResetPeer()
 	}
 }
@@ -672,9 +792,9 @@ func (c *Client) startControlLoop(
 		}
 	}
 
-	go c.watchControlStaleness(controlCtx, pingInterval)
+	c.goTracked(func() { c.watchControlStaleness(controlCtx, pingInterval) })
 
-	go func() {
+	c.goTracked(func() {
 		err := control.Run(controlCtx, stream, liveness)
 		if controlCtx.Err() != nil || ctx.Err() != nil {
 			return
@@ -684,8 +804,8 @@ func (c *Client) startControlLoop(
 		}
 		// handleReconnect now retries indefinitely on liveness so it only
 		// returns false on ctx cancellation; don't tear down the client.
-		c.handleReconnect(ctx, cfg, cancel, "liveness")
-	}()
+		c.handleReconnect(ctx, cfg, cancel, reconnectLiveness)
+	})
 }
 
 // watchControlStaleness pushes a tighter, independent "control unhealthy"
@@ -795,6 +915,30 @@ func (c *Client) shutdown() {
 	if control != nil {
 		_ = control.Close()
 	}
+	c.waitGoroutines()
+}
+
+// waitGoroutines waits for the tracked goroutines, bounded by the shutdown
+// grace. Anything still running past it (a transport callback wedged in the
+// engine, a tunnel copy loop draining) is logged rather than waited on
+// forever: shutdown must not be able to hang the process.
+func (c *Client) waitGoroutines() {
+	grace := c.shutdownGrace
+	if grace <= 0 {
+		grace = defaultShutdownGrace
+	}
+	done := make(chan struct{})
+	go func() {
+		c.wg.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		logger.Warnf("client shutdown: goroutines still running after %s", grace)
+	}
 }
 
 func notifyControlClose(stream *smux.Stream) {
@@ -875,7 +1019,7 @@ func (c *Client) handleSocks5(ctx context.Context, conn net.Conn) {
 		// will be installed shortly by tryReopenSession.
 		select {
 		case <-readyCtx.Done():
-			_, _ = conn.Write(replyHostUnreachable())
+			_, _ = conn.Write(replyHostUnreachable(targetAddr))
 			return
 		case <-c.readyChannel():
 			// session became ready; re-check
@@ -887,7 +1031,7 @@ func (c *Client) tunnel(conn net.Conn, sess *smux.Session, targetAddr string, ta
 	stream, err := sess.OpenStream()
 	if err != nil {
 		logger.Warnf("OpenStream failed: %v", err)
-		_, _ = conn.Write(replyHostUnreachable())
+		_, _ = conn.Write(replyHostUnreachable(targetAddr))
 		return
 	}
 	defer func() { _ = stream.Close() }()
@@ -896,11 +1040,11 @@ func (c *Client) tunnel(conn net.Conn, sess *smux.Session, targetAddr string, ta
 
 	if err := c.sendConnectRequest(stream, targetAddr, targetPort); err != nil {
 		logger.Warnf("sid=%d connect failed: %v", stream.ID(), err)
-		_, _ = conn.Write(replyHostUnreachable())
+		_, _ = conn.Write(replyForConnectError(err, targetAddr))
 		return
 	}
 
-	if _, err := conn.Write(replySuccess()); err != nil {
+	if _, err := conn.Write(replySuccess(targetAddr)); err != nil {
 		return
 	}
 
@@ -933,11 +1077,42 @@ func (c *Client) sendConnectRequest(stream *smux.Stream, targetAddr string, targ
 	// get a generous deadline. Conventional carriers (jitsi/datachannel) use
 	// the conservative window so a stuck CONNECT fails fast.
 	_ = stream.SetReadDeadline(time.Now().Add(runtime.ConnectAckTimeout(c.ln)))
-	if _, err := io.ReadFull(stream, ack); err != nil || ack[0] != 0x00 {
-		return fmt.Errorf("sid=%d: %w (read_err=%w ack=%v)", stream.ID(), ErrRemoteNotReady, err, ack)
+	if _, err := io.ReadFull(stream, ack); err != nil {
+		return fmt.Errorf("sid=%d: %w (read_err=%w)", stream.ID(), ErrRemoteNotReady, err)
 	}
 	_ = stream.SetReadDeadline(time.Time{})
+	// A non-zero ack is the server reporting the dial failed. It arrives
+	// immediately, so fail now instead of waiting out the ack deadline, and
+	// carry the code so the local application gets the matching SOCKS5 reply.
+	if ack[0] != server.ConnectAckOK {
+		return &connectAckError{code: ack[0], streamID: stream.ID()}
+	}
 	return nil
+}
+
+// connectAckError reports a negative tunnel CONNECT ack. The code is a SOCKS5
+// REP value chosen by the server (see server.ConnectAckOK and friends), so it
+// can be handed back to the local application verbatim.
+type connectAckError struct {
+	code     byte
+	streamID uint32
+}
+
+func (e *connectAckError) Error() string {
+	return fmt.Sprintf("sid=%d: %s (connect ack=0x%02x)", e.streamID, ErrRemoteNotReady, e.code)
+}
+
+func (e *connectAckError) Unwrap() error { return ErrRemoteNotReady }
+
+// replyForConnectError maps a failed sendConnectRequest onto the SOCKS5 reply
+// sent to the local application: the server's own code when it answered, and
+// host-unreachable when it did not answer at all.
+func replyForConnectError(err error, target string) []byte {
+	var ackErr *connectAckError
+	if errors.As(err, &ackErr) {
+		return socks5Reply(ackErr.code, target)
+	}
+	return replyHostUnreachable(target)
 }
 
 func (c *Client) socks5Handshake(conn net.Conn) error {
@@ -1031,13 +1206,19 @@ func (c *Client) socks5Request(conn net.Conn) (string, int, error) {
 
 func (c *Client) readSocks5Addr(conn net.Conn, addrType byte) (string, error) {
 	switch addrType {
-	case 1: // IPv4
-		buf := make([]byte, 4)
+	case socksAddrIPv4:
+		buf := make([]byte, net.IPv4len)
 		if _, err := io.ReadFull(conn, buf); err != nil {
 			return "", fmt.Errorf("read socks5 ipv4: %w", err)
 		}
 		return net.IP(buf).String(), nil
-	case 3: // Domain
+	case socksAddrIPv6:
+		buf := make([]byte, net.IPv6len)
+		if _, err := io.ReadFull(conn, buf); err != nil {
+			return "", fmt.Errorf("read socks5 ipv6: %w", err)
+		}
+		return net.IP(buf).String(), nil
+	case socksAddrDomain:
 		lenBuf := make([]byte, 1)
 		if _, err := io.ReadFull(conn, lenBuf); err != nil {
 			return "", fmt.Errorf("read socks5 domain len: %w", err)
@@ -1052,10 +1233,28 @@ func (c *Client) readSocks5Addr(conn net.Conn, addrType byte) (string, error) {
 	}
 }
 
-func replySuccess() []byte {
-	return []byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0}
+// socks5Reply builds a reply carrying rep and an all-zero BND.ADDR in the same
+// address family as target, so an IPv6 request is answered with an IPv6 bound
+// address instead of a mismatched IPv4 one. Domain targets keep the IPv4 form,
+// which every SOCKS5 client accepts.
+func socks5Reply(rep byte, target string) []byte {
+	addrLen := net.IPv4len
+	atyp := byte(socksAddrIPv4)
+	if ip := net.ParseIP(target); ip != nil && ip.To4() == nil {
+		addrLen = net.IPv6len
+		atyp = socksAddrIPv6
+	}
+	reply := make([]byte, 4+addrLen+2)
+	reply[0] = socksVersion
+	reply[1] = rep
+	reply[3] = atyp
+	return reply
 }
 
-func replyHostUnreachable() []byte {
-	return []byte{5, 4, 0, 1, 0, 0, 0, 0, 0, 0}
+func replySuccess(target string) []byte {
+	return socks5Reply(socksRepSuccess, target)
+}
+
+func replyHostUnreachable(target string) []byte {
+	return socks5Reply(socksRepHostUnreachable, target)
 }

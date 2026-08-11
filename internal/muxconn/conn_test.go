@@ -5,6 +5,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log"
+	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -212,6 +215,87 @@ func TestWriteWrapsSendError(t *testing.T) {
 	_, err := conn.Write([]byte("payload"))
 	if err == nil || err.Error() != "send: boom" {
 		t.Fatalf("Write() error = %v", err)
+	}
+}
+
+func TestWriteTimesOutWhenTransportNeverReady(t *testing.T) {
+	cipher := newTestCipher(t)
+	conn := New(&stubLink{canSend: false}, cipher)
+	conn.writeTimeout = 20 * time.Millisecond
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := conn.Write([]byte("payload"))
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrWriteTimeout) {
+			t.Fatalf("Write() error = %v, want %v", err, ErrWriteTimeout)
+		}
+		var netErr net.Error
+		if !errors.As(err, &netErr) || !netErr.Timeout() {
+			t.Fatalf("Write() error = %v, want a net.Error with Timeout() == true", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Write() did not time out on a permanently blocked transport")
+	}
+}
+
+func TestReadCloseErrorIsBothEOFAndErrClosed(t *testing.T) {
+	cipher := newTestCipher(t)
+	conn := New(&stubLink{canSend: true}, cipher)
+	if err := conn.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	_, err := conn.Read(make([]byte, 4))
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("Read() error = %v, want it to wrap io.EOF", err)
+	}
+	if !errors.Is(err, ErrClosed) {
+		t.Fatalf("Read() error = %v, want it to wrap %v", err, ErrClosed)
+	}
+}
+
+func TestCloseRecyclesQueuedFrames(t *testing.T) {
+	cipher := newTestCipher(t)
+	conn := New(&stubLink{canSend: true}, cipher)
+
+	msg, err := cipher.Encrypt([]byte("queued"))
+	if err != nil {
+		t.Fatalf("Encrypt() error = %v", err)
+	}
+	for range 4 {
+		conn.Push(msg)
+	}
+	if len(conn.in) != 4 {
+		t.Fatalf("queued frames = %d, want 4", len(conn.in))
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if len(conn.in) != 0 {
+		t.Fatalf("queued frames after Close = %d, want 0", len(conn.in))
+	}
+}
+
+func TestPushRateLimitsDecryptFailureLogs(t *testing.T) {
+	cipher := newTestCipher(t)
+	conn := New(&stubLink{canSend: true}, cipher)
+
+	var buf bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(old) })
+
+	for range 500 {
+		conn.Push([]byte("bad"))
+	}
+
+	if got := strings.Count(buf.String(), "decrypt failed"); got != 1 {
+		t.Fatalf("decrypt failure log lines = %d, want 1:\n%s", got, buf.String())
 	}
 }
 

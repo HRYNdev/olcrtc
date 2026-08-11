@@ -57,13 +57,13 @@ func controlFunc(network, _ string, c syscall.RawConn) error {
 	return err
 }
 
-// NewDialer returns a net.Dialer that calls Protector on each new socket.
-func NewDialer() *net.Dialer {
-	return NewDialerWithResolver(nil)
+// newDialer returns a net.Dialer that calls Protector on each new socket.
+func newDialer() *net.Dialer {
+	return newDialerWithResolver(nil)
 }
 
-// NewDialerWithResolver returns a protected dialer using resolver for DNS.
-func NewDialerWithResolver(resolver *net.Resolver) *net.Dialer {
+// newDialerWithResolver returns a protected dialer using resolver for DNS.
+func newDialerWithResolver(resolver *net.Resolver) *net.Dialer {
 	return &net.Dialer{
 		Timeout:   defaultDialTimeout,
 		KeepAlive: defaultKeepAlive,
@@ -86,18 +86,18 @@ func NewResolver(dnsServer string) *net.Resolver {
 	}
 }
 
-// NewTLSConfig returns the shared TLS policy for provider HTTP/WebSocket clients.
-func NewTLSConfig() *tls.Config {
+// newTLSConfig returns the shared TLS policy for provider HTTP/WebSocket clients.
+func newTLSConfig() *tls.Config {
 	return &tls.Config{MinVersion: tls.VersionTLS12}
 }
 
-// NewHTTPTransport returns an HTTP transport using protected sockets and sane timeouts.
-func NewHTTPTransport(resolvers ...*net.Resolver) *http.Transport {
-	dialer := NewDialerWithResolver(firstResolver(resolvers))
+// newHTTPTransport returns an HTTP transport using protected sockets and sane timeouts.
+func newHTTPTransport(resolvers ...*net.Resolver) *http.Transport {
+	dialer := newDialerWithResolver(firstResolver(resolvers))
 	return &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           dialer.DialContext,
-		TLSClientConfig:       NewTLSConfig(),
+		TLSClientConfig:       newTLSConfig(),
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          10,
 		IdleConnTimeout:       defaultIdleConnTimeout,
@@ -109,7 +109,7 @@ func NewHTTPTransport(resolvers ...*net.Resolver) *http.Transport {
 // NewHTTPClient returns an http.Client using protected sockets with DNS retry.
 func NewHTTPClient(resolvers ...*net.Resolver) *http.Client {
 	return &http.Client{
-		Transport: &retryTransport{base: NewHTTPTransport(resolvers...)},
+		Transport: &retryTransport{base: newHTTPTransport(resolvers...)},
 		Timeout:   defaultHTTPClientTimeout,
 	}
 }
@@ -202,9 +202,9 @@ func NewWebSocketDialer(handshakeTimeout time.Duration, resolvers ...*net.Resolv
 		handshakeTimeout = defaultWebSocketTimeout
 	}
 	return websocket.Dialer{
-		NetDialContext:   NewDialerWithResolver(firstResolver(resolvers)).DialContext,
+		NetDialContext:   newDialerWithResolver(firstResolver(resolvers)).DialContext,
 		Proxy:            http.ProxyFromEnvironment,
-		TLSClientConfig:  NewTLSConfig(),
+		TLSClientConfig:  newTLSConfig(),
 		HandshakeTimeout: handshakeTimeout,
 	}
 }
@@ -215,26 +215,17 @@ func StatusError(base error, resp *http.Response, limit int64) error {
 		limit = defaultStatusBodyLimit
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, limit))
-	bodyText := RedactSensitive(strings.TrimSpace(string(body)))
+	bodyText := redactSensitive(strings.TrimSpace(string(body)))
 	if bodyText == "" {
 		return fmt.Errorf("%w: status %d", base, resp.StatusCode)
 	}
 	return fmt.Errorf("%w: status %d: %s", base, resp.StatusCode, bodyText)
 }
 
-// RedactSensitive removes common token-like values from provider error text.
-func RedactSensitive(text string) string {
+// redactSensitive removes common token-like values from provider error text.
+func redactSensitive(text string) string {
 	text = sensitiveBearerRE.ReplaceAllString(text, "${1}<redacted>")
 	return sensitiveFieldRE.ReplaceAllString(text, "${1}<redacted>")
-}
-
-// DialContext dials using a protected socket.
-func DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	conn, err := NewDialer().DialContext(ctx, network, address)
-	if err != nil {
-		return nil, fmt.Errorf("dial failed: %w", err)
-	}
-	return conn, nil
 }
 
 // ProxyDialer implements golang.org/x/net/proxy.Dialer for pion ICE.
@@ -244,7 +235,7 @@ type ProxyDialer struct {
 
 // Dial connects to the address on the named network using a protected socket.
 func (d *ProxyDialer) Dial(network, addr string) (net.Conn, error) {
-	conn, err := NewDialerWithResolver(d.resolver).Dial(network, addr)
+	conn, err := newDialerWithResolver(d.resolver).Dial(network, addr)
 	if err != nil {
 		return nil, fmt.Errorf("dial failed: %w", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 
 	"github.com/openlibrecommunity/olcrtc/internal/control"
 	cryptopkg "github.com/openlibrecommunity/olcrtc/internal/crypto"
+	"github.com/openlibrecommunity/olcrtc/internal/framing"
+	"github.com/openlibrecommunity/olcrtc/internal/handshake"
 	"github.com/openlibrecommunity/olcrtc/internal/muxconn"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
@@ -48,16 +51,22 @@ func TestSetupCipherRejectsBadInput(t *testing.T) {
 	}
 }
 
-func TestSmuxConfig(t *testing.T) {
-	cfg := smuxConfig(0)
+// testSmuxCfg is the data-plane smux config the production path builds for a
+// plain (non control-plane) transport.
+func testSmuxCfg() *smux.Config {
+	return dataSmuxConfig(&serverLinkStub{})
+}
+
+func TestDataSmuxConfig(t *testing.T) {
+	cfg := dataSmuxConfig(&serverLinkStub{})
 	if cfg.Version != 2 || cfg.KeepAliveDisabled || cfg.MaxFrameSize != 32768 ||
 		cfg.MaxReceiveBuffer != 32*1024*1024 || cfg.MaxStreamBuffer != 4*1024*1024 {
-		t.Fatalf("smuxConfig(0) = %+v", cfg)
+		t.Fatalf("dataSmuxConfig() = %+v", cfg)
 	}
-	capped := smuxConfig(4096)
+	capped := dataSmuxConfig(&serverLinkStub{maxPayload: 4096})
 	want := 4096 - runtime.SmuxWireOverhead
 	if capped.MaxFrameSize != want {
-		t.Fatalf("smuxConfig(4096).MaxFrameSize = %d, want %d",
+		t.Fatalf("dataSmuxConfig(maxPayload=4096).MaxFrameSize = %d, want %d",
 			capped.MaxFrameSize, want)
 	}
 }
@@ -216,6 +225,7 @@ type serverLinkStub struct {
 	closed     bool
 	resetCount int
 	resetCh    chan struct{}
+	maxPayload int
 }
 
 func (s *serverLinkStub) Connect(context.Context) error   { return nil }
@@ -226,8 +236,10 @@ func (s *serverLinkStub) SetShouldReconnect(func() bool)  {}
 func (s *serverLinkStub) SetEndedCallback(func(string))   {}
 func (s *serverLinkStub) WatchConnection(context.Context) {}
 func (s *serverLinkStub) CanSend() bool                   { return true }
-func (s *serverLinkStub) Features() transport.Features    { return transport.Features{} }
-func (s *serverLinkStub) Reconnect(string)                {}
+func (s *serverLinkStub) Features() transport.Features {
+	return transport.Features{MaxPayloadSize: s.maxPayload}
+}
+func (s *serverLinkStub) Reconnect(string) {}
 func (s *serverLinkStub) ResetPeer() {
 	s.resetCount++
 	if s.resetCh != nil {
@@ -336,12 +348,12 @@ func TestHandleStreamDispatchAfterConnect(t *testing.T) {
 		_ = b.Close()
 	}()
 
-	serverSess, err := smux.Server(a, smuxConfig(0))
+	serverSess, err := smux.Server(a, testSmuxCfg())
 	if err != nil {
 		t.Fatalf("smux.Server() error = %v", err)
 	}
 	defer func() { _ = serverSess.Close() }()
-	clientSess, err := smux.Client(b, smuxConfig(0))
+	clientSess, err := smux.Client(b, testSmuxCfg())
 	if err != nil {
 		t.Fatalf("smux.Client() error = %v", err)
 	}
@@ -403,12 +415,12 @@ func TestStartControlLoopReportsPong(t *testing.T) {
 		_ = b.Close()
 	}()
 
-	serverSess, err := smux.Server(a, smuxConfig(0))
+	serverSess, err := smux.Server(a, testSmuxCfg())
 	if err != nil {
 		t.Fatalf("smux.Server() error = %v", err)
 	}
 	defer func() { _ = serverSess.Close() }()
-	clientSess, err := smux.Client(b, smuxConfig(0))
+	clientSess, err := smux.Client(b, testSmuxCfg())
 	if err != nil {
 		t.Fatalf("smux.Client() error = %v", err)
 	}
@@ -483,11 +495,11 @@ func TestStartControlLoopResetsPeerBeforeReinstall(t *testing.T) {
 		_ = b.Close()
 	}()
 
-	serverSess, err := smux.Server(a, smuxConfig(0))
+	serverSess, err := smux.Server(a, testSmuxCfg())
 	if err != nil {
 		t.Fatalf("smux.Server() error = %v", err)
 	}
-	clientSess, err := smux.Client(b, smuxConfig(0))
+	clientSess, err := smux.Client(b, testSmuxCfg())
 	if err != nil {
 		t.Fatalf("smux.Client() error = %v", err)
 	}
@@ -586,12 +598,12 @@ func TestDispatchFiresOnTraffic(t *testing.T) {
 		_ = b.Close()
 	}()
 
-	serverSess, err := smux.Server(a, smuxConfig(0))
+	serverSess, err := smux.Server(a, testSmuxCfg())
 	if err != nil {
 		t.Fatalf("smux.Server() error = %v", err)
 	}
 	defer func() { _ = serverSess.Close() }()
-	clientSess, err := smux.Client(b, smuxConfig(0))
+	clientSess, err := smux.Client(b, testSmuxCfg())
 	if err != nil {
 		t.Fatalf("smux.Client() error = %v", err)
 	}
@@ -679,7 +691,7 @@ func TestReinstallSessionClosesOldConnBeforeSwap(t *testing.T) {
 	}
 	ln := &serverLinkStub{}
 	conn := muxconn.New(ln, cipher)
-	sess, err := smux.Server(conn, smuxConfig(0))
+	sess, err := smux.Server(conn, testSmuxCfg())
 	if err != nil {
 		t.Fatalf("smux.Server() error = %v", err)
 	}
@@ -728,4 +740,361 @@ func TestReinstallSessionClosesOldConnBeforeSwap(t *testing.T) {
 	}
 	_ = newSess.Close()
 	_ = newConn.Close()
+}
+
+// TestAcceptHandshakeReturnsResultWithoutTouchingServerFields guards the
+// multi-client corruption fixed alongside the peerSession locking: the
+// handshake used to write the process-wide s.deviceID/s.sessionID, so a second
+// client's handshake overwrote the first one's identity and the legacy peer
+// path then copied the wrong values back into its peerSession.
+func TestAcceptHandshakeReturnsResultWithoutTouchingServerFields(t *testing.T) {
+	serverSess, clientSess, cleanup := smuxPair(t)
+	defer cleanup()
+
+	s := newHandshakeServer()
+	go func() {
+		stream, err := clientSess.OpenStream()
+		if err != nil {
+			return
+		}
+		_, _ = handshake.Client(stream, "device-A", nil)
+	}()
+
+	stream, res, ok := s.acceptHandshake(context.Background(), serverSess)
+	if !ok {
+		t.Fatal("acceptHandshake() failed")
+	}
+	defer func() { _ = stream.Close() }()
+	if res.deviceID != "device-A" {
+		t.Fatalf("result.deviceID = %q, want device-A", res.deviceID)
+	}
+	if res.sessionID == "" {
+		t.Fatal("result.sessionID is empty")
+	}
+	if sid := s.currentSessionID(); sid != "" {
+		t.Fatalf("acceptHandshake wrote the process-wide session id %q", sid)
+	}
+	s.sessMu.RLock()
+	dev := s.deviceID
+	s.sessMu.RUnlock()
+	if dev != "" {
+		t.Fatalf("acceptHandshake wrote the process-wide device id %q", dev)
+	}
+}
+
+// TestAcceptSingletonHandshakeStoresServerFields is the other half: the
+// singleton path is the one that owns those fields.
+func TestAcceptSingletonHandshakeStoresServerFields(t *testing.T) {
+	serverSess, clientSess, cleanup := smuxPair(t)
+	defer cleanup()
+
+	s := newHandshakeServer()
+	s.liveness = control.Config{Interval: time.Hour, Timeout: time.Hour, Failures: 1}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+		s.wg.Wait()
+	}()
+
+	go func() {
+		stream, err := clientSess.OpenStream()
+		if err != nil {
+			return
+		}
+		_, _ = handshake.Client(stream, "device-B", nil)
+	}()
+
+	if !s.acceptSingletonHandshake(ctx, serverSess) {
+		t.Fatal("acceptSingletonHandshake() failed")
+	}
+	if s.currentSessionID() == "" {
+		t.Fatal("acceptSingletonHandshake did not store the session id")
+	}
+	s.sessMu.RLock()
+	dev := s.deviceID
+	s.sessMu.RUnlock()
+	if dev != "device-B" {
+		t.Fatalf("stored deviceID = %q, want device-B", dev)
+	}
+}
+
+// TestPeerSessionConcurrentAccess is the race regression: the handshake
+// goroutine, the control loop and the teardown path all mutate peerSession
+// fields, which used to be read unlocked from servePeer/closePeerSession and
+// written under the unrelated server-wide sessMu (a write under RLock, no
+// less). Run with -race.
+func TestPeerSessionConcurrentAccess(t *testing.T) {
+	cipher, err := cryptopkg.NewCipher("01234567890123456789012345678901")
+	if err != nil {
+		t.Fatalf("NewCipher() error = %v", err)
+	}
+	ln := &serverLinkStub{}
+	s := &Server{
+		ln:           ln,
+		cipher:       cipher,
+		onClose:      func(string, string) {},
+		health:       runtime.NewHealthTracker(nil),
+		peerSessions: make(map[string]*peerSession),
+		peerStats:    make(map[string]peerStat),
+		done:         make(chan struct{}),
+	}
+	ps := &peerSession{peerID: "peer-1", sessionReady: make(chan struct{})}
+
+	const workers = 8
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := range workers {
+		go func() {
+			defer wg.Done()
+			switch i % 4 {
+			case 0:
+				ps.setHandshake(handshakeResult{sessionID: "sid", deviceID: "dev"})
+			case 1:
+				ps.attachData(muxconn.New(ln, cipher), nil)
+			case 2:
+				ps.setControl(nil, func() {})
+			default:
+				_ = ps.sid()
+				_ = ps.dataConn()
+				_ = ps.dataSession()
+				_, _ = ps.controlPlane()
+				s.closePeerSession(ps, "closed")
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// TestClosePeerSessionNotifiesBeforeStoppingControlLoop pins the teardown
+// order. Cancelling the control loop first lets its deferred stream.Close win
+// the race against the CONTROL_CLOSE notification, so the peer never learns
+// the session went away and only notices when its own liveness timer expires.
+func TestClosePeerSessionNotifiesBeforeStoppingControlLoop(t *testing.T) {
+	serverSess, clientSess, cleanup := smuxPair(t)
+	defer cleanup()
+
+	acceptCh := make(chan *smux.Stream, 1)
+	go func() {
+		stream, err := serverSess.AcceptStream()
+		if err == nil {
+			acceptCh <- stream
+		}
+	}()
+	clientStream, err := clientSess.OpenStream()
+	if err != nil {
+		t.Fatalf("OpenStream() error = %v", err)
+	}
+	var serverStream *smux.Stream
+	select {
+	case serverStream = <-acceptCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out accepting the control stream")
+	}
+
+	var mu sync.Mutex
+	var order []string
+	record := func(step string) {
+		mu.Lock()
+		order = append(order, step)
+		mu.Unlock()
+	}
+
+	s := &Server{
+		onClose:   func(string, string) {},
+		health:    runtime.NewHealthTracker(nil),
+		peerStats: make(map[string]peerStat),
+	}
+	ps := &peerSession{peerID: "peer-1"}
+	ps.controlSess = serverSess
+	ps.controlStrm = serverStream
+	ps.controlStop = func() { record("stop") }
+	ps.sessionID = "sid-peer"
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.closePeerSession(ps, "closed")
+	}()
+
+	body, err := framing.ReadBytes(clientStream, control.MaxMessageSize)
+	if err != nil {
+		t.Fatalf("read control frame: %v", err)
+	}
+	record("notify")
+	if !bytes.Contains(body, []byte(control.TypeClose)) {
+		t.Fatalf("control frame = %q, want %s", body, control.TypeClose)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("closePeerSession did not finish")
+	}
+
+	mu.Lock()
+	got := append([]string(nil), order...)
+	mu.Unlock()
+	if len(got) < 2 || got[0] != "notify" || got[1] != "stop" {
+		t.Fatalf("teardown order = %v, want [notify stop]", got)
+	}
+}
+
+// TestDispatchAcksDialFailure covers the negative CONNECT ack: without it the
+// client sat on the ack deadline (15s, 90s on control-plane transports) for
+// every unreachable target.
+func TestDispatchAcksDialFailure(t *testing.T) {
+	serverSess, clientSess, cleanup := smuxPair(t)
+	defer cleanup()
+
+	go func() {
+		stream, err := serverSess.AcceptStream()
+		if err == nil {
+			(&Server{resolver: net.DefaultResolver}).handleStream(context.Background(), stream, "sid")
+		}
+	}()
+
+	stream, err := clientSess.OpenStream()
+	if err != nil {
+		t.Fatalf("OpenStream() error = %v", err)
+	}
+	req, err := json.Marshal(ConnectRequest{Cmd: testConnectCmd, Addr: testConnectAddr, Port: 1})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if _, err := stream.Write(req); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+
+	ack := make([]byte, 1)
+	_ = stream.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.ReadFull(stream, ack); err != nil {
+		t.Fatalf("read ack: %v", err)
+	}
+	if ack[0] != ConnectAckHostUnreachable {
+		t.Fatalf("ack = 0x%02x, want 0x%02x", ack[0], ConnectAckHostUnreachable)
+	}
+}
+
+// TestHandleStreamStopsOnContextCancel guards the peer path, which used to
+// launch handleStream with context.Background(): shutdown never reached the
+// in-flight tunnel streams.
+func TestHandleStreamStopsOnContextCancel(t *testing.T) {
+	serverSess, clientSess, cleanup := smuxPair(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		stream, err := serverSess.AcceptStream()
+		if err != nil {
+			return
+		}
+		(&Server{}).handleStream(ctx, stream, "sid")
+	}()
+
+	stream, err := clientSess.OpenStream()
+	if err != nil {
+		t.Fatalf("OpenStream() error = %v", err)
+	}
+	// Open the stream without ever sending a connect request, so handleStream
+	// is parked on its read.
+	if _, err := stream.Write([]byte("{")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleStream ignored context cancellation")
+	}
+}
+
+// TestServeSingleWakesOnSessionInstall covers the polling removal: serveSingle
+// used to sleep 50ms at a time waiting for a session (and 10ms at a time
+// waiting for the handshake). It now parks on the state gate, so an install
+// must wake it.
+func TestServeSingleWakesOnSessionInstall(t *testing.T) {
+	cipher, err := cryptopkg.NewCipher("01234567890123456789012345678901")
+	if err != nil {
+		t.Fatalf("NewCipher() error = %v", err)
+	}
+	s := &Server{
+		ln:           &serverLinkStub{},
+		cipher:       cipher,
+		sessionID:    "sid-serve",
+		resolver:     net.DefaultResolver,
+		onClose:      func(string, string) {},
+		health:       runtime.NewHealthTracker(nil),
+		peerSessions: make(map[string]*peerSession),
+		peerStats:    make(map[string]peerStat),
+		done:         make(chan struct{}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go s.serveSingle(ctx)
+
+	// Let serveSingle park on the gate with no session installed.
+	time.Sleep(50 * time.Millisecond)
+
+	serverSess, clientSess, cleanup := smuxPair(t)
+	defer cleanup()
+	s.sessMu.Lock()
+	s.session = serverSess
+	s.sessMu.Unlock()
+	s.state.broadcast()
+
+	stream, err := clientSess.OpenStream()
+	if err != nil {
+		t.Fatalf("OpenStream() error = %v", err)
+	}
+	req, err := json.Marshal(ConnectRequest{Cmd: testConnectCmd, Addr: testConnectAddr, Port: 1})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if _, err := stream.Write(req); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	ack := make([]byte, 1)
+	_ = stream.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.ReadFull(stream, ack); err != nil {
+		t.Fatalf("serveSingle did not pick up the installed session: %v", err)
+	}
+
+	// Stop the accept loop before the deferred cleanup closes the sessions,
+	// otherwise it treats the teardown as a carrier failure and reinstalls.
+	cancel()
+	s.wg.Wait()
+}
+
+// smuxPair returns a connected server/client smux session pair over a pipe.
+func smuxPair(t *testing.T) (*smux.Session, *smux.Session, func()) {
+	t.Helper()
+	a, b := net.Pipe()
+	serverSess, err := smux.Server(a, testSmuxCfg())
+	if err != nil {
+		t.Fatalf("smux.Server() error = %v", err)
+	}
+	clientSess, err := smux.Client(b, testSmuxCfg())
+	if err != nil {
+		t.Fatalf("smux.Client() error = %v", err)
+	}
+	return serverSess, clientSess, func() {
+		_ = serverSess.Close()
+		_ = clientSess.Close()
+		_ = a.Close()
+		_ = b.Close()
+	}
+}
+
+// newHandshakeServer builds the minimal Server a handshake needs.
+func newHandshakeServer() *Server {
+	return &Server{
+		authHook:  defaultAuthHook,
+		onOpen:    func(string, string, map[string]any) {},
+		onClose:   func(string, string) {},
+		health:    runtime.NewHealthTracker(nil),
+		peerStats: make(map[string]peerStat),
+	}
 }

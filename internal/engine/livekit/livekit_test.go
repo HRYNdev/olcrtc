@@ -320,6 +320,75 @@ func TestReconnectFailureRetriesUntilContextDone(t *testing.T) {
 	}
 }
 
+func TestWaitForConnectedRoomIsBounded(t *testing.T) {
+	s := &Session{
+		sendQueue: make(chan []byte, defaultSendQueueSize),
+		done:      make(chan struct{}),
+		closeCh:   make(chan struct{}),
+		roomReady: 30 * time.Millisecond,
+	}
+	room := newFakeRoom()
+	room.state = lksdk.ConnectionStateDisconnected
+	s.setRoom(room)
+
+	got, err := s.waitForConnectedRoom()
+	if got != nil {
+		t.Fatalf("waitForConnectedRoom() = %v, want nil", got)
+	}
+	if !errors.Is(err, ErrRoomNotConnected) {
+		t.Fatalf("waitForConnectedRoom() error = %v, want %v", err, ErrRoomNotConnected)
+	}
+}
+
+func TestWaitForConnectedRoomStopsOnShutdown(t *testing.T) {
+	s := &Session{
+		sendQueue: make(chan []byte, defaultSendQueueSize),
+		done:      make(chan struct{}),
+		closeCh:   make(chan struct{}),
+	}
+	room := newFakeRoom()
+	room.state = lksdk.ConnectionStateDisconnected
+	s.setRoom(room)
+
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		close(s.done)
+	}()
+
+	if _, err := s.waitForConnectedRoom(); !errors.Is(err, ErrSessionClosed) {
+		t.Fatalf("waitForConnectedRoom() error = %v, want %v", err, ErrSessionClosed)
+	}
+}
+
+func TestGetBufferedAmountTracksQueue(t *testing.T) {
+	s := &Session{
+		sendQueue: make(chan []byte, defaultSendQueueSize),
+		done:      make(chan struct{}),
+		closeCh:   make(chan struct{}),
+	}
+	if got := s.GetBufferedAmount(); got != 0 {
+		t.Fatalf("GetBufferedAmount() = %d, want 0", got)
+	}
+	if err := s.Send([]byte("0123456789")); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if got := s.GetBufferedAmount(); got != 10 {
+		t.Fatalf("GetBufferedAmount() = %d, want 10", got)
+	}
+}
+
+func TestCloseSignalIsNilSafe(t *testing.T) {
+	closeSignal(nil)
+	ch := make(chan struct{})
+	closeSignal(ch)
+	closeSignal(ch)
+	select {
+	case <-ch:
+	default:
+		t.Fatal("closeSignal() did not close the channel")
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

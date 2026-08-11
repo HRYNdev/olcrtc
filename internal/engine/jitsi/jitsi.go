@@ -54,9 +54,16 @@ const (
 	bridgeOpenTimeout    = 30 * time.Second
 	defaultNick          = "olcrtc"
 	credentialKeyRoom    = "room"
-	videoTrackName       = "videochannel"
 	maxReconnects        = 5
-	reconnectWindow      = 5 * time.Minute
+	// reconnectWindow bounds the consecutive-failure budget: once the first
+	// failure of a series is older than this, the budget starts from zero
+	// again. Matches the goolom/livekit engines.
+	reconnectWindow = 5 * time.Minute
+	// jSessionWaitTimeout bounds how long sendLoop waits for a reconnect to
+	// install a fresh XMPP session. Waiting for the whole reconnect would
+	// stall the queue drain and overflow the 5000-entry send queue; frames
+	// dropped here are stale anyway because a reconnect rolls localEpoch.
+	jSessionWaitTimeout = 2 * time.Second
 	// reconnectGrace is the window after a successful self-reconnect during
 	// which incoming peer-epoch changes do NOT trigger another reconnect.
 	// Without this, the peer's own recovery (which produces a fresh epoch)
@@ -126,22 +133,44 @@ type Session struct {
 	onData              func([]byte)
 	onPeerData          func(peerID string, data []byte)
 	requireTargetedPeer bool
-	onReconnect         func(*webrtc.DataChannel)
-	shouldReconnect     func() bool
-	onEnded             func(string)
+	// Callbacks are set by the carrier at any time and read from the
+	// supervisor, keepalive and recv goroutines, so they are stored
+	// atomically instead of as plain fields.
+	onReconnect     atomic.Pointer[func(*webrtc.DataChannel)]
+	shouldReconnect atomic.Pointer[func() bool]
+	onEnded         atomic.Pointer[func(string)]
 
 	jSess atomic.Pointer[j.Session]
+	// jSessReady is closed once a live XMPP session is installed and is
+	// replaced by a fresh open channel whenever the session is torn down.
+	// It lets sendLoop block on an event instead of polling.
+	jSessMu    sync.Mutex
+	jSessReady chan struct{}
 
 	pcMu     sync.Mutex
 	pc       *webrtc.PeerConnection
 	pcCtx    context.Context    //nolint:containedctx // tied to PC lifetime, cancelled in teardownPC
 	pcCancel context.CancelFunc // cancels pcCtx; cancelled when the live PC is replaced
+	// trickleCancel stops the trickle drain loop bound to the live PC. It is
+	// part of the peer-connection state and is guarded by pcMu, because it is
+	// installed from the waitForJingle goroutine and cleared from the
+	// WatchConnection goroutine.
+	trickleCancel context.CancelFunc
 
 	sendQueue     chan []byte
 	peerSendQueue chan bridgeOutbound
 	bridgeReady   atomic.Bool
-	closed        atomic.Bool
-	reconnecting  atomic.Bool
+	// bridgeGen identifies the live bridge. recvLoop captures it at start and
+	// compares before requesting a reconnect, so a loop left over from a
+	// previous connection cannot tear down the state of a newer one.
+	bridgeGen    atomic.Uint64
+	closed       atomic.Bool
+	reconnecting atomic.Bool
+
+	// goMu guards goClosed and serialises every wg.Add against the wg.Wait
+	// in Close, so no goroutine is ever added after the wait has started.
+	goMu     sync.Mutex
+	goClosed bool
 
 	reconnectCh          chan struct{}
 	reconnectMu          sync.Mutex // guards reconnectWindowStart, reconnectCount, lastReconnectAt
@@ -159,15 +188,14 @@ type Session struct {
 	// EndpointMessage passed the bridgeMagic check. Once set, all bridge
 	// messages from other senders are dropped, isolating us from chatter by
 	// unrelated olcrtc processes that happen to share the same room.
-	peerEndpoint  atomic.Pointer[string]
-	peerEpochMu   sync.Mutex
-	peerEpochs    map[string]uint32
-	done          chan struct{}
-	doneOnce      sync.Once
-	cancel        context.CancelFunc
-	trickleCancel context.CancelFunc
-	runCtx        context.Context //nolint:containedctx // engine owns the supervisor lifetime
-	wg            sync.WaitGroup
+	peerEndpoint atomic.Pointer[string]
+	peerEpochMu  sync.Mutex
+	peerEpochs   map[string]uint32
+	done         chan struct{}
+	doneOnce     sync.Once
+	cancel       context.CancelFunc
+	runCtx       context.Context //nolint:containedctx // engine owns the supervisor lifetime
+	wg           sync.WaitGroup
 
 	videoTrackMu sync.RWMutex
 	videoTracks  []webrtc.TrackLocal
@@ -222,6 +250,7 @@ func New(_ context.Context, cfg engine.Config) (engine.Session, error) {
 		peerSendQueue:       make(chan bridgeOutbound, defaultSendQueueSize),
 		peerEpochs:          make(map[string]uint32),
 		reconnectCh:         make(chan struct{}, 1),
+		jSessReady:          make(chan struct{}),
 		done:                make(chan struct{}),
 		cancel:              cancel,
 		runCtx:              runCtx,
@@ -317,6 +346,33 @@ func randomEpoch() uint32 {
 	return v
 }
 
+// goLaunch starts fn on a tracked goroutine, unless the session already
+// stopped accepting them. Close flips goClosed under goMu before it waits, so
+// wg.Add can never race the wg.Wait (which would panic or, worse, let Wait
+// return while a fresh goroutine is starting).
+func (s *Session) goLaunch(fn func()) {
+	s.goMu.Lock()
+	if s.goClosed {
+		s.goMu.Unlock()
+		return
+	}
+	s.wg.Add(1)
+	s.goMu.Unlock()
+
+	go func() {
+		defer s.wg.Done()
+		fn()
+	}()
+}
+
+// stopLaunching makes every later goLaunch a no-op. It must be called before
+// waiting on the WaitGroup.
+func (s *Session) stopLaunching() {
+	s.goMu.Lock()
+	s.goClosed = true
+	s.goMu.Unlock()
+}
+
 // Capabilities reports what this engine can do.
 func (s *Session) Capabilities() engine.Capabilities {
 	return engine.Capabilities{ByteStream: true, VideoTrack: true}
@@ -342,15 +398,14 @@ func (s *Session) Connect(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("jitsi join muc: %w", err)
 	}
-	s.jSess.Store(jSess)
+	s.setJSession(jSess)
 	logger.Infof("jitsi: MUC joined %s/%s; waiting for peer …", s.host, s.room)
 
-	s.wg.Add(5)
-	go s.sendLoop()
-	go s.recvLoop()
-	go s.waitForJingle()
-	go s.bridgeKeepalive()
-	go s.xmppKeepalive()
+	s.goLaunch(s.sendLoop)
+	s.goLaunch(s.recvLoop)
+	s.goLaunch(s.waitForJingle)
+	s.goLaunch(s.bridgeKeepalive)
+	s.goLaunch(s.xmppKeepalive)
 	return nil
 }
 
@@ -364,8 +419,6 @@ func (s *Session) Connect(ctx context.Context) error {
 // reconnect so the supervisor can rejoin and resume waiting; without
 // this, a single failed wait permanently wedges the engine.
 func (s *Session) waitForJingle() {
-	defer s.wg.Done()
-
 	jSess := s.jSess.Load()
 	if jSess == nil {
 		return
@@ -433,14 +486,12 @@ func (s *Session) completeJingleSetup(
 	}
 
 	// Restart recvLoop now that bridge is ready.
-	s.wg.Add(1)
-	go s.recvLoop()
+	s.goLaunch(s.recvLoop)
 
 	// Announce our epoch immediately so the peer latches on the first RTT
 	// instead of waiting up to a full bridgeKeepalive tick (10s). Mirrors
 	// the reconnect paths, which already announce right after bridge ready.
-	s.wg.Add(1)
-	go s.announceEpoch(needBridge)
+	s.goLaunch(func() { s.announceEpoch(needBridge) })
 	return nil
 }
 
@@ -449,7 +500,6 @@ func (s *Session) completeJingleSetup(
 // receive side is not yet ready, which otherwise leaves the peer waiting for
 // the next bridgeKeepalive tick (10s). Retrying fast closes that gap.
 func (s *Session) announceEpoch(needBridge bool) {
-	defer s.wg.Done()
 	if !needBridge {
 		return
 	}
@@ -483,7 +533,7 @@ func (s *Session) openBridgeWS(ctx context.Context, jSess *j.Session) error {
 	}
 	s.peerEndpoint.Store(nil)
 	s.peerVideoSSRC.Store(0)
-	s.bridgeReady.Store(true)
+	s.markBridgeReady()
 	logger.Infof("jitsi: bridge open colibri-ws (endpoints=%v)", jSess.Endpoints())
 	return nil
 }
@@ -497,7 +547,7 @@ func (s *Session) openBridgeSCTP(ctx context.Context, jSess *j.Session) error {
 	}
 	s.peerEndpoint.Store(nil)
 	s.peerVideoSSRC.Store(0)
-	s.bridgeReady.Store(true)
+	s.markBridgeReady()
 	logger.Infof("jitsi: bridge open sctp (endpoints=%v)", jSess.Endpoints())
 	return nil
 }
@@ -682,10 +732,10 @@ func (s *Session) negotiatePC(
 	// never gets an ACK, and the tunnel dies. Starting the consumer first
 	// closes that race window - any source-add Jicofo emits is picked up
 	// the instant it lands on the wire.
-	s.wg.Add(1)
 	trickleCtx, trickleCancel := context.WithCancel(ctx)
-	s.trickleCancel = trickleCancel
-	go s.trickleDrainLoop(trickleCtx, pc, neg, jSess.LowLevel().Stanzas())
+	s.setTrickleCancel(trickleCancel)
+	stanzas := jSess.LowLevel().Stanzas()
+	s.goLaunch(func() { s.trickleDrainLoop(trickleCtx, pc, neg, stanzas) })
 
 	if sctpBridge {
 		if err := jSess.PrepareBridgeSCTP(pc); err != nil {
@@ -742,8 +792,7 @@ func (s *Session) negotiatePC(
 	// Bound to pcCtx so teardownPC stops it and the next negotiatePC (including
 	// a reinitiate) starts a fresh one.
 	if kaTrack != nil {
-		s.wg.Add(1)
-		go s.rtpKeepalive(pcCtx, kaTrack) //nolint:contextcheck // pcCtx derives from s.runCtx
+		s.goLaunch(func() { s.rtpKeepalive(pcCtx, kaTrack) })
 	}
 
 	return nil
@@ -773,7 +822,6 @@ type negotiator interface {
 // instance on every (re)negotiation, including a reinitiate, which is exactly
 // what keeps the reconnected bridge alive instead of expiring again.
 func (s *Session) rtpKeepalive(pcCtx context.Context, track *webrtc.TrackLocalStaticSample) {
-	defer s.wg.Done()
 	const interval = time.Second
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -888,7 +936,6 @@ func randomTrackSuffix() string {
 // message) which is nil for SCTP-only deployments; that left SCTP bridges
 // without any keepalive at all, so JVB silently expired the endpoint.
 func (s *Session) bridgeKeepalive() {
-	defer s.wg.Done()
 	const interval = 10 * time.Second
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -936,7 +983,6 @@ func (s *Session) bridgeKeepalive() {
 // that property, keepalive would silently die on the first network blip
 // and BOSH would expire 60s into the next idle window.
 func (s *Session) xmppKeepalive() {
-	defer s.wg.Done()
 	ticker := time.NewTicker(xmppKeepaliveInterval)
 	defer ticker.Stop()
 	var lastReconnectRequestErr string
@@ -1011,7 +1057,6 @@ func xmppDomain(jid, fallback string) string {
 func (s *Session) trickleDrainLoop(
 	ctx context.Context, pc *webrtc.PeerConnection, neg negotiator, stanzas <-chan string,
 ) {
-	defer s.wg.Done()
 	for {
 		select {
 		case <-ctx.Done():
@@ -1221,7 +1266,6 @@ func (s *Session) enqueuePeerBridgeFrame(peerID string, framed []byte) error {
 }
 
 func (s *Session) sendLoop() {
-	defer s.wg.Done()
 	for {
 		select {
 		case <-s.done:
@@ -1259,21 +1303,68 @@ func (s *Session) sendBridgeFrame(to string, data []byte) {
 	}
 }
 
-func (s *Session) waitJSession() *j.Session {
-	const retryDelay = 10 * time.Millisecond
-	for {
-		if s.closed.Load() {
-			return nil
-		}
-		jSess := s.jSess.Load()
-		if jSess != nil {
-			return jSess
-		}
+// setJSession installs sess (nil clears it) and republishes the readiness
+// signal, returning the session it replaced. Waiters in waitJSession are woken
+// as soon as a live session lands instead of polling for it.
+func (s *Session) setJSession(sess *j.Session) *j.Session {
+	old := s.jSess.Swap(sess)
+
+	s.jSessMu.Lock()
+	defer s.jSessMu.Unlock()
+	if s.jSessReady == nil {
+		s.jSessReady = make(chan struct{})
+	}
+	if sess == nil {
+		// Arm a fresh signal so the next waiter blocks until a new
+		// session is installed.
 		select {
-		case <-s.done:
-			return nil
-		case <-time.After(retryDelay):
+		case <-s.jSessReady:
+			s.jSessReady = make(chan struct{})
+		default:
 		}
+		return old
+	}
+	select {
+	case <-s.jSessReady:
+	default:
+		close(s.jSessReady)
+	}
+	return old
+}
+
+// waitJSession returns the live XMPP session, waiting for a reconnect to
+// install one if it is momentarily absent.
+//
+// The wait is bounded by jSessionWaitTimeout: sendLoop is the only consumer of
+// both send queues, so blocking it for a whole reconnect (up to a minute)
+// overflows the 5000-entry queue and Send starts rejecting with
+// ErrSendQueueFull. Returning nil instead drops one frame - which a reconnect
+// invalidates anyway, since it rolls localEpoch and outboundFrameCurrent
+// discards everything from the previous epoch.
+func (s *Session) waitJSession() *j.Session {
+	if s.closed.Load() {
+		return nil
+	}
+	if jSess := s.jSess.Load(); jSess != nil {
+		return jSess
+	}
+
+	s.jSessMu.Lock()
+	if s.jSessReady == nil {
+		s.jSessReady = make(chan struct{})
+	}
+	ready := s.jSessReady
+	s.jSessMu.Unlock()
+
+	timer := time.NewTimer(jSessionWaitTimeout)
+	defer timer.Stop()
+	select {
+	case <-ready:
+		return s.jSess.Load()
+	case <-s.done:
+		return nil
+	case <-timer.C:
+		return nil
 	}
 }
 
@@ -1287,7 +1378,9 @@ func (s *Session) outboundFrameCurrent(frame []byte) bool {
 }
 
 func (s *Session) recvLoop() {
-	defer s.wg.Done()
+	// Capture the bridge generation this loop belongs to. Everything it
+	// reports is scoped to that connection.
+	gen := s.bridgeGen.Load()
 
 	jSess := s.jSess.Load()
 	if jSess == nil || (s.onData == nil && s.onPeerData == nil) || !s.bridgeReady.Load() {
@@ -1306,20 +1399,29 @@ func (s *Session) recvLoop() {
 		case <-s.done:
 			return
 		case msg, ok := <-msgs:
-			if !s.deliverBridgeMessage(msg, ok) {
+			if !s.deliverBridgeMessageGen(gen, msg, ok) {
 				return
 			}
 		}
 	}
 }
 
-// deliverBridgeMessage decodes a single incoming bridge message and forwards
-// any raw payload to onData. Returns false to signal that the recv loop
-// should exit (channel closed or session ended).
+// deliverBridgeMessage decodes a single incoming bridge message on behalf of
+// the live bridge. It is the entry point for callers that are not bound to a
+// specific connection.
 func (s *Session) deliverBridgeMessage(msg j.BridgeMessage, ok bool) bool {
+	return s.deliverBridgeMessageGen(s.bridgeGen.Load(), msg, ok)
+}
+
+// deliverBridgeMessageGen decodes a single incoming bridge message and
+// forwards any raw payload to onData. gen is the bridge generation the caller
+// belongs to; a closed bridge is only reported when it still matches the live
+// one. Returns false to signal that the recv loop should exit (channel closed
+// or session ended).
+func (s *Session) deliverBridgeMessageGen(gen uint64, msg j.BridgeMessage, ok bool) bool {
 	if !ok {
 		if !s.closed.Load() {
-			s.requestReconnect("jitsi bridge closed")
+			s.requestReconnectGen(gen, "jitsi bridge closed")
 		}
 		return false
 	}
@@ -1334,9 +1436,7 @@ func (s *Session) deliverBridgeMessage(msg j.BridgeMessage, ok bool) bool {
 	if !ok {
 		return true
 	}
-	if !s.peerLatchAccepts(msg.From) {
-		return true
-	}
+	s.latchPeerEndpoint(msg.From)
 	if len(data) == 0 {
 		return true
 	}
@@ -1364,47 +1464,60 @@ func (s *Session) deliverPeerBridgePayload(from string, payload []byte) bool {
 	return true
 }
 
-func (s *Session) acceptPeerEpochFrame(from string, payload []byte) ([]byte, bool) {
+// epochFrame is a bridge frame whose epoch header passed validation.
+type epochFrame struct {
+	senderEpoch   uint32
+	receiverEpoch uint32
+	body          []byte
+}
+
+// parseEpochFrame validates the epoch header shared by the broadcast and the
+// per-peer receive paths: the frame must be long enough, must not be our own
+// echo, and must not be addressed to a previous incarnation of this session.
+func (s *Session) parseEpochFrame(payload []byte) (epochFrame, bool) {
 	const epochHeaderLen = 8
 	if len(payload) < len(bridgeMagic)+epochHeaderLen {
-		return nil, false
+		return epochFrame{}, false
 	}
 	off := len(bridgeMagic)
-	senderEpoch := binary.BigEndian.Uint32(payload[off : off+4])
-	receiverEpoch := binary.BigEndian.Uint32(payload[off+4 : off+epochHeaderLen])
-	if senderEpoch == 0 || senderEpoch == s.localEpoch.Load() {
-		return nil, false
+	local := s.localEpoch.Load()
+	frame := epochFrame{
+		senderEpoch:   binary.BigEndian.Uint32(payload[off : off+4]),
+		receiverEpoch: binary.BigEndian.Uint32(payload[off+4 : off+epochHeaderLen]),
+		body:          payload[off+epochHeaderLen:],
 	}
-	if receiverEpoch != 0 && receiverEpoch != s.localEpoch.Load() {
+	if frame.senderEpoch == 0 || frame.senderEpoch == local {
+		return epochFrame{}, false
+	}
+	if frame.receiverEpoch != 0 && frame.receiverEpoch != local {
 		logger.Debugf("jitsi: drop stale bridge frame peerEpoch=0x%08x localEpoch=0x%08x",
-			receiverEpoch, s.localEpoch.Load())
+			frame.receiverEpoch, local)
+		return epochFrame{}, false
+	}
+	return frame, true
+}
+
+func (s *Session) acceptPeerEpochFrame(from string, payload []byte) ([]byte, bool) {
+	frame, ok := s.parseEpochFrame(payload)
+	if !ok {
 		return nil, false
 	}
+	senderEpoch := frame.senderEpoch
 	s.peerEpochMu.Lock()
 	prev := s.peerEpochs[from]
 	if prev == 0 || prev != senderEpoch {
 		s.peerEpochs[from] = senderEpoch
 	}
 	s.peerEpochMu.Unlock()
-	return payload[off+epochHeaderLen:], true
+	return frame.body, true
 }
 
 func (s *Session) acceptEpochFrame(payload []byte) ([]byte, bool) {
-	const epochHeaderLen = 8
-	if len(payload) < len(bridgeMagic)+epochHeaderLen {
+	frame, ok := s.parseEpochFrame(payload)
+	if !ok {
 		return nil, false
 	}
-	off := len(bridgeMagic)
-	senderEpoch := binary.BigEndian.Uint32(payload[off : off+4])
-	receiverEpoch := binary.BigEndian.Uint32(payload[off+4 : off+epochHeaderLen])
-	if senderEpoch == 0 || senderEpoch == s.localEpoch.Load() {
-		return nil, false
-	}
-	if receiverEpoch != 0 && receiverEpoch != s.localEpoch.Load() {
-		logger.Debugf("jitsi: drop stale bridge frame peerEpoch=0x%08x localEpoch=0x%08x",
-			receiverEpoch, s.localEpoch.Load())
-		return nil, false
-	}
+	senderEpoch, receiverEpoch := frame.senderEpoch, frame.receiverEpoch
 	// Untargeted (broadcast) frame handling. A broadcast carries
 	// receiverEpoch==0 because the sender does not yet know our localEpoch.
 	//
@@ -1462,7 +1575,7 @@ func (s *Session) acceptEpochFrame(payload []byte) ([]byte, bool) {
 				prev, senderEpoch)
 		}
 	}
-	return payload[off+epochHeaderLen:], true
+	return frame.body, true
 }
 
 // inReconnectGrace reports whether we are still within reconnectGrace of
@@ -1477,9 +1590,9 @@ func (s *Session) inReconnectGrace() bool {
 	return time.Since(time.Unix(0, last)) < reconnectGrace
 }
 
-// peerLatchAccepts implements the peer-latch logic: the first sender whose
-// payload survived the bridgeMagic check becomes our partner; everyone
-// else is ignored.
+// latchPeerEndpoint implements the peer-latch logic: the first sender whose
+// payload survived the bridgeMagic check becomes our partner, and a later
+// sender takes its place.
 //
 // Re-latching on a fresh sender id: when the latched peer reconnects,
 // JVB assigns it a *new* endpoint id (new ICE/DTLS session). Without
@@ -1494,36 +1607,33 @@ func (s *Session) inReconnectGrace() bool {
 // magic. A non-olcrtc participant in the same MUC (a regular Jitsi web
 // client, an unrelated bot, etc.) gets filtered out before we ever
 // get here.
-func (s *Session) peerLatchAccepts(from string) bool { //nolint:unparam // filter contract; always-true is policy
-	if cur := s.peerEndpoint.Load(); cur != nil {
-		if *cur == from {
-			return true
-		}
-		// Different sender than the latched one but the payload
-		// already passed the OLR magic check. Treat this as the
-		// peer reconnecting under a new JVB endpoint id and
-		// re-latch onto the new sender so subsequent frames flow.
-		// We only adopt the new id; the epoch latch resets the
-		// next time acceptEpochFrame sees the new sender's epoch.
-		if from == "" {
-			// Empty from is a JVB-broadcast frame (e.g. our own
-			// echo back). Don't re-latch on that.
-			return true
-		}
-		newFrom := from
-		if s.peerEndpoint.CompareAndSwap(cur, &newFrom) {
-			logger.Debugf("jitsi: peer latch re-bound %s -> %s (peer reconnected)", *cur, from)
-		}
-		return true
-	}
+//
+// The frame is always accepted: by the time we get here it already carries
+// our magic, so the latch only records who we are talking to. A losing CAS
+// needs no handling either - the next frame re-runs the same logic.
+func (s *Session) latchPeerEndpoint(from string) {
 	if from == "" {
-		return true
+		// Empty from is a JVB-broadcast frame (e.g. our own echo back).
+		// Don't latch or re-latch on that.
+		return
 	}
-	s.peerEndpoint.CompareAndSwap(nil, &from)
-	// Re-check after CAS: a concurrent latch may have picked a different
-	// peer first; if so, allow the frame anyway — re-latch logic above
-	// will handle the next one.
-	return true
+	cur := s.peerEndpoint.Load()
+	if cur == nil {
+		s.peerEndpoint.CompareAndSwap(nil, &from)
+		return
+	}
+	if *cur == from {
+		return
+	}
+	// Different sender than the latched one but the payload already passed
+	// the OLR magic check. Treat this as the peer reconnecting under a new
+	// JVB endpoint id and re-latch onto the new sender so subsequent frames
+	// flow. We only adopt the new id; the epoch latch resets the next time
+	// acceptEpochFrame sees the new sender's epoch.
+	newFrom := from
+	if s.peerEndpoint.CompareAndSwap(cur, &newFrom) {
+		logger.Debugf("jitsi: peer latch re-bound %s -> %s (peer reconnected)", *cur, from)
+	}
 }
 
 // decodeRaw extracts the bytes from an EndpointMessage produced by the j
@@ -1601,13 +1711,17 @@ func (s *Session) Close() error {
 	if jSess != nil {
 		_ = jSess.Close()
 	}
-	s.jSess.Store(nil)
+	s.setJSession(nil)
 	s.bridgeReady.Store(false)
 
 	if s.cancel != nil {
 		s.cancel()
 	}
 	s.doneOnce.Do(func() { close(s.done) })
+
+	// Stop accepting new goroutines before waiting for the running ones,
+	// so nothing can call wg.Add once wg.Wait is in flight.
+	s.stopLaunching()
 
 	stopped := make(chan struct{})
 	go func() {
@@ -1631,13 +1745,46 @@ func (s *Session) ResetPeer() {
 }
 
 // SetReconnectCallback registers a callback for reconnection events.
-func (s *Session) SetReconnectCallback(cb func(*webrtc.DataChannel)) { s.onReconnect = cb }
+func (s *Session) SetReconnectCallback(cb func(*webrtc.DataChannel)) {
+	if cb == nil {
+		s.onReconnect.Store(nil)
+		return
+	}
+	s.onReconnect.Store(&cb)
+}
 
 // SetShouldReconnect stores the reconnect predicate.
-func (s *Session) SetShouldReconnect(fn func() bool) { s.shouldReconnect = fn }
+func (s *Session) SetShouldReconnect(fn func() bool) {
+	if fn == nil {
+		s.shouldReconnect.Store(nil)
+		return
+	}
+	s.shouldReconnect.Store(&fn)
+}
 
 // SetEndedCallback registers a function to call when the session ends.
-func (s *Session) SetEndedCallback(cb func(string)) { s.onEnded = cb }
+func (s *Session) SetEndedCallback(cb func(string)) {
+	if cb == nil {
+		s.onEnded.Store(nil)
+		return
+	}
+	s.onEnded.Store(&cb)
+}
+
+// notifyReconnect invokes the reconnect callback if one is registered. The
+// jitsi engine has no data channel to hand over: the bridge is colibri-ws or
+// SCTP and the carrier only needs the "we are back" edge.
+func (s *Session) notifyReconnect() {
+	if cb := s.onReconnect.Load(); cb != nil {
+		(*cb)(nil)
+	}
+}
+
+// reconnectAllowed reports whether the carrier still wants reconnects.
+func (s *Session) reconnectAllowed() bool {
+	fn := s.shouldReconnect.Load()
+	return fn == nil || (*fn)()
+}
 
 // WatchConnection monitors bridge lifecycle and reconnects when JVB closes
 // the endpoint's colibri-ws without ending the XMPP conference.
@@ -1661,20 +1808,48 @@ func (s *Session) WatchConnection(ctx context.Context) {
 // carrier dead before jitsi has noticed.
 func (s *Session) Reconnect(reason string) { s.requestReconnect(reason) }
 
+// requestReconnect asks the supervisor to rebuild the bridge.
+//
+// bridgeReady is cleared only once the request is actually claimed (i.e. the
+// supervisor took the slot, or the session is ending). Clearing it up front
+// let a recvLoop left over from a previous connection - which notices its
+// bridge closed only after a successful reconnect - knock out the fresh
+// bridge, leaving Send failing with ErrBridgeNotReady until the next
+// reconnect. The generation check in requestReconnectGen keeps such a stale
+// loop from getting this far in the first place.
 func (s *Session) requestReconnect(reason string) {
-	s.bridgeReady.Store(false)
 	if s.closed.Load() || s.reconnecting.Load() {
 		return
 	}
-	if s.shouldReconnect != nil && !s.shouldReconnect() {
+	if !s.reconnectAllowed() {
 		s.signalEnded(reason)
 		return
 	}
 	logger.Infof("jitsi reconnect requested: %s", reason)
 	select {
 	case s.reconnectCh <- struct{}{}:
+		s.bridgeReady.Store(false)
 	default:
 	}
+}
+
+// requestReconnectGen forwards to requestReconnect only while gen still
+// identifies the live bridge. A caller bound to an older bridge has nothing
+// to report: its connection was already replaced.
+func (s *Session) requestReconnectGen(gen uint64, reason string) {
+	if cur := s.bridgeGen.Load(); cur != gen {
+		logger.Debugf("jitsi: ignoring stale reconnect request (gen=%d live=%d): %s", gen, cur, reason)
+		return
+	}
+	s.requestReconnect(reason)
+}
+
+// markBridgeReady publishes a freshly opened bridge. The generation is bumped
+// before the ready flag so the recvLoop started for this bridge captures the
+// new value.
+func (s *Session) markBridgeReady() {
+	s.bridgeGen.Add(1)
+	s.bridgeReady.Store(true)
 }
 
 func (s *Session) handleReconnectAttempt(ctx context.Context) bool {
@@ -1687,9 +1862,7 @@ func (s *Session) handleReconnectAttempt(ctx context.Context) bool {
 	// down. The cap is meant as a safety net against pathologically
 	// repeated failure, not as a budget on legitimate reconnect events.
 	for {
-		s.reconnectMu.Lock()
-		failures := s.reconnectCount
-		s.reconnectMu.Unlock()
+		failures := s.takeFailureBudget()
 		if failures > maxReconnects {
 			s.signalEnded("jitsi reconnect limit reached")
 			return true
@@ -1741,6 +1914,23 @@ func (s *Session) handleReconnectAttempt(ctx context.Context) bool {
 	}
 }
 
+// takeFailureBudget reports how many consecutive reconnect failures are
+// counted inside the current window, expiring the window first.
+//
+// The budget only means something for failures that cluster together: once the
+// first failure of a series is older than reconnectWindow, the session has
+// been healthy long enough that the history is meaningless and the budget
+// starts from zero again. Same semantics as the goolom and livekit engines.
+func (s *Session) takeFailureBudget() int {
+	s.reconnectMu.Lock()
+	defer s.reconnectMu.Unlock()
+	if !s.reconnectWindowStart.IsZero() && time.Since(s.reconnectWindowStart) > reconnectWindow {
+		s.reconnectCount = 0
+		s.reconnectWindowStart = time.Time{}
+	}
+	return s.reconnectCount
+}
+
 func (s *Session) reconnect(ctx context.Context) error {
 	if !s.reconnecting.CompareAndSwap(false, true) {
 		return nil
@@ -1770,7 +1960,7 @@ func (s *Session) reconnect(ctx context.Context) error {
 	// initial Connect, but WITHOUT blocking on session-initiate — preserving
 	// the non-blocking reconnect contract. We wait for the fresh
 	// session-initiate separately via WaitJingleReinitiate once a peer rejoins.
-	if old := s.jSess.Swap(nil); old != nil {
+	if old := s.setJSession(nil); old != nil {
 		_ = old.Close()
 	}
 
@@ -1788,7 +1978,7 @@ func (s *Session) reconnect(ctx context.Context) error {
 		logger.Warnf("jitsi: rejoin failed: %v - full reconnect", err)
 		return s.reconnectFull(ctx)
 	}
-	s.jSess.Store(jSess)
+	s.setJSession(jSess)
 
 	// Wait for Jicofo to send session-initiate, but with a bounded
 	// timeout: if the recovery sits here forever the supervisor itself
@@ -1815,17 +2005,14 @@ func (s *Session) reconnect(ctx context.Context) error {
 
 	s.peerEndpoint.Store(nil)
 	s.peerVideoSSRC.Store(0)
-	s.bridgeReady.Store(true)
+	s.markBridgeReady()
 
-	s.wg.Add(1)
-	go s.recvLoop()
+	s.goLaunch(s.recvLoop)
 
 	if err := s.Send(nil); err != nil {
 		logger.Debugf("jitsi: epoch announce failed: %v", err)
 	}
-	if s.onReconnect != nil {
-		s.onReconnect(nil)
-	}
+	s.notifyReconnect()
 	s.lastReconnectAt.Store(time.Now().UnixNano())
 	logger.Infof("jitsi: reconnected %s/%s (reinitiate); colibri-ws=%s", s.host, s.room, jSess.ColibriWS)
 	return nil
@@ -1845,16 +2032,31 @@ func (s *Session) teardownPC() {
 	pcCancel := s.pcCancel
 	s.pcCancel = nil
 	s.pcCtx = nil
+	trickleCancel := s.trickleCancel
+	s.trickleCancel = nil
 	s.pcMu.Unlock()
 	if pcCancel != nil {
 		pcCancel()
 	}
-	if s.trickleCancel != nil {
-		s.trickleCancel()
-		s.trickleCancel = nil
+	if trickleCancel != nil {
+		trickleCancel()
 	}
 	if oldPC != nil {
 		_ = oldPC.Close()
+	}
+}
+
+// setTrickleCancel publishes the cancel func of the trickle drain loop bound
+// to the live PC, cancelling the loop it replaces. Guarded by pcMu because
+// negotiatePC (waitForJingle goroutine) and teardownPC (WatchConnection
+// goroutine) touch it concurrently.
+func (s *Session) setTrickleCancel(cancel context.CancelFunc) {
+	s.pcMu.Lock()
+	prev := s.trickleCancel
+	s.trickleCancel = cancel
+	s.pcMu.Unlock()
+	if prev != nil {
+		prev()
 	}
 }
 
@@ -1892,7 +2094,7 @@ func (s *Session) reinitiateBridge(
 // case we park the new MUC session, restart waitForJingle + xmppKeepalive,
 // and return errNoPeer so the caller does not count it as a failure.
 func (s *Session) reconnectFull(ctx context.Context) error {
-	if old := s.jSess.Swap(nil); old != nil {
+	if old := s.setJSession(nil); old != nil {
 		_ = old.Close()
 	}
 	s.localEpoch.Store(randomEpoch())
@@ -1926,9 +2128,8 @@ func (s *Session) reconnectFull(ctx context.Context) error {
 	bcancel()
 	if err != nil {
 		// Park the session so waitForJingle can pick up later.
-		s.jSess.Store(jSess)
-		s.wg.Add(1)
-		go s.waitForJingle()
+		s.setJSession(jSess)
+		s.goLaunch(s.waitForJingle)
 		return errNoPeer
 	}
 
@@ -1936,20 +2137,17 @@ func (s *Session) reconnectFull(ctx context.Context) error {
 		_ = jSess.Close()
 		return fmt.Errorf("jitsi setup after full reconnect: %w", err)
 	}
-	s.jSess.Store(jSess)
+	s.setJSession(jSess)
 	s.peerEndpoint.Store(nil)
 	s.peerVideoSSRC.Store(0)
-	s.bridgeReady.Store(true)
+	s.markBridgeReady()
 
-	s.wg.Add(1)
-	go s.recvLoop()
+	s.goLaunch(s.recvLoop)
 
 	if err := s.Send(nil); err != nil {
 		logger.Debugf("jitsi: epoch announce failed: %v", err)
 	}
-	if s.onReconnect != nil {
-		s.onReconnect(nil)
-	}
+	s.notifyReconnect()
 	s.lastReconnectAt.Store(time.Now().UnixNano())
 	logger.Infof("jitsi: reconnected %s/%s (full); colibri-ws=%s", s.host, s.room, jSess.ColibriWS)
 	return nil
@@ -2072,8 +2270,8 @@ func (s *Session) SetVideoTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPR
 
 func (s *Session) signalEnded(reason string) {
 	s.bridgeReady.Store(false)
-	if s.onEnded != nil {
-		s.onEnded(reason)
+	if cb := s.onEnded.Load(); cb != nil {
+		(*cb)(reason)
 	}
 }
 

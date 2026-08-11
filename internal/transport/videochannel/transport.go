@@ -15,7 +15,6 @@ import (
 	"github.com/pion/webrtc/v4/pkg/media/samplebuilder"
 
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
-	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
 	"github.com/openlibrecommunity/olcrtc/internal/transport/common"
@@ -25,7 +24,6 @@ const (
 	defaultMaxPayloadSize = 16 * 1024
 	defaultFragmentSize   = 256
 	defaultAckTimeout     = 1 * time.Second
-	defaultFrameInterval  = 40 * time.Millisecond
 	defaultConnectTimeout = 30 * time.Second
 	maxSendAttempts       = 20
 	sampleBuilderMaxLate  = 128
@@ -78,8 +76,6 @@ type streamTransport struct {
 	videoW          int
 	videoH          int
 	videoFPS        int
-	videoBitrate    string
-	videoHW         string
 	videoQRSize     int
 	videoQRRecovery string
 	videoCodec      string
@@ -88,7 +84,7 @@ type streamTransport struct {
 	localRole       byte
 	remoteRole      byte
 	bindingToken    uint32
-	runCtx          context.Context //nolint:containedctx,lll // long-lived context drives idle-frame loops bound to this transport's lifetime
+	shaper          *transport.Shaper
 }
 
 // New creates a visual videochannel transport backed by a carrier engine.
@@ -98,21 +94,16 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		return nil, err
 	}
 
-	session, err := enginebuiltin.Open(ctx, cfg.Carrier, enginebuiltin.Config{
-		RoomURL:   cfg.RoomURL,
-		Name:      cfg.Name,
-		OnData:    nil,
-		DNSServer: cfg.DNSServer,
-		Resolver:  cfg.Resolver,
-		ProxyAddr: cfg.ProxyAddr,
-		ProxyPort: cfg.ProxyPort,
-		Engine:    cfg.Engine,
-		URL:       cfg.URL,
-		Token:     cfg.Token,
-		AuthToken: cfg.AuthToken,
-	})
+	// Payloads ride the video track, so the engine stays in pure-video mode:
+	// no data callbacks, otherwise it would gate readiness on a bridge this
+	// transport never uses and deliver carrier bytes behind our back.
+	engineCfg := cfg
+	engineCfg.OnData = nil
+	engineCfg.OnPeerData = nil
+
+	session, err := engineCfg.OpenEngine(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("open engine session: %w", err)
+		return nil, err
 	}
 
 	vt, ok := session.(engine.VideoTrackCapable)
@@ -122,7 +113,9 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 	}
 	stream := &engineVideoSession{session: session, vt: vt}
 
-	codec := codecSpecForCarrier(cfg.Carrier)
+	// Every carrier negotiates VP8 outbound; inbound follows whatever the
+	// remote announces (see codecSpecForMime).
+	codec := vp8CodecSpec()
 	// Stream/track IDs must be unique per peer: Jitsi/Jicofo keys participant
 	// sources by msid (stream-id+track-id) and rejects a session-accept whose
 	// msid collides with one already in the conference.
@@ -163,8 +156,6 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		videoW:          opts.Width,
 		videoH:          opts.Height,
 		videoFPS:        opts.FPS,
-		videoBitrate:    opts.Bitrate,
-		videoHW:         opts.HW,
 		videoQRSize:     qrSize,
 		videoQRRecovery: opts.QRRecovery,
 		videoCodec:      opts.Codec,
@@ -173,8 +164,8 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		localRole:       localFrameRole(cfg.DeviceID),
 		remoteRole:      remoteFrameRole(cfg.DeviceID),
 		bindingToken:    bindingToken(cfg.ChannelID),
-		runCtx:          ctx,
 	}
+	tr.shaper = transport.NewShaper(cfg.Traffic, tr.Features())
 
 	if err := stream.AddTrack(track); err != nil {
 		return nil, fmt.Errorf("attach local video track: %w", err)
@@ -225,6 +216,10 @@ func (p *streamTransport) Connect(ctx context.Context) error {
 // killed the encoder. Here each fragment is acked independently and only
 // the unacked ones are resent.
 func (p *streamTransport) Send(data []byte) error {
+	return p.shaper.Send(p.send, data)
+}
+
+func (p *streamTransport) send(data []byte) error {
 	if p.closed.Load() {
 		return ErrTransportClosed
 	}
@@ -379,12 +374,12 @@ func (p *streamTransport) Features() transport.Features {
 	if p.videoQRSize*64 > maxPayload {
 		maxPayload = p.videoQRSize * 64
 	}
-	return transport.Features{
+	return p.shaper.Features(transport.Features{
 		Reliable:        true,
 		Ordered:         true,
 		MessageOriented: true,
 		MaxPayloadSize:  maxPayload,
-	}
+	})
 }
 
 func (p *streamTransport) writeIdleFrame(enc *goEncoder, frameDuration time.Duration) {

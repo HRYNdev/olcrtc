@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"slices"
 )
 
 var (
@@ -97,5 +98,19 @@ func Available() []string {
 	for name := range registry {
 		names = append(names, name)
 	}
+	return names
+}
+
+// RoomCreators returns the sorted names of registered providers that
+// implement RoomCreator, i.e. the ones `-mode gen` can drive. The list is
+// empty when no provider can create rooms.
+func RoomCreators() []string {
+	names := make([]string, 0, len(registry))
+	for name, p := range registry {
+		if _, ok := p.(RoomCreator); ok {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
 	return names
 }

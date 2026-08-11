@@ -19,7 +19,7 @@ import (
 func mkServerSess(t *testing.T) (*smux.Session, func()) {
 	t.Helper()
 	a, b := net.Pipe()
-	sess, err := smux.Server(a, smuxConfig(0))
+	sess, err := smux.Server(a, testSmuxCfg())
 	if err != nil {
 		_ = a.Close()
 		_ = b.Close()

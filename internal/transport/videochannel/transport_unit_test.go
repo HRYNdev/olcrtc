@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pion/webrtc/v4"
+	grtile "github.com/zarazaex69/gr/tile"
 
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
@@ -288,5 +289,47 @@ func TestNextOutboundFrameStopsWhenClosed(t *testing.T) {
 	close(tr.closeCh)
 	if got, ok := tr.nextOutboundFrame(); ok || got != nil {
 		t.Fatalf("nextOutboundFrame(closed) = %q/%v, want nil/false", got, ok)
+	}
+}
+
+func TestZeroOptionsGetDefaultsAndWriterSurvives(t *testing.T) {
+	stream := &fakeVideoStream{canSend: true}
+	name := "videochannel-unit-zero-options"
+	enginebuiltin.Register(name, func(context.Context, enginebuiltin.Config) (engine.Session, error) {
+		return &fakeEngineSession{stream: stream}, nil
+	})
+
+	trIface, err := New(context.Background(), transport.Config{Carrier: name})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	tr, ok := trIface.(*streamTransport)
+	if !ok {
+		t.Fatalf("transport type = %T, want *streamTransport", trIface)
+	}
+	if tr.videoFPS != defaultFPS || tr.videoW != defaultWidth || tr.videoH != defaultHeight {
+		t.Fatalf("defaults = %dx%d@%d, want %dx%d@%d",
+			tr.videoW, tr.videoH, tr.videoFPS, defaultWidth, defaultHeight, defaultFPS)
+	}
+
+	// Zero FPS used to divide by zero inside the writer goroutine.
+	if err := tr.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if err := tr.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+}
+
+func TestOptionsWithDefaultsTileDimensions(t *testing.T) {
+	got := Options{Codec: codecTile}.withDefaults()
+	if got.Width != grtile.FrameW || got.Height != grtile.FrameH || got.FPS != defaultFPS {
+		t.Fatalf("tile defaults = %+v", got)
+	}
+
+	kept := Options{Width: 100, Height: 200, FPS: 5}.withDefaults()
+	if kept.Width != 100 || kept.Height != 200 || kept.FPS != 5 {
+		t.Fatalf("withDefaults() overwrote explicit values: %+v", kept)
 	}
 }
