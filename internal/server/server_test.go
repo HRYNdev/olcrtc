@@ -21,6 +21,7 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/muxconn"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
+	"github.com/openlibrecommunity/olcrtc/internal/tunnelcore"
 )
 
 const (
@@ -30,7 +31,7 @@ const (
 
 func TestSetupCipher(t *testing.T) {
 	keyHex := "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
-	cipher, err := setupCipher(keyHex)
+	cipher, err := tunnelcore.SetupCipher("server", keyHex)
 	if err != nil {
 		t.Fatalf("setupCipher() error = %v", err)
 	}
@@ -40,13 +41,13 @@ func TestSetupCipher(t *testing.T) {
 }
 
 func TestSetupCipherRejectsBadInput(t *testing.T) {
-	if _, err := setupCipher(""); !errors.Is(err, ErrKeyRequired) {
+	if _, err := tunnelcore.SetupCipher("server", ""); !errors.Is(err, ErrKeyRequired) {
 		t.Fatalf("setupCipher() error = %v, want %v", err, ErrKeyRequired)
 	}
-	if _, err := setupCipher("zz"); err == nil {
+	if _, err := tunnelcore.SetupCipher("server", "zz"); err == nil {
 		t.Fatal("setupCipher() unexpectedly succeeded for bad hex")
 	}
-	if _, err := setupCipher("00"); !errors.Is(err, ErrKeySize) {
+	if _, err := tunnelcore.SetupCipher("server", "00"); !errors.Is(err, ErrKeySize) {
 		t.Fatalf("setupCipher() error = %v, want ErrKeySize", err)
 	}
 }
@@ -54,16 +55,16 @@ func TestSetupCipherRejectsBadInput(t *testing.T) {
 // testSmuxCfg is the data-plane smux config the production path builds for a
 // plain (non control-plane) transport.
 func testSmuxCfg() *smux.Config {
-	return dataSmuxConfig(&serverLinkStub{})
+	return runtime.SmuxConfigFor(&serverLinkStub{})
 }
 
 func TestDataSmuxConfig(t *testing.T) {
-	cfg := dataSmuxConfig(&serverLinkStub{})
+	cfg := runtime.SmuxConfigFor(&serverLinkStub{})
 	if cfg.Version != 2 || cfg.KeepAliveDisabled || cfg.MaxFrameSize != 32768 ||
 		cfg.MaxReceiveBuffer != 32*1024*1024 || cfg.MaxStreamBuffer != 4*1024*1024 {
 		t.Fatalf("dataSmuxConfig() = %+v", cfg)
 	}
-	capped := dataSmuxConfig(&serverLinkStub{maxPayload: 4096})
+	capped := runtime.SmuxConfigFor(&serverLinkStub{maxPayload: 4096})
 	want := 4096 - runtime.SmuxWireOverhead
 	if capped.MaxFrameSize != want {
 		t.Fatalf("dataSmuxConfig(maxPayload=4096).MaxFrameSize = %d, want %d",
@@ -153,6 +154,45 @@ func TestSocks5ConnectSuccess(t *testing.T) {
 	}
 }
 
+func TestSocks5ConnectSendsIPv6AddressType(t *testing.T) {
+	s := &Server{}
+	server, client := net.Pipe()
+	defer func() {
+		_ = server.Close()
+		_ = client.Close()
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- s.socks5Connect(server, "2001:db8::1", 443)
+	}()
+	auth := make([]byte, 3)
+	if _, err := io.ReadFull(client, auth); err != nil {
+		t.Fatalf("ReadFull(auth) error = %v", err)
+	}
+	if _, err := client.Write([]byte{5, 0}); err != nil {
+		t.Fatalf("Write(auth resp) error = %v", err)
+	}
+	request := make([]byte, 4+net.IPv6len+2)
+	if _, err := io.ReadFull(client, request); err != nil {
+		t.Fatalf("ReadFull(connect req) error = %v", err)
+	}
+	if request[3] != 4 {
+		t.Fatalf("connect request ATYP = %d, want 4", request[3])
+	}
+	if got := net.IP(request[4 : 4+net.IPv6len]).String(); got != "2001:db8::1" {
+		t.Fatalf("connect request address = %q", got)
+	}
+	response := make([]byte, 4+net.IPv6len+2)
+	response[0], response[3] = 5, 4
+	if _, err := client.Write(response); err != nil {
+		t.Fatalf("Write(connect resp) error = %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("socks5Connect() error = %v", err)
+	}
+}
+
 func TestSocks5ConnectErrors(t *testing.T) {
 	s := &Server{}
 
@@ -209,10 +249,9 @@ func TestSocks5ConnectErrors(t *testing.T) {
 }
 
 func TestSetupResolver(t *testing.T) {
-	s := &Server{dnsServer: "127.0.0.1:53"}
-	s.setupResolver()
-	if s.resolver == nil || !s.resolver.PreferGo || s.resolver.Dial == nil {
-		t.Fatalf("setupResolver() = %+v", s.resolver)
+	resolver := tunnelcore.Resolver(nil, "127.0.0.1:53")
+	if resolver == nil || !resolver.PreferGo || resolver.Dial == nil {
+		t.Fatalf("Resolver() = %+v", resolver)
 	}
 }
 
@@ -277,8 +316,8 @@ func TestDialWithoutProxy(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		conn, err := ln.Accept()
-		if err == nil {
+		conn, acceptErr := ln.Accept()
+		if acceptErr == nil {
 			_ = conn.Close()
 			close(done)
 		}
@@ -361,8 +400,8 @@ func TestHandleStreamDispatchAfterConnect(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		stream, err := serverSess.AcceptStream()
-		if err == nil {
+		stream, acceptErr := serverSess.AcceptStream()
+		if acceptErr == nil {
 			(&Server{}).handleStream(context.Background(), stream, "")
 		}
 		close(done)
@@ -428,8 +467,8 @@ func TestStartControlLoopReportsPong(t *testing.T) {
 
 	serverStreamCh := make(chan *smux.Stream, 1)
 	go func() {
-		stream, err := serverSess.AcceptStream()
-		if err == nil {
+		stream, acceptErr := serverSess.AcceptStream()
+		if acceptErr == nil {
 			serverStreamCh <- stream
 		}
 	}()
@@ -457,7 +496,7 @@ func TestStartControlLoopReportsPong(t *testing.T) {
 			},
 		},
 	}
-	s.recordSession("sid-control")
+	s.health.RecordSession("sid-control")
 	defer func() {
 		cancel()
 		s.wg.Wait()
@@ -506,8 +545,8 @@ func TestStartControlLoopResetsPeerBeforeReinstall(t *testing.T) {
 
 	serverStreamCh := make(chan *smux.Stream, 1)
 	go func() {
-		stream, err := serverSess.AcceptStream()
-		if err == nil {
+		stream, acceptErr := serverSess.AcceptStream()
+		if acceptErr == nil {
 			serverStreamCh <- stream
 		}
 	}()
@@ -559,10 +598,10 @@ func TestStartControlLoopResetsPeerBeforeReinstall(t *testing.T) {
 func TestStatusRecordsReconnectAndUnhealthy(t *testing.T) {
 	updates := 0
 	s := &Server{health: runtime.NewHealthTracker(func(control.Status) { updates++ })}
-	s.recordSession("sid-1")
-	s.recordMissed(2)
-	s.recordUnhealthy(3)
-	s.recordReconnect()
+	s.health.RecordSession("sid-1")
+	s.health.RecordMissed(2)
+	s.health.RecordUnhealthy(3)
+	s.health.RecordReconnect()
 
 	status := s.Status()
 	if status.SessionID != "sid-1" || status.MissedPongs != 3 ||
@@ -584,12 +623,12 @@ func TestDispatchFiresOnTraffic(t *testing.T) {
 
 	const greeting = "hi\n"
 	go func() {
-		c, err := ln.Accept()
-		if err != nil {
+		conn, acceptErr := ln.Accept()
+		if acceptErr != nil {
 			return
 		}
-		defer func() { _ = c.Close() }()
-		_, _ = c.Write([]byte(greeting))
+		defer func() { _ = conn.Close() }()
+		_, _ = conn.Write([]byte(greeting))
 	}()
 
 	a, b := net.Pipe()
@@ -628,8 +667,8 @@ func TestDispatchFiresOnTraffic(t *testing.T) {
 	}
 
 	go func() {
-		stream, err := serverSess.AcceptStream()
-		if err != nil {
+		stream, acceptErr := serverSess.AcceptStream()
+		if acceptErr != nil {
 			return
 		}
 		s.handleStream(context.Background(), stream, "")
@@ -970,8 +1009,8 @@ func TestDispatchAcksDialFailure(t *testing.T) {
 	if _, err := io.ReadFull(stream, ack); err != nil {
 		t.Fatalf("read ack: %v", err)
 	}
-	if ack[0] != ConnectAckHostUnreachable {
-		t.Fatalf("ack = 0x%02x, want 0x%02x", ack[0], ConnectAckHostUnreachable)
+	if ack[0] != tunnelcore.ConnectAckHostUnreachable {
+		t.Fatalf("ack = 0x%02x, want 0x%02x", ack[0], tunnelcore.ConnectAckHostUnreachable)
 	}
 }
 

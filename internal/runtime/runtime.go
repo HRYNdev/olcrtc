@@ -69,12 +69,7 @@ func SmuxConfig(maxWirePayload int) *smux.Config {
 	cfg.Version = 2
 	cfg.KeepAliveDisabled = false
 	cfg.MaxFrameSize = smuxMaxFrameSize
-	if maxWirePayload >= MinSmuxWirePayload {
-		maxFrameSize := maxWirePayload - SmuxWireOverhead
-		if maxFrameSize < cfg.MaxFrameSize {
-			cfg.MaxFrameSize = maxFrameSize
-		}
-	}
+	clampMaxFrameSize(cfg, maxWirePayload)
 	cfg.MaxReceiveBuffer = smuxMaxReceiveBuffer
 	cfg.MaxStreamBuffer = smuxMaxStreamBuffer
 	cfg.KeepAliveInterval = 10 * time.Second
@@ -145,18 +140,22 @@ func ControlSmuxConfig(maxWirePayload int) *smux.Config {
 	cfg := smux.DefaultConfig()
 	cfg.Version = 2
 	cfg.MaxFrameSize = smuxMaxFrameSize
-	if maxWirePayload >= MinSmuxWirePayload {
-		maxFrameSize := maxWirePayload - SmuxWireOverhead
-		if maxFrameSize < cfg.MaxFrameSize {
-			cfg.MaxFrameSize = maxFrameSize
-		}
-	}
+	clampMaxFrameSize(cfg, maxWirePayload)
 	// Tiny buffers: control frames are at most a few hundred bytes.
 	cfg.MaxReceiveBuffer = 256 * 1024
 	cfg.MaxStreamBuffer = 32 * 1024
 	// Disable smux keepalive - control.Run runs its own ping/pong loop.
 	cfg.KeepAliveDisabled = true
 	return cfg
+}
+
+func clampMaxFrameSize(cfg *smux.Config, maxWirePayload int) {
+	if maxWirePayload >= MinSmuxWirePayload {
+		maxFrameSize := maxWirePayload - SmuxWireOverhead
+		if maxFrameSize < cfg.MaxFrameSize {
+			cfg.MaxFrameSize = maxFrameSize
+		}
+	}
 }
 
 // MaxPayload reports the transport's per-message payload limit. Returns 0

@@ -65,6 +65,16 @@ func TestSmuxConfigShrinks(t *testing.T) {
 	}
 }
 
+func TestControlSmuxConfigUsesSameFrameClamp(t *testing.T) {
+	cfg := runtime.ControlSmuxConfig(100)
+	if cfg.MaxFrameSize+runtime.SmuxWireOverhead != 100 {
+		t.Fatalf("control wire size = %d, want 100", cfg.MaxFrameSize+runtime.SmuxWireOverhead)
+	}
+	if !cfg.KeepAliveDisabled {
+		t.Fatal("ControlSmuxConfig() keepalive is enabled")
+	}
+}
+
 func TestHealthTrackerEmitsOnEveryChange(t *testing.T) {
 	var got []control.Status
 	h := runtime.NewHealthTracker(func(s control.Status) {

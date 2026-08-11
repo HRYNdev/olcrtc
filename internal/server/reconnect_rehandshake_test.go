@@ -12,6 +12,7 @@ import (
 	cryptopkg "github.com/openlibrecommunity/olcrtc/internal/crypto"
 	"github.com/openlibrecommunity/olcrtc/internal/muxconn"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
+	"github.com/openlibrecommunity/olcrtc/internal/tunnelcore"
 )
 
 // mkServerSess builds a server-side smux session over one end of a pipe.
@@ -62,11 +63,11 @@ func TestSwapSessionAcceptsControlSessionInPeerRouting(t *testing.T) {
 		health:      runtime.NewHealthTracker(nil),
 	}
 
-	r := &replacementSession{
-		conn:        muxconn.New(ln, cipher),
-		sess:        newData,
-		controlConn: nil,
-		controlSess: newControl,
+	r := &tunnelcore.SessionPair{
+		DataConn:       muxconn.New(ln, cipher),
+		DataSession:    newData,
+		ControlConn:    muxconn.New(ln, cipher),
+		ControlSession: newControl,
 	}
 
 	if ok := s.swapSession(deadControl, r); !ok {
@@ -107,7 +108,7 @@ func TestSwapSessionDiscardsStaleReinstall(t *testing.T) {
 		session: liveData,
 		health:  runtime.NewHealthTracker(nil),
 	}
-	r := &replacementSession{sess: newData, conn: muxconn.New(ln, cipher)}
+	r := &tunnelcore.SessionPair{DataSession: newData, DataConn: muxconn.New(ln, cipher)}
 	if ok := s.swapSession(stale, r); ok {
 		t.Fatal("swapSession accepted a stale reinstall that matched no live session")
 	}

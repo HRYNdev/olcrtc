@@ -10,6 +10,7 @@ import (
 
 	"github.com/openlibrecommunity/olcrtc/internal/control"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
+	"github.com/openlibrecommunity/olcrtc/internal/tunnelcore"
 )
 
 const testBadDuration = "nope"
@@ -100,7 +101,7 @@ func TestResolverForDoesNotMutateDefaultResolver(t *testing.T) {
 	defaultResolver := net.DefaultResolver
 	custom := &net.Resolver{PreferGo: true}
 
-	resolver := resolverFor(nil, "8.8.8.8:53")
+	resolver := tunnelcore.Resolver(nil, "8.8.8.8:53")
 	if net.DefaultResolver != defaultResolver {
 		t.Fatal("resolverFor() mutated net.DefaultResolver")
 	}
@@ -108,21 +109,17 @@ func TestResolverForDoesNotMutateDefaultResolver(t *testing.T) {
 		t.Fatal("resolverFor() did not create a local resolver")
 	}
 
-	if resolverFor(custom, "8.8.8.8:53") != custom {
+	if tunnelcore.Resolver(custom, "8.8.8.8:53") != custom {
 		t.Fatal("resolverFor() did not prefer the supplied resolver")
 	}
 }
 
 func TestRunWithSessionRotationRestartsAfterMaxDuration(t *testing.T) {
-	oldRestartDelay := sessionRestartDelay
-	sessionRestartDelay = time.Millisecond
-	t.Cleanup(func() { sessionRestartDelay = oldRestartDelay })
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	var calls atomic.Int32
-	err := runWithSessionRotation(ctx, 5*time.Millisecond, func(ctx context.Context) error {
+	err := runWithSessionRotation(ctx, 5*time.Millisecond, time.Millisecond, func(ctx context.Context) error {
 		if calls.Add(1) >= 2 {
 			cancel()
 			return nil
@@ -135,6 +132,33 @@ func TestRunWithSessionRotationRestartsAfterMaxDuration(t *testing.T) {
 	}
 	if got := calls.Load(); got < 2 {
 		t.Fatalf("run calls = %d, want at least 2", got)
+	}
+}
+
+func TestPrepareRunConfigAppliesDefaultsThenValidates(t *testing.T) {
+	RegisterDefaults()
+	cfg, err := prepareRunConfig(Config{
+		Mode:      ModeSrv,
+		Transport: transportVP8,
+		Auth:      "telemost",
+		RoomID:    "room-1",
+		KeyHex:    "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+		DNSServer: "8.8.8.8:53",
+	})
+	if err != nil {
+		t.Fatalf("prepareRunConfig() error = %v", err)
+	}
+	if cfg.VP8.FPS != defaultVP8FPS || cfg.VP8.BatchSize != defaultVP8BatchSize {
+		t.Fatalf("VP8 defaults = %+v", cfg.VP8)
+	}
+	if cfg.LivenessInterval == "" || cfg.LivenessTimeout == "" || cfg.LivenessFailures == 0 {
+		t.Fatalf("liveness defaults = %+v", cfg)
+	}
+	if _, err := prepareRunConfig(Config{}); !errors.Is(err, ErrModeRequired) {
+		t.Fatalf("prepareRunConfig(empty) error = %v, want %v", err, ErrModeRequired)
+	}
+	if err := Run(context.Background(), Config{}); !errors.Is(err, ErrModeRequired) {
+		t.Fatalf("Run(empty) error = %v, want %v", err, ErrModeRequired)
 	}
 }
 

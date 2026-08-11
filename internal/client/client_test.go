@@ -19,8 +19,8 @@ import (
 	cryptopkg "github.com/openlibrecommunity/olcrtc/internal/crypto"
 	"github.com/openlibrecommunity/olcrtc/internal/muxconn"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
-	tunnel "github.com/openlibrecommunity/olcrtc/internal/server"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
+	"github.com/openlibrecommunity/olcrtc/internal/tunnelcore"
 )
 
 var errUnexpectedConnectRequest = errors.New("unexpected connect request")
@@ -32,7 +32,7 @@ const (
 
 func TestSetupCipher(t *testing.T) {
 	keyHex := "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
-	cipher, err := setupCipher(keyHex)
+	cipher, err := tunnelcore.SetupCipher("client", keyHex)
 	if err != nil {
 		t.Fatalf("setupCipher() error = %v", err)
 	}
@@ -42,10 +42,10 @@ func TestSetupCipher(t *testing.T) {
 }
 
 func TestSetupCipherRejectsBadInput(t *testing.T) {
-	if _, err := setupCipher("zz"); err == nil {
+	if _, err := tunnelcore.SetupCipher("client", "zz"); err == nil {
 		t.Fatal("setupCipher() unexpectedly succeeded for bad hex")
 	}
-	if _, err := setupCipher("00"); !errors.Is(err, ErrKeySize) {
+	if _, err := tunnelcore.SetupCipher("client", "00"); !errors.Is(err, ErrKeySize) {
 		t.Fatalf("setupCipher() error = %v, want ErrKeySize", err)
 	}
 }
@@ -442,24 +442,24 @@ func TestSendConnectRequestOverSmux(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		stream, err := serverSess.AcceptStream()
-		if err != nil {
-			done <- err
+		stream, acceptErr := serverSess.AcceptStream()
+		if acceptErr != nil {
+			done <- acceptErr
 			return
 		}
 		defer func() { _ = stream.Close() }()
 
 		var req map[string]any
-		if err := json.NewDecoder(stream).Decode(&req); err != nil {
-			done <- err
+		if decodeErr := json.NewDecoder(stream).Decode(&req); decodeErr != nil {
+			done <- decodeErr
 			return
 		}
 		if req["cmd"] != testConnectCommand || req["addr"] != testConnectHost {
 			done <- errUnexpectedConnectRequest
 			return
 		}
-		_, err = stream.Write([]byte{0x00})
-		done <- err
+		_, writeErr := stream.Write([]byte{0x00})
+		done <- writeErr
 	}()
 
 	stream, err := clientSess.OpenStream()
@@ -495,8 +495,8 @@ func TestSendConnectRequestRejectsBadAck(t *testing.T) {
 	defer func() { _ = clientSess.Close() }()
 
 	go func() {
-		stream, err := serverSess.AcceptStream()
-		if err != nil {
+		stream, acceptErr := serverSess.AcceptStream()
+		if acceptErr != nil {
 			return
 		}
 		defer func() { _ = stream.Close() }()
@@ -635,7 +635,7 @@ func TestShutdownClosesLinkAndConn(t *testing.T) {
 func TestResetLinkPeer(t *testing.T) {
 	ln := &closerLinkStub{}
 	c := &Client{ln: ln}
-	c.resetLinkPeer()
+	tunnelcore.ResetPeer(c.ln)
 	if ln.resetCount != 1 {
 		t.Fatalf("ResetPeer calls = %d, want 1", ln.resetCount)
 	}
@@ -661,8 +661,8 @@ func TestStartControlLoopReportsPong(t *testing.T) {
 
 	peerStreamCh := make(chan *smux.Stream, 1)
 	go func() {
-		stream, err := serverSess.AcceptStream()
-		if err == nil {
+		stream, acceptErr := serverSess.AcceptStream()
+		if acceptErr == nil {
 			peerStreamCh <- stream
 		}
 	}()
@@ -677,7 +677,7 @@ func TestStartControlLoopReportsPong(t *testing.T) {
 	defer cancel()
 	got := make(chan control.Health, 1)
 	c := &Client{sessionID: "sid-control", health: runtime.NewHealthTracker(nil)}
-	c.recordSession("sid-control")
+	c.health.RecordSession("sid-control")
 	c.startControlLoop(ctx, Config{
 		Liveness: control.Config{
 			Interval: 10 * time.Millisecond,
@@ -763,10 +763,10 @@ func TestWatchControlStalenessNotifiesTransport(t *testing.T) {
 func TestStatusRecordsReconnectAndUnhealthy(t *testing.T) {
 	updates := 0
 	c := &Client{health: runtime.NewHealthTracker(func(control.Status) { updates++ })}
-	c.recordSession("sid-1")
-	c.recordMissed(2)
-	c.recordUnhealthy(3)
-	c.recordReconnect()
+	c.health.RecordSession("sid-1")
+	c.health.RecordMissed(2)
+	c.health.RecordUnhealthy(3)
+	c.health.RecordReconnect()
 
 	status := c.Status()
 	if status.SessionID != "sid-1" || status.MissedPongs != 3 ||
@@ -843,7 +843,7 @@ func TestReadSocks5AddrIPv6ReadError(t *testing.T) {
 // matching SOCKS5 reply. 0x05 is not emitted by today's server but pins the
 // pass-through, so a future code is not silently flattened.
 func TestSendConnectRequestMapsNegativeAck(t *testing.T) {
-	for _, ack := range []byte{tunnel.ConnectAckHostUnreachable, 0x05} {
+	for _, ack := range []byte{tunnelcore.ConnectAckHostUnreachable, 0x05} {
 		elapsed, err := connectWithAck(t, ack)
 		if !errors.Is(err, ErrRemoteNotReady) {
 			t.Fatalf("ack=0x%02x: sendConnectRequest() error = %v, want %v", ack, err, ErrRemoteNotReady)

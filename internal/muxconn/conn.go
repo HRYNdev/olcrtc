@@ -442,7 +442,7 @@ func (c *Conn) waitSendReady() error {
 // queued inbound buffer to the pool. Frames still sitting in the queue are
 // dropped: the caller asked to tear the conn down, and holding pooled
 // buffers alive past that only costs the pool its warm working set.
-func (c *Conn) Close() error {
+func (c *Conn) Close() error { //nolint:unparam // io.Closer requires an error result
 	c.closeOnce.Do(func() {
 		c.closed.Store(true)
 		close(c.closeCh)

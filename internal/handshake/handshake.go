@@ -159,9 +159,9 @@ func Server(rw io.ReadWriter, auth AuthFunc) (Hello, string, error) {
 	}
 
 	var h Hello
-	if err := json.Unmarshal(raw, &h); err != nil {
+	if parseErr := json.Unmarshal(raw, &h); parseErr != nil {
 		_ = writeFrame(rw, Reject{Version: ProtoVersion, Type: TypeReject, Reason: "malformed hello"})
-		return Hello{}, "", fmt.Errorf("parse hello: %w", err)
+		return Hello{}, "", fmt.Errorf("parse hello: %w", parseErr)
 	}
 	if h.Type != TypeHello {
 		_ = writeFrame(rw, Reject{Version: ProtoVersion, Type: TypeReject, Reason: "expected CLIENT_HELLO"})
