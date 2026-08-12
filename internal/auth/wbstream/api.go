@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/openlibrecommunity/olcrtc/internal/auth"
 )
@@ -82,7 +83,7 @@ func (p Provider) registerGuest(ctx context.Context, client *http.Client, displa
 }
 
 func (p Provider) joinRoom(ctx context.Context, client *http.Client, accessToken, roomID string) error {
-	u := fmt.Sprintf("%s/api-room/api/v1/room/%s/join", p.apiURL(), roomID)
+	u := fmt.Sprintf("%s/api-room/api/v1/room/%s/join", p.apiURL(), url.PathEscape(roomID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader([]byte("{}")))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
@@ -100,7 +101,7 @@ func (p Provider) joinRoom(ctx context.Context, client *http.Client, accessToken
 func (p Provider) getToken(
 	ctx context.Context, client *http.Client, accessToken, roomID, displayName string,
 ) (tokenResponse, error) {
-	u := fmt.Sprintf("%s/api-room-manager/v2/room/%s/connection-details", p.apiURL(), roomID)
+	u := fmt.Sprintf("%s/api-room-manager/v2/room/%s/connection-details", p.apiURL(), url.PathEscape(roomID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
 		return tokenResponse{}, fmt.Errorf("create request: %w", err)

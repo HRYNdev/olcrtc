@@ -3,14 +3,21 @@ package auth
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/openlibrecommunity/olcrtc/internal/protect"
 )
 
-// statusBodyLimit bounds how much of an upstream error body is echoed back
-// in the returned error.
-const statusBodyLimit = 4096
+const (
+	// statusBodyLimit bounds how much of an upstream error body is echoed
+	// back in the returned error.
+	statusBodyLimit = 4096
+	// successBodyLimit bounds a JSON success body. Error bodies were already
+	// bounded; a provider that answers 200 with an endless stream would
+	// otherwise be decoded until the process ran out of memory.
+	successBodyLimit = 8 << 20
+)
 
 // DoJSON sends req on client and decodes a JSON success body into T.
 //
@@ -30,7 +37,7 @@ func DoJSON[T any](client *http.Client, req *http.Request, sentinel error) (T, e
 	if resp.StatusCode != http.StatusOK {
 		return out, fmt.Errorf("status: %w", protect.StatusError(sentinel, resp, statusBodyLimit))
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, successBodyLimit)).Decode(&out); err != nil {
 		return out, fmt.Errorf("decode response: %w", err)
 	}
 	return out, nil
