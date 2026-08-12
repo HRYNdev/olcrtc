@@ -36,6 +36,7 @@ func TestInboundAssemblyAndAck(t *testing.T) {
 		TotalLen:  uint32(len(payload)), //nolint:gosec // G115: bounded conversion verified by surrounding logic
 		FragIdx:   1,
 		FragTotal: 2,
+		FragCRC:   crc32.ChecksumIEEE([]byte(" world")),
 		Payload:   []byte(" world"),
 	})
 	if len(got) != 0 {
@@ -52,6 +53,7 @@ func TestInboundAssemblyAndAck(t *testing.T) {
 		TotalLen:  uint32(len(payload)), //nolint:gosec // G115: bounded conversion verified by surrounding logic
 		FragIdx:   0,
 		FragTotal: 2,
+		FragCRC:   crc32.ChecksumIEEE([]byte("hello")),
 		Payload:   []byte("hello"),
 	})
 	if !bytes.Equal(got, payload) {
@@ -68,6 +70,7 @@ func TestInboundAssemblyAndAck(t *testing.T) {
 		TotalLen:  uint32(len(payload)), //nolint:gosec // G115: bounded conversion verified by surrounding logic
 		FragIdx:   0,
 		FragTotal: 2,
+		FragCRC:   crc32.ChecksumIEEE([]byte("hello")),
 		Payload:   []byte("hello"),
 	})
 	if got != nil {
@@ -103,6 +106,7 @@ func TestInboundRejectsBadCRC(t *testing.T) {
 		TotalLen:  3,
 		FragIdx:   0,
 		FragTotal: 1,
+		FragCRC:   crc32.ChecksumIEEE([]byte("abc")),
 		Payload:   []byte("abc"),
 	})
 	if called {

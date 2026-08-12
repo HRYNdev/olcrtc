@@ -175,9 +175,10 @@ func PerAttemptAckTimeout(fragments, batchSize int, frameInterval, floor time.Du
 }
 
 // DeliverFragment pushes an inbound data fragment into r and acknowledges it.
-// Every fragment that decodes is acked, duplicates included: under
-// retransmission the sender may have lost the earlier ack and is waiting on
-// this one. Only a malformed or out-of-range fragment stays silent.
+// Every fragment that decodes and passes its own checksum is acked, duplicates
+// included: under retransmission the sender may have lost the earlier ack and
+// is waiting on this one. A malformed, out-of-range or corrupted fragment stays
+// silent so the sender retransmits exactly that fragment.
 func DeliverFragment(r *Reassembler, frame Frame, onData func([]byte), ack func(seq, crc uint32, fragIdx uint16)) {
 	result, data := r.Push(Fragment{
 		Seq:       frame.Seq,
@@ -185,6 +186,7 @@ func DeliverFragment(r *Reassembler, frame Frame, onData func([]byte), ack func(
 		TotalLen:  frame.TotalLen,
 		FragIdx:   frame.FragIdx,
 		FragTotal: frame.FragTotal,
+		FragCRC:   frame.FragCRC,
 		Payload:   frame.Payload,
 	})
 
@@ -197,6 +199,8 @@ func DeliverFragment(r *Reassembler, frame Frame, onData func([]byte), ack func(
 	case ResultPartial, ResultDuplicate:
 		ack(frame.Seq, frame.CRC, frame.FragIdx)
 	case ResultIgnore:
-		// Malformed or out of range; nothing to acknowledge.
+		// Malformed, out of range or corrupted; acknowledging it here is
+		// exactly what would lose the message, so stay silent and let the
+		// sender retransmit.
 	}
 }

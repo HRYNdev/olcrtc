@@ -53,7 +53,7 @@ func TestReassemblerStressShuffledFragments(t *testing.T) {
 				FragIdx:   uint16(idx),
 				FragTotal: uint16(len(raw)), //nolint:gosec // bounded
 				Payload:   frag,
-			})
+			}.WithPayloadCRC())
 			// 20% duplicate injection
 			if rng.Float64() < 0.20 {
 				allDrops = append(allDrops, pl.frags[len(pl.frags)-1])
@@ -139,7 +139,7 @@ func TestReassemblerConcurrentPushIsSafe(t *testing.T) {
 						FragIdx:   uint16(idx),      //nolint:gosec // bounded
 						FragTotal: uint16(len(raw)), //nolint:gosec // bounded
 						Payload:   raw[idx],
-					})
+					}.WithPayloadCRC())
 				}
 			}
 		})

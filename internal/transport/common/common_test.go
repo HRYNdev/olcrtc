@@ -48,7 +48,7 @@ func TestReassemblerDeliveredAndDuplicate(t *testing.T) {
 			FragIdx:   uint16(i),
 			FragTotal: uint16(len(frags)), //nolint:gosec // bounded test fixture
 			Payload:   frag,
-		})
+		}.WithPayloadCRC())
 		if i < len(frags)-1 {
 			if result != common.ResultPartial {
 				t.Fatalf("Push(%d) result = %v, want Partial", i, result)
@@ -68,7 +68,7 @@ func TestReassemblerDeliveredAndDuplicate(t *testing.T) {
 		FragIdx:   uint16(len(frags) - 1), //nolint:gosec // bounded test fixture
 		FragTotal: uint16(len(frags)),     //nolint:gosec // bounded test fixture
 		Payload:   frags[len(frags)-1],
-	})
+	}.WithPayloadCRC())
 	if result != common.ResultDuplicate {
 		t.Fatalf("dup push result = %v, want Duplicate", result)
 	}
@@ -85,7 +85,7 @@ func TestReassemblerIgnoresCRCMismatch(t *testing.T) {
 		FragIdx:   0,
 		FragTotal: uint16(len(frags)), //nolint:gosec // bounded test fixture
 		Payload:   frags[0],
-	})
+	}.WithPayloadCRC())
 	if result != common.ResultDelivered {
 		// single-fragment path: assemble fires immediately, CRC check fails, ignore.
 		if result != common.ResultIgnore {

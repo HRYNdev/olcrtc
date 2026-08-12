@@ -3,6 +3,7 @@ package common
 import (
 	"encoding/binary"
 	"errors"
+	"hash/crc32"
 )
 
 // Wire format of the ack-based video transports (seichannel, videochannel).
@@ -24,16 +25,25 @@ import (
 //	[15:19] crc32 of the whole message
 //
 //	ack:  [19:21] fragIdx
-//	data: [19:23] totalLen, [23:25] fragIdx, [25:27] fragTotal, [27:] payload
+//	data: [19:23] totalLen, [23:25] fragIdx, [25:27] fragTotal,
+//	      [27:31] crc32 of this fragment, [31:] payload
 //
 // fragIdx is present on acks so a receiver acknowledges each fragment of a
 // multi-fragment message independently and the sender retransmits only what
 // was actually lost.
+//
+// The per-fragment crc32 exists because acks are per fragment while the
+// message crc can only be checked once every fragment has arrived. Without
+// it, a fragment corrupted past ECC recovery is acknowledged on arrival, the
+// sender counts the message as delivered, and the receiver silently drops it
+// when the message crc finally fails - the fragment the sender would have to
+// resend was already acked. Validating each fragment on arrival keeps the ack
+// honest: a damaged fragment is never acknowledged and is simply retransmitted.
 const (
 	// FrameMagic is the shared magic ("OLVC").
 	FrameMagic uint32 = 0x4f4c5643
 	// FrameVersion is the current wire version.
-	FrameVersion byte = 4
+	FrameVersion byte = 5
 
 	// FrameTypeData carries one fragment of a message.
 	FrameTypeData byte = 1
@@ -62,7 +72,8 @@ const (
 	frameTotalLenOff = 19
 	frameFragIdxOff  = 23
 	frameFragTotOff  = 25
-	frameDataHdrLen  = 27
+	frameFragCRCOff  = 27
+	frameDataHdrLen  = 31
 )
 
 var (
@@ -109,7 +120,10 @@ type Frame struct {
 	TotalLen  uint32
 	FragIdx   uint16
 	FragTotal uint16
-	Payload   []byte
+	// FragCRC is the crc32 of Payload alone, checked before the fragment is
+	// stored or acknowledged.
+	FragCRC uint32
+	Payload []byte
 }
 
 // AcceptedBy reports whether a receiver expecting remoteRole and holding
@@ -143,7 +157,8 @@ func EncodeData(
 	binary.BigEndian.PutUint32(out[frameCRCOff:frameTotalLenOff], crc)
 	binary.BigEndian.PutUint32(out[frameTotalLenOff:frameFragIdxOff], uint32(totalLen)) //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
 	binary.BigEndian.PutUint16(out[frameFragIdxOff:frameFragTotOff], uint16(fragIdx))   //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
-	binary.BigEndian.PutUint16(out[frameFragTotOff:frameDataHdrLen], uint16(fragTotal)) //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
+	binary.BigEndian.PutUint16(out[frameFragTotOff:frameFragCRCOff], uint16(fragTotal)) //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
+	binary.BigEndian.PutUint32(out[frameFragCRCOff:frameDataHdrLen], crc32.ChecksumIEEE(payload))
 	copy(out[frameDataHdrLen:], payload)
 	return out
 }
@@ -237,7 +252,8 @@ func decodeDataBody(frame Frame, data []byte) (Frame, error) {
 	frame.CRC = binary.BigEndian.Uint32(data[frameCRCOff:frameTotalLenOff])
 	frame.TotalLen = binary.BigEndian.Uint32(data[frameTotalLenOff:frameFragIdxOff])
 	frame.FragIdx = binary.BigEndian.Uint16(data[frameFragIdxOff:frameFragTotOff])
-	frame.FragTotal = binary.BigEndian.Uint16(data[frameFragTotOff:frameDataHdrLen])
+	frame.FragTotal = binary.BigEndian.Uint16(data[frameFragTotOff:frameFragCRCOff])
+	frame.FragCRC = binary.BigEndian.Uint32(data[frameFragCRCOff:frameDataHdrLen])
 	frame.Payload = data[frameDataHdrLen:]
 	return frame, nil
 }

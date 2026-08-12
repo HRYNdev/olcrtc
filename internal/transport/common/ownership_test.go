@@ -86,6 +86,7 @@ func frameFragment(frame Frame) Fragment {
 		TotalLen:  frame.TotalLen,
 		FragIdx:   frame.FragIdx,
 		FragTotal: frame.FragTotal,
+		FragCRC:   frame.FragCRC,
 		Payload:   frame.Payload,
 	}
 }

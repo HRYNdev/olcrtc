@@ -47,7 +47,7 @@ func BenchmarkFragmentPayloadReassembler12KiB(b *testing.B) {
 				FragIdx:   uint16(idx),
 				FragTotal: commonBenchmarkFragTotal,
 				Payload:   fragment,
-			})
+			}.WithPayloadCRC())
 			if idx == len(fragments)-1 && (result != ResultDelivered || len(data) != len(payload)) {
 				b.Fatalf("final Push() = (%v, %d bytes)", result, len(data))
 			}
