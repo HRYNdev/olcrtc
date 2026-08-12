@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 
 	"github.com/xtaci/smux"
 
@@ -26,6 +27,7 @@ var (
 	ErrKeySize             = runtime.ErrKeySize
 	ErrSocks5AuthFailed    = errors.New("SOCKS5 auth failed")
 	ErrSocks5ConnectFailed = errors.New("SOCKS5 connect failed")
+	ErrInvalidTarget       = errors.New("invalid connect target")
 )
 
 // SessionOpenFunc is called after a successful handshake.
@@ -57,16 +59,18 @@ type Server struct {
 	sessMu      sync.RWMutex
 
 	peerSessions map[string]*peerSession
-	peersMu      sync.Mutex
-	peerStats    map[string]peerStat
-	reinstallMu  sync.Mutex
-	wg           sync.WaitGroup
-	authHook     handshake.AuthFunc
-	onOpen       SessionOpenFunc
-	onClose      SessionCloseFunc
-	onTraffic    TrafficFunc
-	deviceID     string
-	sessionID    string
+	// peerLimitWarn rate-limits the peer-cap warning.
+	peerLimitWarn atomic.Int64
+	peersMu       sync.Mutex
+	peerStats     map[string]peerStat
+	reinstallMu   sync.Mutex
+	wg            sync.WaitGroup
+	authHook      handshake.AuthFunc
+	onOpen        SessionOpenFunc
+	onClose       SessionCloseFunc
+	onTraffic     TrafficFunc
+	deviceID      string
+	sessionID     string
 
 	dnsServer      string
 	resolver       *net.Resolver

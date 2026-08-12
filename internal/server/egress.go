@@ -14,11 +14,30 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/tunnelcore"
 )
 
+// socksHandshakeTimeout bounds the upstream SOCKS5 negotiation. The proxy is
+// not ours: without a deadline a hung or hostile one parks this goroutine and
+// its file descriptor for the process lifetime, and shutdown waits on it.
+const socksHandshakeTimeout = 15 * time.Second
+
 // ConnectRequest asks the server to establish a target connection.
 type ConnectRequest struct {
 	Cmd  string `json:"cmd"`
 	Addr string `json:"addr"`
 	Port int    `json:"port"`
+}
+
+// validate rejects targets that would resolve to something the peer did not
+// ask for. An empty host is the important one: net.JoinHostPort("", "80")
+// yields ":80", which Go dials as the local machine, so a malformed request
+// would turn the exit node into a proxy onto its own loopback.
+func (r ConnectRequest) validate() error {
+	if r.Addr == "" {
+		return fmt.Errorf("%w: empty host", ErrInvalidTarget)
+	}
+	if r.Port <= 0 || r.Port > 65535 {
+		return fmt.Errorf("%w: port %d", ErrInvalidTarget, r.Port)
+	}
+	return nil
 }
 
 func (s *Server) dispatch(ctx context.Context, stream *smux.Stream, request ConnectRequest, sessionID string) {
@@ -44,6 +63,9 @@ func (s *Server) dispatch(ctx context.Context, stream *smux.Stream, request Conn
 }
 
 func (s *Server) dial(request ConnectRequest) (net.Conn, error) {
+	if err := request.validate(); err != nil {
+		return nil, err
+	}
 	addr := net.JoinHostPort(request.Addr, strconv.Itoa(request.Port))
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second, Resolver: s.resolver}
 	if s.socksProxyAddr == "" {
@@ -66,6 +88,8 @@ func (s *Server) dial(request ConnectRequest) (net.Conn, error) {
 }
 
 func (s *Server) socks5Connect(conn net.Conn, targetAddr string, targetPort int) error {
+	_ = conn.SetDeadline(time.Now().Add(socksHandshakeTimeout))
+	defer func() { _ = conn.SetDeadline(time.Time{}) }()
 	if err := s.socks5Authenticate(conn); err != nil {
 		return err
 	}

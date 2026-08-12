@@ -52,11 +52,7 @@ func (s *Server) bringUpLink(ctx context.Context, cfg Config, cancel context.Can
 	}
 	logger.Infof("Link connected")
 	s.logPeersLine()
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		ln.WatchConnection(ctx)
-	}()
+	s.goTracked(func() { ln.WatchConnection(ctx) })
 	return nil
 }
 
@@ -74,7 +70,8 @@ func (s *Server) installSession() {
 	s.sessMu.Unlock()
 	s.state.broadcast()
 	if pair.HasIsolatedControl() {
-		go s.acceptSingletonHandshake(s.baseCtx, pair.ControlSession)
+		control := pair.ControlSession
+		s.goTracked(func() { s.acceptSingletonHandshake(s.baseCtx, control) })
 	}
 }
 
@@ -95,7 +92,7 @@ func (s *Server) installControlSession(ctx context.Context) {
 	s.controlConn = conn
 	s.controlSess = session
 	s.sessMu.Unlock()
-	go s.acceptSingletonHandshake(ctx, session)
+	s.goTracked(func() { s.acceptSingletonHandshake(ctx, session) })
 }
 
 func (s *Server) handleReconnect(ctx context.Context) {
@@ -142,7 +139,8 @@ func (s *Server) reinstallSession(ctx context.Context, dead *smux.Session) {
 		return
 	}
 	if replacement.HasIsolatedControl() {
-		go s.acceptSingletonHandshake(ctx, replacement.ControlSession)
+		control := replacement.ControlSession
+		s.goTracked(func() { s.acceptSingletonHandshake(ctx, control) })
 	}
 }
 

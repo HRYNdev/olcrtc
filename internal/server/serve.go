@@ -85,11 +85,7 @@ func (s *Server) serveSingle(ctx context.Context) {
 			}
 			continue
 		}
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			s.handleStream(ctx, stream, s.currentSessionID())
-		}()
+		s.goTracked(func() { s.handleStream(ctx, stream, s.currentSessionID()) })
 	}
 }
 

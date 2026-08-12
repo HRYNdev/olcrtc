@@ -20,6 +20,24 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/tunnelcore"
 )
 
+const (
+	// maxPeerSessions bounds how many per-peer stacks the server holds at
+	// once. Peer IDs come from the transport before anything is decrypted,
+	// so any participant in the room can mint them: each new ID otherwise
+	// costs a muxconn, an smux session and two goroutines that nothing
+	// reclaims until a handshake that never comes.
+	maxPeerSessions = 128
+
+	// peerHandshakeTimeout bounds how long a peer session may sit waiting
+	// for its handshake before it is released. A peer that reappears simply
+	// gets a fresh session built on its next frame.
+	peerHandshakeTimeout = 4 * handshake.DefaultTimeout
+
+	// peerLimitWarnInterval rate-limits the peer-cap warning so a flood of
+	// bogus peer IDs cannot turn the log into the outage.
+	peerLimitWarnInterval = time.Minute
+)
+
 type peerStat struct {
 	deviceID string
 	openedAt time.Time
@@ -181,6 +199,10 @@ func (s *Server) getOrCreatePeerControlSession(peerID string) *peerSession {
 			return peer
 		}
 	} else {
+		if !s.mayAdmitPeerLocked(nil) {
+			s.sessMu.Unlock()
+			return nil
+		}
 		peer = newPeerSession(peerID, true)
 	}
 	conn := muxconn.NewPeerControlUnbound(s.ln, s.keys, peerID)
@@ -207,13 +229,57 @@ func (s *Server) getOrCreatePeerControlSession(peerID string) *peerSession {
 	s.sessMu.Unlock()
 	logger.Infof("server: peer control session created peerID=%s", peerID)
 	peer.startHandshake(func() {
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			s.acceptPeerHandshake(s.streamContext(), peer)
-		}()
+		s.goTracked(func() { s.acceptPeerHandshake(s.streamContext(), peer) })
 	})
 	return peer
+}
+
+// mayAdmitPeerLocked reports whether a new per-peer stack may be built.
+// Callers hold sessMu, the same lock closeSession takes to swap the peer map
+// out, so a peer admitted here is always one teardown will see - and a peer
+// arriving after teardown is refused instead of leaking a goroutine that
+// outlives wg.Wait.
+func (s *Server) mayAdmitPeerLocked(existing *peerSession) bool {
+	if s.stopping() {
+		return false
+	}
+	if existing != nil {
+		return true
+	}
+	if len(s.peerSessions) >= maxPeerSessions {
+		s.warnPeerLimit()
+		return false
+	}
+	return true
+}
+
+func (s *Server) warnPeerLimit() {
+	now := time.Now().UnixNano()
+	last := s.peerLimitWarn.Load()
+	if now-last < int64(peerLimitWarnInterval) {
+		return
+	}
+	if !s.peerLimitWarn.CompareAndSwap(last, now) {
+		return
+	}
+	logger.Warnf("server: peer session limit %d reached - refusing new peers", maxPeerSessions)
+}
+
+// goTracked runs fn on a goroutine shutdown waits for. Registration happens
+// under sessMu, which shutdown also takes before wg.Wait, so wg.Add can never
+// race a Wait that has already started.
+func (s *Server) goTracked(fn func()) {
+	s.sessMu.Lock()
+	if s.stopping() {
+		s.sessMu.Unlock()
+		return
+	}
+	s.wg.Add(1)
+	s.sessMu.Unlock()
+	go func() {
+		defer s.wg.Done()
+		fn()
+	}()
 }
 
 func (s *Server) onPeerData(peerID string, data []byte) {
@@ -235,6 +301,10 @@ func (s *Server) getPeerSession(peerID string) *peerSession {
 		s.sessMu.Unlock()
 		return peer
 	}
+	if !s.mayAdmitPeerLocked(peer) {
+		s.sessMu.Unlock()
+		return nil
+	}
 	conn := muxconn.NewPeer(s.peerLn, s.keys, peerID)
 	session, err := tunnelcore.NewSession(conn, tunnelcore.ServerRole, runtime.SmuxConfigFor(s.ln))
 	if err != nil {
@@ -255,11 +325,7 @@ func (s *Server) getPeerSession(peerID string) *peerSession {
 		return peer
 	}
 	s.sessMu.Unlock()
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		s.servePeer(peer)
-	}()
+	s.goTracked(func() { s.servePeer(peer) })
 	return peer
 }
 
@@ -317,12 +383,10 @@ func (s *Server) startPeerControlLoop(ctx context.Context, peer *peerSession, st
 		LogFields: func() string { return "role=server peer=" + peer.peerID },
 		OnDeath:   func(error) { s.removePeer(peer, "liveness") },
 	}
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
+	s.goTracked(func() {
 		defer func() { _ = stream.Close() }()
 		runner.Run(controlCtx, stream)
-	}()
+	})
 }
 
 func (s *Server) servePeer(peer *peerSession) {
@@ -347,11 +411,7 @@ func (s *Server) servePeer(peer *peerSession) {
 			}
 			return
 		}
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			s.handleStream(ctx, stream, sessionID)
-		}()
+		s.goTracked(func() { s.handleStream(ctx, stream, sessionID) })
 	}
 }
 
@@ -384,13 +444,24 @@ func (s *Server) establishPeerSession(peer *peerSession) bool {
 	return true
 }
 
+// waitPeerHandshake blocks until the peer's control-plane handshake lands.
+// The wait is bounded: an unauthenticated peer that never handshakes would
+// otherwise pin its whole session stack until the server stops, and a peer
+// that comes back simply gets a fresh session built on its next frame.
 func (s *Server) waitPeerHandshake(peer *peerSession) bool {
 	if peer.sessionReady == nil {
 		return false
 	}
+	timer := time.NewTimer(peerHandshakeTimeout)
+	defer timer.Stop()
 	select {
 	case <-peer.sessionReady:
 		return peer.sid() != ""
+	case <-timer.C:
+		logger.Infof("server: peer %s did not handshake within %s - releasing session",
+			peer.peerID, peerHandshakeTimeout)
+		s.removePeer(peer, "handshake timeout")
+		return false
 	case <-s.done:
 		s.removePeer(peer, "closed")
 		return false
