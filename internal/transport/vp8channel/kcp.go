@@ -170,6 +170,15 @@ type kcpPlane struct {
 	out    chan *packetBuffer
 	onData func([]byte)
 
+	// lifecycleMu serializes start/restart/close. Without it two concurrent
+	// restarts - a provider reconnect and an upper-layer ResetPeer fire
+	// together during recovery - both build a runtime and the loser is
+	// overwritten in place, stranding its goroutines and KCP windows for the
+	// lifetime of the process. mu stays narrow: it only guards the pointer
+	// read on the send hot path.
+	lifecycleMu sync.Mutex
+	closed      bool
+
 	mu   sync.RWMutex
 	rt   *kcpRuntime
 	once sync.Once
@@ -202,7 +211,13 @@ func (p *kcpPlane) start(hdr [epochHdrLen]byte) (bool, error) {
 		err     error
 	)
 
+	p.lifecycleMu.Lock()
+	defer p.lifecycleMu.Unlock()
+
 	p.once.Do(func() {
+		if p.closed {
+			return
+		}
 		var rt *kcpRuntime
 		rt, err = startKCP(p.out, p.onData, hdr)
 		if err != nil {
@@ -218,6 +233,13 @@ func (p *kcpPlane) start(hdr [epochHdrLen]byte) (bool, error) {
 // restart drops queued packets and replaces the KCP state machine with a
 // fresh one stamped with hdr.
 func (p *kcpPlane) restart(hdr [epochHdrLen]byte) {
+	p.lifecycleMu.Lock()
+	defer p.lifecycleMu.Unlock()
+
+	if p.closed {
+		return
+	}
+
 	p.drain()
 
 	p.mu.Lock()
@@ -249,6 +271,11 @@ func (p *kcpPlane) drain() {
 }
 
 func (p *kcpPlane) close() {
+	p.lifecycleMu.Lock()
+	defer p.lifecycleMu.Unlock()
+
+	p.closed = true
+
 	if rt := p.get(); rt != nil {
 		rt.close()
 	}

@@ -18,13 +18,12 @@ type Options struct {
 // TransportOptions marks Options as belonging to the transport options family.
 func (Options) TransportOptions() {}
 
-// withDefaults fills unset Options fields with the package defaults. FPS in
-// particular must never stay zero: the writer loop derives its ticker period
-// from it and a zero divides by zero.
+// withDefaults fills unset Options fields with the package defaults. FPS is
+// clamped rather than merely defaulted: the writer loop derives its ticker
+// period from it, and both a zero and an absurdly large value produce a
+// zero-length tick.
 func (o Options) withDefaults() Options {
-	if o.FPS <= 0 {
-		o.FPS = defaultFPS
-	}
+	o.FPS = transport.NormalizeFPS(o.FPS, defaultFPS)
 	if o.BatchSize <= 0 {
 		o.BatchSize = defaultBatchSize
 	}

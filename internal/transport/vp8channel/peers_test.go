@@ -17,7 +17,7 @@ func newStubPeerSession(t *testing.T, epoch uint32) *peerSession {
 		t.Fatalf("startKCP() error = %v", err)
 	}
 
-	return &peerSession{epoch: epoch, data: rt, out: out}
+	return newPeerSession(epoch, rt, out)
 }
 
 func TestPeerTableZeroValueIsUsable(t *testing.T) {
@@ -71,8 +71,12 @@ func TestPeerTableSweepEvictsIdleSessions(t *testing.T) {
 		t.Fatalf("get(2) = %v, want the fresh session", got)
 	}
 
-	if _, ok := <-idle.out; ok {
-		t.Fatal("evicted session left its writer queue open")
+	// The queue itself stays open (kcp-go can still be writing into it);
+	// the pump is stopped through done instead.
+	select {
+	case <-idle.done:
+	default:
+		t.Fatal("evicted session did not stop its writer pump")
 	}
 
 	table.closeAll()

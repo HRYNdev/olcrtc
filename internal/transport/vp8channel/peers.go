@@ -36,6 +36,14 @@ type peerSession struct {
 	epoch uint32
 	data  *kcpRuntime
 	out   chan *packetBuffer
+	// done stops the writer pump. The queue itself is deliberately never
+	// closed: kcp-go keeps a postProcess goroutine draining its transmit
+	// queue after UDPSession.Close returns, so it can still be parked in
+	// kcpConn.WriteTo's `case c.out <- packet`. Closing out there turns that
+	// select case into a ready send on a closed channel, which panics as
+	// soon as the scheduler picks it - a coin flip on every teardown.
+	done      chan struct{}
+	closeOnce sync.Once
 
 	controlMu sync.Mutex
 	control   *kcpRuntime
@@ -45,6 +53,11 @@ type peerSession struct {
 }
 
 // controlRuntime returns the peer's control KCP if one has been created.
+// newPeerSession binds a freshly started KCP runtime to its outbound queue.
+func newPeerSession(epoch uint32, data *kcpRuntime, out chan *packetBuffer) *peerSession {
+	return &peerSession{epoch: epoch, data: data, out: out, done: make(chan struct{})}
+}
+
 func (s *peerSession) controlRuntime() *kcpRuntime {
 	s.controlMu.Lock()
 	defer s.controlMu.Unlock()
@@ -57,22 +70,23 @@ func (s *peerSession) touch(now time.Time) {
 	s.lastSeen = now.UnixNano()
 }
 
-// close releases both KCP sessions and stops the writer pump by closing its
-// queue. It is safe to call more than once: kcpRuntime.close is idempotent and
-// out is only ever closed here, under the table lock.
+// close releases both KCP sessions and stops the writer pump. Safe to call
+// more than once.
 func (s *peerSession) close() {
-	s.data.close()
+	s.closeOnce.Do(func() {
+		s.data.close()
 
-	s.controlMu.Lock()
-	control := s.control
-	s.control = nil
-	s.controlMu.Unlock()
+		s.controlMu.Lock()
+		control := s.control
+		s.control = nil
+		s.controlMu.Unlock()
 
-	if control != nil {
-		control.close()
-	}
+		if control != nil {
+			control.close()
+		}
 
-	close(s.out)
+		close(s.done)
+	})
 }
 
 // peerTable tracks per-peer sessions with idle eviction. All mutation happens
@@ -231,11 +245,10 @@ func (p *streamTransport) peerSessionFor(epoch uint32) *peerSession {
 		return nil
 	}
 
-	sess := &peerSession{epoch: epoch, data: data, out: out}
+	sess := newPeerSession(epoch, data, out)
 
 	if !p.peers.add(sess) {
-		data.close()
-		close(out)
+		sess.close()
 
 		return nil
 	}
@@ -243,7 +256,7 @@ func (p *streamTransport) peerSessionFor(epoch uint32) *peerSession {
 	logger.Infof("vp8channel: peer session created epoch=0x%08x peers=%d", epoch, p.peers.len())
 
 	// Pump outbound frames from this peer's queue into the writer.
-	go p.peerWriterPump(out)
+	go p.peerWriterPump(out, sess.done)
 
 	return sess
 }

@@ -169,8 +169,8 @@ func (p *streamTransport) writerLoop() {
 // Draining on the ticker (rather than emitting each frame the instant it is
 // queued) keeps the per-peer writes interleaved with the keyframe injection
 // below and lets batchSampleFrom coalesce segments into full samples. Stops
-// when the channel is closed or the transport shuts down.
-func (p *streamTransport) peerWriterPump(out chan *packetBuffer) {
+// when the peer session is released or the transport shuts down.
+func (p *streamTransport) peerWriterPump(out chan *packetBuffer, done <-chan struct{}) {
 	ticker := time.NewTicker(p.frameInterval)
 	defer ticker.Stop()
 
@@ -195,6 +195,8 @@ func (p *streamTransport) peerWriterPump(out chan *packetBuffer) {
 	for {
 		select {
 		case <-p.closeCh:
+			return
+		case <-done:
 			return
 		case <-ticker.C:
 			ticksSinceKeyframe++
