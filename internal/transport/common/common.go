@@ -160,6 +160,19 @@ func NewReassembler(maxRecent int) *Reassembler {
 	}
 }
 
+// Reset drops all reassembly and dedup state. A provider reconnect replaces
+// the peer, so its half-assembled messages and its sequence numbering are
+// both meaningless afterwards - and a reused sequence number would otherwise
+// resolve against the previous peer's dedup window.
+func (r *Reassembler) Reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.inbound = make(map[uint32]*InboundMessage)
+	r.delivered = make(map[uint32]uint32, r.maxRecent)
+	r.previous = make(map[uint32]uint32)
+	r.addCounter = 0
+}
+
 // Result classifies what Push computed for a fragment.
 type Result int
 

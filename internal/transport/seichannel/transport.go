@@ -206,9 +206,32 @@ func (p *streamTransport) Close() error {
 	return nil
 }
 
-// SetReconnectCallback registers reconnect handling.
+// SetReconnectCallback registers reconnect handling. The peer latch and the
+// reassembly state both describe a session the reconnect just replaced, so
+// they are cleared before the upper layer runs.
 func (p *streamTransport) SetReconnectCallback(cb func()) {
-	p.stream.SetReconnectCallback(cb)
+	p.stream.SetReconnectCallback(func() {
+		p.resetPeerState()
+		if cb != nil {
+			cb()
+		}
+	})
+}
+
+// PeerResetter is satisfied so the liveness layer can drop peer state without
+// rebuilding the provider connection.
+var _ transport.PeerResetter = (*streamTransport)(nil)
+
+// ResetPeer forgets the current peer. Without it the readiness latch, which
+// only ever moved to true, kept reporting a peer that had already left: every
+// send was accepted and then quietly burned its whole retry budget.
+func (p *streamTransport) ResetPeer() {
+	p.resetPeerState()
+}
+
+func (p *streamTransport) resetPeerState() {
+	p.peerReady.Store(false)
+	p.reassembler.Reset()
 }
 
 // CanSend reports whether transport is ready for sending.
@@ -295,6 +318,12 @@ func (p *streamTransport) handleRemoteTrack(track *webrtc.TrackRemote, _ *webrtc
 }
 
 func (p *streamTransport) handleSample(sample []byte) {
+	// The track reader flushes the sample builder when the track ends, which
+	// is exactly what Close causes: without this the application receives
+	// data after Close has already returned.
+	if p.closed.Load() {
+		return
+	}
 	payloads := extractVideoPayloads(sample)
 	for _, payload := range payloads {
 		frame, err := common.DecodeFrame(payload)

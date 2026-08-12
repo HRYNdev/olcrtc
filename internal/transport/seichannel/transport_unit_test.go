@@ -224,3 +224,18 @@ func waitForFrame(t *testing.T, tr *streamTransport) ([]byte, bool) {
 
 	return nil, false
 }
+
+// TestResetPeerClearsReadiness locks in that peer readiness is not a one-way
+// latch. It only ever moved to true, so after the peer left every send was
+// accepted by CanSend and then burned its full retry budget into a session
+// that no longer existed.
+func TestResetPeerClearsReadiness(t *testing.T) {
+	tr := &streamTransport{closeCh: make(chan struct{}), reassembler: common.NewReassembler(8)}
+	tr.peerReady.Store(true)
+
+	tr.ResetPeer()
+
+	if tr.peerReady.Load() {
+		t.Fatal("ResetPeer() left the peer marked ready")
+	}
+}
