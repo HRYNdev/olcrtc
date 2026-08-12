@@ -76,11 +76,9 @@ func (s *Session) reconnect(ctx context.Context) error {
 		logger.Warnf("jitsi: rejoin failed: %v - full reconnect", err)
 		return s.reconnectFull(ctx)
 	}
-	if s.closed.Load() {
-		_ = jSess.Close()
+	if !s.installSession(jSess) {
 		return ErrSessionClosed
 	}
-	s.setJSession(jSess)
 
 	const reinitiateTimeout = 30 * time.Second
 	reinitCtx, reinitCancel := context.WithTimeout(ctx, reinitiateTimeout)
@@ -148,16 +146,13 @@ func (s *Session) reconnectFull(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("jitsi join: %w", err)
 	}
-	if s.closed.Load() {
-		_ = jSess.Close()
-		return ErrSessionClosed
-	}
-
 	bctx, bcancel := context.WithTimeout(ctx, fullReconnectTimeout)
 	_, err = jSess.Conn.WaitJingle(bctx)
 	bcancel()
 	if err != nil {
-		s.setJSession(jSess)
+		if !s.installSession(jSess) {
+			return ErrSessionClosed
+		}
 		s.goLaunch(s.waitForJingle)
 		return errNoPeer
 	}
@@ -166,9 +161,35 @@ func (s *Session) reconnectFull(ctx context.Context) error {
 		_ = jSess.Close()
 		return fmt.Errorf("jitsi setup after full reconnect: %w", err)
 	}
-	s.setJSession(jSess)
+	if !s.installSession(jSess) {
+		return ErrSessionClosed
+	}
 	s.finishReconnect(jSess, "full")
 	return nil
+}
+
+// installSession publishes jSess as the live XMPP session, or closes it when
+// Close has already run. The re-check after the store is what makes it safe:
+// a Close that lands in between saw the previous value and closed that one,
+// so whichever order the two take, exactly one of them closes jSess. Without
+// it a rejoin that spent a minute waiting for Jicofo could install a session
+// after teardown, and goLaunch then refuses the goroutines that would have
+// noticed.
+func (s *Session) installSession(jSess *j.Session) bool {
+	if s.closed.Load() {
+		_ = jSess.Close()
+		return false
+	}
+	if old := s.setJSession(jSess); old != nil && old != jSess {
+		_ = old.Close()
+	}
+	if s.closed.Load() {
+		if current := s.setJSession(nil); current != nil {
+			_ = current.Close()
+		}
+		return false
+	}
+	return true
 }
 
 func (s *Session) finishReconnect(jSess *j.Session, mode string) {

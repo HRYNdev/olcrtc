@@ -63,7 +63,7 @@ func (s *Session) Connect(ctx context.Context) error {
 	if s.onData != nil {
 		select {
 		case <-dcReady:
-			return nil
+			return s.abortIfTerminated()
 		case <-time.After(15 * time.Second):
 			return ErrDataChannelTimeout
 		case <-ctx.Done():
@@ -71,7 +71,25 @@ func (s *Session) Connect(ctx context.Context) error {
 		}
 	}
 
-	return s.waitForMediaReady(ctx, 20*time.Second)
+	if err := s.waitForMediaReady(ctx, 20*time.Second); err != nil {
+		return err
+	}
+	return s.abortIfTerminated()
+}
+
+// abortIfTerminated tears down the generation Connect just built when Close
+// ran while it was being built. Checking terminated once on entry is not
+// enough: Close can finish its teardown between that check and the point
+// where the new PeerConnections, DataChannel and WebSocket exist, and it has
+// no way to see resources that were not published yet.
+func (s *Session) abortIfTerminated() error {
+	if !s.terminated.Load() {
+		return nil
+	}
+	s.closeDataChannel()
+	s.closePeerConns()
+	s.closeWebSocket()
+	return ErrSessionClosed
 }
 
 // waitForMediaReady blocks until the subscriber PC reports Connected.

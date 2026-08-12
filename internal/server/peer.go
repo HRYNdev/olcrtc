@@ -230,8 +230,29 @@ func (s *Server) getOrCreatePeerControlSession(peerID string) *peerSession {
 	logger.Infof("server: peer control session created peerID=%s", peerID)
 	peer.startHandshake(func() {
 		s.goTracked(func() { s.acceptPeerHandshake(s.streamContext(), peer) })
+		s.goTracked(func() { s.expirePeerHandshake(peer) })
 	})
 	return peer
+}
+
+// expirePeerHandshake releases a peer whose handshake never lands. A
+// control-only peer never reaches servePeer, so nothing else bounds it: its
+// accept goroutine simply blocks in AcceptStream, and enough of them fill the
+// admission cap and lock legitimate peers out.
+func (s *Server) expirePeerHandshake(peer *peerSession) {
+	timer := time.NewTimer(peerHandshakeTimeout)
+	defer timer.Stop()
+	select {
+	case <-peer.sessionReady:
+	case <-s.done:
+	case <-timer.C:
+		if peer.sid() != "" {
+			return
+		}
+		logger.Infof("server: peer %s did not handshake within %s - releasing control session",
+			peer.peerID, peerHandshakeTimeout)
+		s.removePeer(peer, "handshake timeout")
+	}
 }
 
 // mayAdmitPeerLocked reports whether a new per-peer stack may be built.
