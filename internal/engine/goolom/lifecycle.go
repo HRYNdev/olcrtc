@@ -22,6 +22,13 @@ const defaultSTUNURL = "stun:stun.rtc.yandex.net:3478"
 
 // Connect starts the WebRTC connection process.
 func (s *Session) Connect(ctx context.Context) error {
+	// Reconnect reaches here too, and Close cancels no context this path
+	// uses. Without the check a reconnect racing Close clears closed, builds
+	// a fresh PeerConnection pair, DataChannel and WebSocket, and leaves them
+	// running behind a session the caller already closed.
+	if s.terminated.Load() {
+		return ErrSessionClosed
+	}
 	s.closed.Store(false)
 	s.resetMediaState()
 
@@ -88,7 +95,7 @@ func (s *Session) waitForMediaReady(ctx context.Context, timeout time.Duration) 
 
 func (s *Session) dialWebSocket() error {
 	wsDialer := protect.NewWebSocketDialer(wsHandshakeTimeout, s.resolver)
-	ws, resp, err := wsDialer.Dial(s.mediaServerURL, nil)
+	ws, resp, err := wsDialer.Dial(s.signalingURL(), nil)
 	if err != nil {
 		return fmt.Errorf("dial ws: %w", err)
 	}
@@ -99,6 +106,7 @@ func (s *Session) dialWebSocket() error {
 	s.ws = ws
 	s.wsMu.Unlock()
 
+	ws.SetReadLimit(wsReadLimit)
 	ws.SetPongHandler(func(string) error {
 		_ = ws.SetReadDeadline(time.Now().Add(wsReadTimeout))
 		return nil
@@ -108,21 +116,13 @@ func (s *Session) dialWebSocket() error {
 }
 
 func (s *Session) startBackgroundGoroutines(ctx context.Context, keepAliveCh chan struct{}) {
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		s.keepAlive(keepAliveCh)
-	}()
+	s.goLaunch(func() { s.keepAlive(keepAliveCh) })
 
 	if err := s.sendHello(); err != nil {
 		logger.Debugf("goolom: hello: %v", err)
 	}
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		s.handleSignaling(ctx)
-	}()
+	s.goLaunch(func() { s.handleSignaling(ctx) })
 }
 
 func (s *Session) onConnectionStateChange(state webrtc.PeerConnectionState) {
@@ -246,6 +246,7 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 
 // Close terminates the session and releases resources.
 func (s *Session) Close() error {
+	s.terminated.Store(true)
 	alreadyClosing := s.closed.Swap(true)
 	s.sendQueueClosed.Store(true)
 
@@ -271,6 +272,8 @@ func (s *Session) Close() error {
 	s.closePeerConns()
 	s.closeWebSocket()
 
+	s.stopLaunching()
+
 	done := make(chan struct{})
 	go func() {
 		s.wg.Wait()
@@ -290,6 +293,9 @@ func (s *Session) WatchConnection(ctx context.Context) {
 }
 
 func (s *Session) reconnect(ctx context.Context) error {
+	if s.terminated.Load() {
+		return ErrSessionClosed
+	}
 	logger.Warnf("goolom: full reconnect triggered")
 	s.reconnecting.Store(true)
 	defer s.reconnecting.Store(false)
@@ -314,12 +320,14 @@ func (s *Session) reconnect(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reconnect refresh: %w", err)
 	}
+	s.credMu.Lock()
 	engine.ApplyRefreshedCredentials(creds, &s.mediaServerURL, &s.peerID, map[string]*string{
 		credentialKeyRoomID:           &s.roomID,
 		credentialKeyCredentials:      &s.credentials,
 		credentialKeyRoomURL:          &s.roomURL,
 		credentialKeyTelemetryReferer: &s.telemetryReferer,
 	})
+	s.credMu.Unlock()
 
 	if err := s.Connect(ctx); err != nil {
 		return err

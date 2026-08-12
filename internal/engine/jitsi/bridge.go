@@ -201,7 +201,16 @@ func (s *Session) waitJSession() *j.Session {
 	}
 }
 
+// recvLoop consumes the bridge channel. Only one instance may run at a time:
+// Connect, completeJingleSetup and finishReconnect each start one, and two
+// loops racing on the same channel split frames between them and hand them to
+// onData concurrently and out of order - which the record layer's replay
+// window then rejects as junk. A later loop waits here until the previous one
+// has seen its channel close.
 func (s *Session) recvLoop() {
+	s.recvMu.Lock()
+	defer s.recvMu.Unlock()
+
 	gen := s.bridgeGen.Load()
 	jSess := s.jSess.Load()
 	if jSess == nil || (s.onData == nil && s.onPeerData == nil) || !s.bridgeReady.Load() {

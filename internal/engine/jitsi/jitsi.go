@@ -80,7 +80,9 @@ type Session struct {
 	closed        atomic.Bool
 	reconnecting  atomic.Bool
 
-	goMu     sync.Mutex
+	goMu sync.Mutex
+	// recvMu admits one recvLoop at a time; see recvLoop.
+	recvMu   sync.Mutex
 	goClosed bool
 
 	lastReconnectAt atomic.Int64

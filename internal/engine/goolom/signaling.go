@@ -15,6 +15,7 @@ import (
 )
 
 func (s *Session) sendHello() error {
+	peerID, roomID, credentials := s.joinCredentials()
 	hello := map[string]any{
 		keyUID: uuid.New().String(),
 		"hello": map[string]any{
@@ -33,10 +34,10 @@ func (s *Session) sendHello() error {
 			"sendAudio":         false,
 			"sendVideo":         s.hasLocalVideoTracks(),
 			"sendSharing":       false,
-			"participantId":     s.peerID,
-			"roomId":            s.roomID,
+			"participantId":     peerID,
+			"roomId":            roomID,
 			"serviceName":       "telemost",
-			"credentials":       s.credentials,
+			"credentials":       credentials,
 			"capabilitiesOffer": goolomCapabilitiesOffer(),
 			"sdkInfo": map[string]any{
 				"implementation": "browser",

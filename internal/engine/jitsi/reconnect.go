@@ -38,6 +38,12 @@ func (s *Session) requestReconnectGen(gen uint64, reason string) {
 }
 
 func (s *Session) reconnect(ctx context.Context) error {
+	// Close cancels no context this path uses, so without an explicit check a
+	// reconnect racing Close joins the MUC again and installs an XMPP session
+	// that nothing will ever close.
+	if s.closed.Load() {
+		return ErrSessionClosed
+	}
 	if !s.reconnecting.CompareAndSwap(false, true) {
 		return nil
 	}
@@ -69,6 +75,10 @@ func (s *Session) reconnect(ctx context.Context) error {
 	if err != nil {
 		logger.Warnf("jitsi: rejoin failed: %v - full reconnect", err)
 		return s.reconnectFull(ctx)
+	}
+	if s.closed.Load() {
+		_ = jSess.Close()
+		return ErrSessionClosed
 	}
 	s.setJSession(jSess)
 
@@ -137,6 +147,10 @@ func (s *Session) reconnectFull(ctx context.Context) error {
 	joinCancel()
 	if err != nil {
 		return fmt.Errorf("jitsi join: %w", err)
+	}
+	if s.closed.Load() {
+		_ = jSess.Close()
+		return ErrSessionClosed
 	}
 
 	bctx, bcancel := context.WithTimeout(ctx, fullReconnectTimeout)

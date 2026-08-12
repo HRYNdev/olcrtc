@@ -86,11 +86,7 @@ func (s *Session) setupDataChannelHandlers(
 	dc.OnOpen(func() {
 		numWorkers := 4
 		for i := range numWorkers {
-			s.wg.Add(1)
-			go func(workerID int) {
-				defer s.wg.Done()
-				s.processSendQueue(dc, workerID, sessionCloseCh)
-			}(i)
+			s.goLaunch(func() { s.processSendQueue(dc, i, sessionCloseCh) })
 		}
 		close(dcReady)
 	})

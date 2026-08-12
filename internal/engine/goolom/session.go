@@ -30,10 +30,19 @@ const (
 	defaultSendDelayLow         = 2 * time.Millisecond
 	defaultSendDelayMax         = 12 * time.Millisecond
 	defaultTelemetryInterval    = 20 * time.Second
-	defaultBufferHighWaterMark  = 512 * 1024
+	// minTelemetryInterval and maxTelemetryInterval bound the cadence the
+	// media server asks for.
+	minTelemetryInterval       = time.Second
+	maxTelemetryInterval       = 5 * time.Minute
+	defaultBufferHighWaterMark = 512 * 1024
 
 	wsReadTimeout      = 60 * time.Second
+	wsWriteTimeout     = 15 * time.Second
 	wsHandshakeTimeout = 15 * time.Second
+	// wsReadLimit caps one signaling frame. gorilla reads without a limit by
+	// default, so the media server could otherwise name any size and have it
+	// buffered and JSON-decoded in full.
+	wsReadLimit = 8 << 20
 
 	keyUID          = "uid"
 	keyDescription  = "description"
@@ -124,6 +133,21 @@ type Session struct {
 	sendQueue       chan []byte
 	sendQueueClosed atomic.Bool
 	closed          atomic.Bool
+	// terminated is the one-way flag Close sets. closed is cleared again by
+	// Connect on every reconnect, so it cannot answer "is this session gone
+	// for good?" - which is what the reconnect path has to ask before it
+	// builds a new PeerConnection, DataChannel and WebSocket that Close has
+	// already finished tearing down.
+	terminated atomic.Bool
+	// goMu guards goClosed, which stops new tracked goroutines once Close has
+	// started waiting on wg.
+	goMu     sync.Mutex
+	goClosed bool
+	// credMu guards the credential fields below. A reconnect rewrites them
+	// while the previous session's telemetry goroutine is still reading them:
+	// stopTelemetry is a best-effort signal and nothing waits for that
+	// goroutine to leave.
+	credMu          sync.RWMutex
 	reconnecting    atomic.Bool
 	telemetryActive atomic.Bool
 
@@ -153,16 +177,71 @@ func (s *Session) wsConn() *websocket.Conn {
 // writeJSON serialises v onto the signaling WebSocket. It is the single
 // writer path: it owns wsMu (gorilla permits one concurrent writer) and it is
 // the only place that has to deal with a torn-down connection.
+//
+// The deadline is what keeps wsMu a lock and not a trap. gorilla has no write
+// deadline by default, so on a black-holed socket the write blocks forever
+// with wsMu held - taking every other writer with it, including the keepalive
+// that would have detected the dead link and the Close that would have torn
+// it down.
 func (s *Session) writeJSON(v any) error {
 	s.wsMu.Lock()
 	defer s.wsMu.Unlock()
 	if s.ws == nil {
 		return ErrWebSocketClosed
 	}
+	_ = s.ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
 	if err := s.ws.WriteJSON(v); err != nil {
 		return fmt.Errorf("ws write: %w", err)
 	}
 	return nil
+}
+
+// goLaunch starts a tracked goroutine unless Close has started waiting.
+// sync.WaitGroup forbids a positive Add from a zero counter concurrent with
+// Wait, and the signaling, telemetry and data-channel paths all spawn from
+// goroutines Close does not control.
+func (s *Session) goLaunch(fn func()) {
+	s.goMu.Lock()
+	if s.goClosed {
+		s.goMu.Unlock()
+		return
+	}
+	s.wg.Add(1)
+	s.goMu.Unlock()
+
+	go func() {
+		defer s.wg.Done()
+		fn()
+	}()
+}
+
+// credentialSnapshot returns the identity fields (peer ID, room ID, referer)
+// under one read lock so a concurrent refresh cannot tear them apart.
+func (s *Session) credentialSnapshot() (string, string, string) {
+	s.credMu.RLock()
+	defer s.credMu.RUnlock()
+	return s.peerID, s.roomID, s.telemetryReferer
+}
+
+// joinCredentials returns the peer ID, room ID and credentials the join
+// message carries.
+func (s *Session) joinCredentials() (string, string, string) {
+	s.credMu.RLock()
+	defer s.credMu.RUnlock()
+	return s.peerID, s.roomID, s.credentials
+}
+
+// signalingURL returns the media server endpoint to dial.
+func (s *Session) signalingURL() string {
+	s.credMu.RLock()
+	defer s.credMu.RUnlock()
+	return s.mediaServerURL
+}
+
+func (s *Session) stopLaunching() {
+	s.goMu.Lock()
+	s.goClosed = true
+	s.goMu.Unlock()
 }
 
 // subPC returns the live subscriber PeerConnection, or nil before setup.

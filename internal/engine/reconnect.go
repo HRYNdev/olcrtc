@@ -150,20 +150,23 @@ func (r *Reconnector) handleAttempt(ctx context.Context, done <-chan struct{}) b
 }
 
 func (r *Reconnector) handleRequestAttempt(ctx context.Context, done <-chan struct{}) bool {
-	count := r.nextRequestCount()
-	if count > r.maxAttempts {
-		r.reconnectLimitReached()
-		return true
-	}
-	backoff := reconnectBackoff(count)
+	// The bound is re-checked every iteration, not once before the loop.
+	// Checking it once meant a permanently dead SFU was retried forever at a
+	// fixed backoff and the limit callback - the only way the upper layer
+	// learns the session is gone - never ran.
 	for {
+		count := r.nextRequestCount()
+		if count > r.maxAttempts {
+			r.reconnectLimitReached()
+			return true
+		}
 		err := r.reconnect(ctx)
 		if err == nil {
 			r.Drain()
 			return false
 		}
 		r.reportError(err)
-		if waitReconnect(ctx, done, backoff) {
+		if waitReconnect(ctx, done, reconnectBackoff(count)) {
 			return true
 		}
 	}

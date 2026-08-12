@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,9 +23,7 @@ func (s *Session) startTelemetry(ctx context.Context, serverHello map[string]any
 		return
 	}
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
+	s.goLaunch(func() {
 		defer s.telemetryActive.Store(false)
 
 		ticker := time.NewTicker(interval)
@@ -43,9 +42,13 @@ func (s *Session) startTelemetry(ctx context.Context, serverHello map[string]any
 				return
 			}
 		}
-	}()
+	})
 }
 
+// parseTelemetryCfg reads the telemetry destination and cadence out of the
+// media server's hello. Both values are attacker-controlled - the SFU is the
+// one thing on this path we do not trust - so both are checked here rather
+// than handed to net/http and time.NewTicker as they arrive.
 func parseTelemetryCfg(serverHello map[string]any) (string, time.Duration, bool) {
 	cfg, ok := serverHello["telemetryConfiguration"].(map[string]any)
 	if !ok {
@@ -58,14 +61,43 @@ func parseTelemetryCfg(serverHello map[string]any) (string, time.Duration, bool)
 			endpoint, _ = cfg["url"].(string)
 		}
 	}
-	if endpoint == "" {
+	if !telemetryEndpointAllowed(endpoint) {
 		return "", 0, false
 	}
-	interval := defaultTelemetryInterval
-	if raw, ok := cfg["sendingInterval"].(float64); ok && raw > 0 {
-		interval = time.Duration(raw) * time.Millisecond
+	return endpoint, telemetryInterval(cfg), true
+}
+
+// telemetryEndpointAllowed rejects anything but an absolute https URL. The
+// posted body carries the peer and room identity and the request carries the
+// room link as its Referer, so a plaintext or scheme-less destination is not
+// somewhere this may be sent.
+func telemetryEndpointAllowed(endpoint string) bool {
+	if endpoint == "" {
+		return false
 	}
-	return endpoint, interval, true
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	return parsed.Scheme == "https" && parsed.Host != ""
+}
+
+// telemetryInterval clamps the announced cadence. time.Duration truncates, so
+// any sendingInterval below 1ms lands on zero, and time.NewTicker(0) panics in
+// a goroutine with nothing to recover it.
+func telemetryInterval(cfg map[string]any) time.Duration {
+	raw, ok := cfg["sendingInterval"].(float64)
+	if !ok {
+		return defaultTelemetryInterval
+	}
+	interval := time.Duration(raw) * time.Millisecond
+	if interval < minTelemetryInterval {
+		return minTelemetryInterval
+	}
+	if interval > maxTelemetryInterval {
+		return maxTelemetryInterval
+	}
+	return interval
 }
 
 func (s *Session) stopTelemetry() {
@@ -78,11 +110,12 @@ func (s *Session) stopTelemetry() {
 }
 
 func (s *Session) sendTelemetry(ctx context.Context, endpoint, event string) {
+	peerID, roomID, referer := s.credentialSnapshot()
 	body, err := json.Marshal(map[string]any{
 		"event":          event,
 		"timestamp":      time.Now().UnixMilli(),
-		"peerId":         s.peerID,
-		"roomId":         s.roomID,
+		"peerId":         peerID,
+		"roomId":         roomID,
 		"displayName":    s.name,
 		"implementation": "browser",
 		"dataChannel": map[string]any{
@@ -101,8 +134,8 @@ func (s *Session) sendTelemetry(ctx context.Context, endpoint, event string) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:149.0) Gecko/20100101 Firefox/149.0")
-	if s.telemetryReferer != "" {
-		req.Header.Set("Referer", s.telemetryReferer)
+	if referer != "" {
+		req.Header.Set("Referer", referer)
 	}
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("Client-Instance-Id", uuid.New().String())
