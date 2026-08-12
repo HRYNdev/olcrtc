@@ -60,10 +60,16 @@ type failoverConfig struct {
 func main() {
 	err := run()
 
+	// Report before the filter is torn down: flushStderrFilter restores the
+	// real stderr, but the error still has to travel through the filter
+	// goroutine to stay ordered with everything already buffered in it.
+	if err != nil {
+		logger.Error(err)
+	}
+
 	flushStderrFilter()
 
 	if err != nil {
-		logger.Error(err)
 		os.Exit(1)
 	}
 }
