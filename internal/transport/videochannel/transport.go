@@ -35,6 +35,10 @@ const (
 	// generous.
 	maxSendAttempts      = 20
 	sampleBuilderMaxLate = 128
+	// maxRemoteDecoders caps how many remote tracks get a decoder. Every
+	// participant in a shared room publishes one, and each decoder costs two
+	// goroutines plus a queue of full grayscale planes.
+	maxRemoteDecoders = 8
 	// writerBatchSize is how many frames the writer emits per tick. The
 	// visual encoder renders one frame per tick, so the ack budget is sized
 	// against a batch of one.
@@ -459,12 +463,16 @@ func (p *streamTransport) handleRemoteTrack(track *webrtc.TrackRemote, _ *webrtc
 		return
 	}
 
-	decoder := newGoDecoder(p.videoW, p.videoH)
+	decoder := newGoDecoder()
 
 	p.decoderMu.Lock()
-	if p.closed.Load() || p.decoders == nil {
+	if p.closed.Load() || p.decoders == nil || len(p.decoders) >= maxRemoteDecoders {
+		full := len(p.decoders) >= maxRemoteDecoders
 		p.decoderMu.Unlock()
 		decoder.Close()
+		if full {
+			logger.Warnf("videochannel: %d decoders already running, ignoring remote track", maxRemoteDecoders)
+		}
 		return
 	}
 	p.decoders[decoder] = struct{}{}

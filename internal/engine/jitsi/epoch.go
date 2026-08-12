@@ -96,6 +96,13 @@ func (s *Session) parseEpochFrame(payload []byte) (epochFrame, bool) {
 	return frame, true
 }
 
+// maxPeerEpochs caps the per-endpoint epoch table. The endpoint name comes
+// from the bridge message and is recorded before anything authenticates the
+// sender, so without a cap any room participant can grow this map by naming a
+// new sender on every frame. The table is only a routing hint; refusing to
+// learn new names past the cap costs nothing beyond an unusually crowded room.
+const maxPeerEpochs = 256
+
 func (s *Session) acceptPeerEpochFrame(from string, payload []byte) ([]byte, bool) {
 	frame, ok := s.parseEpochFrame(payload)
 	if !ok {
@@ -103,8 +110,13 @@ func (s *Session) acceptPeerEpochFrame(from string, payload []byte) ([]byte, boo
 	}
 	senderEpoch := frame.senderEpoch
 	s.peerEpochMu.Lock()
-	prev := s.peerEpochs[from]
-	if prev == 0 || prev != senderEpoch {
+	prev, known := s.peerEpochs[from]
+	switch {
+	case known:
+		if prev != senderEpoch {
+			s.peerEpochs[from] = senderEpoch
+		}
+	case len(s.peerEpochs) < maxPeerEpochs:
 		s.peerEpochs[from] = senderEpoch
 	}
 	s.peerEpochMu.Unlock()

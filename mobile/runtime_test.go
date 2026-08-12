@@ -199,7 +199,9 @@ func TestConcurrentStartStopWaitReady(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			err := runtime.WaitReady(100)
-			if err != nil && !errors.Is(err, ErrStoppedBeforeReady) {
+			// A generation that stopped is reported as not running when it
+			// had become ready, and as stopped-before-ready otherwise.
+			if err != nil && !errors.Is(err, ErrStoppedBeforeReady) && !errors.Is(err, ErrNotRunning) {
 				t.Errorf("concurrent WaitReady() error = %v", err)
 			}
 		}()
@@ -227,4 +229,27 @@ func waitForState(t *testing.T, runtime *Runtime, want string) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("State() = %q, want %q", runtime.State(), want)
+}
+
+// TestWaitReadyAfterStop locks in that readiness is not reported for a
+// runtime that has stopped. The ready channel of the finished generation
+// stays closed and the runtime keeps that generation, so checking the latch
+// alone told a caller the tunnel was up while State() said stopped.
+func TestWaitReadyAfterStop(t *testing.T) {
+	runtime := configuredRuntime(t, blockingReadyRunner)
+	if err := runtime.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if err := runtime.WaitReady(1000); err != nil {
+		t.Fatalf("WaitReady() error = %v", err)
+	}
+	if err := runtime.Stop(1000); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if err := runtime.WaitReady(100); !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("WaitReady() after Stop = %v, want %v", err, ErrNotRunning)
+	}
+	if state := runtime.State(); state != "stopped" {
+		t.Fatalf("State() = %q, want stopped", state)
+	}
 }

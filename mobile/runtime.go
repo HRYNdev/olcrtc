@@ -158,6 +158,13 @@ func (r *Runtime) WaitReady(timeoutMillis int) error {
 }
 
 func (r *Runtime) waitGenerationReady(gen *runGeneration, timeout time.Duration) error {
+	// A generation that has already exited is never ready, whatever its latch
+	// says. The ready channel stays closed after Stop and the runtime keeps
+	// the generation, so checking the latch alone reported a live tunnel for
+	// a runtime whose State() already said stopped.
+	if channelClosed(gen.done) {
+		return r.generationError(gen)
+	}
 	if channelClosed(gen.ready) {
 		return nil
 	}
@@ -167,20 +174,22 @@ func (r *Runtime) waitGenerationReady(gen *runGeneration, timeout time.Duration)
 	case <-gen.ready:
 		return nil
 	case <-gen.done:
-		if channelClosed(gen.ready) {
-			return nil
-		}
 		return r.generationError(gen)
 	case <-timer.C:
 		return ErrReadyTimeout
 	}
 }
 
+// generationError describes a generation that has finished: its own failure
+// when it had one, otherwise whether it ever reached readiness.
 func (r *Runtime) generationError(gen *runGeneration) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if gen.err != nil {
 		return gen.err
+	}
+	if channelClosed(gen.ready) {
+		return ErrNotRunning
 	}
 	return ErrStoppedBeforeReady
 }

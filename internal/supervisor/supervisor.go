@@ -88,7 +88,10 @@ func Run(ctx context.Context, cfg Config, run Runner) error {
 	if len(cfg.Profiles) == 0 {
 		return ErrNoProfiles
 	}
-	if cfg.RetryDelay == 0 {
+	// A negative delay parses fine from YAML and waitRetryDelay treats it as
+	// "no wait", which turns failover into a busy loop against a profile that
+	// fails immediately.
+	if cfg.RetryDelay <= 0 {
 		cfg.RetryDelay = DefaultRetryDelay
 	}
 	state := newStatusTracker(cfg.Profiles, cfg.HistoryLimit, cfg.OnStatus)

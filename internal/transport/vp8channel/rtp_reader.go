@@ -20,6 +20,14 @@ const reorderWindow = 256
 // allocation in the reorder buffer's local free list.
 const maxRetainedRTPPayloadCap = 2 * 1024
 
+// maxAssembledFrameSize bounds one reassembled VP8 frame. The buffer only
+// resets on a start-of-partition bit, a sequence gap or a marker bit, so a
+// contiguous run of packets that never sets the marker grows it without limit
+// - roughly 1.2 KB per packet, for as long as the peer keeps sending. The cap
+// sits well above defaultMaxPayloadSize plus the batching overhead, so no
+// legitimate frame reaches it.
+const maxAssembledFrameSize = 4 * defaultMaxPayloadSize
+
 // seqLess reports whether RTP sequence a precedes b using wrap-around aware
 // comparison (RFC 1982 serial arithmetic on uint16).
 func seqLess(a, b uint16) bool {
@@ -160,6 +168,15 @@ func (s *vp8FrameState) processRTPPacket(pkt *rtp.Packet) []byte {
 	}
 
 	if !s.frameValid {
+		return nil
+	}
+
+	if len(s.frameBuf)+len(vp8Payload) > maxAssembledFrameSize {
+		// A frame this large is not something the writer can produce, so the
+		// marker bit is never coming. Drop what we have and wait for the next
+		// start-of-partition rather than growing forever.
+		s.frameValid = false
+		s.frameBuf = s.frameBuf[:0]
 		return nil
 	}
 

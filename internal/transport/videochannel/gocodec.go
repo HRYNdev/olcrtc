@@ -52,25 +52,25 @@ func (e *goEncoder) Close() {
 }
 
 // goDecoder is a pure Go VP8 decoder.
+// decoderQueueDepth bounds how many decoded frames wait for the extractor.
+// Each one is a full grayscale plane the vp8 decoder allocates fresh - 2 MB at
+// 1080p - and one decoder exists per remote track, so the queue depth is the
+// dominant memory cost of this transport.
+const decoderQueueDepth = 8
+
 type goDecoder struct {
 	dec       *vp8.Decoder
-	width     int
-	height    int
-	frameSize int
 	frames    chan []byte
 	closed    atomic.Bool
 	closeOnce sync.Once
 	closeCh   chan struct{}
 }
 
-func newGoDecoder(width, height int) *goDecoder {
+func newGoDecoder() *goDecoder {
 	return &goDecoder{
-		dec:       vp8.NewDecoder(),
-		width:     width,
-		height:    height,
-		frameSize: width * height,
-		frames:    make(chan []byte, 32),
-		closeCh:   make(chan struct{}),
+		dec:     vp8.NewDecoder(),
+		frames:  make(chan []byte, decoderQueueDepth),
+		closeCh: make(chan struct{}),
 	}
 }
 
@@ -90,6 +90,11 @@ func (d *goDecoder) PushSample(sample []byte) error {
 	case d.frames <- gray:
 	case <-d.closeCh:
 		return ErrTransportClosed
+	default:
+		// The extractor is behind. Dropping the frame is what the sender's
+		// per-fragment retransmit already covers; blocking here would stall
+		// the RTP reader instead, which loses the same data further upstream
+		// and delays every other track sharing the connection.
 	}
 	return nil
 }
