@@ -46,13 +46,20 @@ type Config struct {
 }
 
 // Session owns one raw engine session.
+//
+// Inbound engine data is delivered through a synchronous pipe that only the
+// stream returned by [Session.Dial] drains. A consumer that uses Connect and
+// Send without ever calling Dial therefore blocks the engine's receive
+// callback on the first inbound packet; Close releases it. Call Dial for any
+// session that receives data.
 type Session struct {
 	inner engine.Session
 	pr    *io.PipeReader
 	pw    *io.PipeWriter
 
-	endedMu sync.RWMutex
-	onEnded func(string)
+	watchOnce sync.Once
+	endedMu   sync.RWMutex
+	onEnded   func(string)
 }
 
 // RegisterDefaults registers all built-in providers and engines.
@@ -140,12 +147,16 @@ func newSession(
 // Dial connects and returns a raw engine byte stream. The stream intentionally
 // implements io.ReadWriteCloser rather than net.Conn because engine writes do
 // not support context cancellation or interruptible deadlines.
+//
+// Calling Dial more than once returns another handle to the same stream; the
+// reconnect watcher is started only by the first call, so repeated dials do
+// not stack watchers on one session.
 func (s *Session) Dial(ctx context.Context) (io.ReadWriteCloser, error) {
 	s.inner.SetEndedCallback(s.handleEnded)
 	if err := s.Connect(ctx); err != nil {
 		return nil, err
 	}
-	go s.inner.WatchConnection(ctx)
+	s.watchOnce.Do(func() { go s.inner.WatchConnection(ctx) })
 	return &stream{s: s}, nil
 }
 

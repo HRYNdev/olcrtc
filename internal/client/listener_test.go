@@ -194,3 +194,34 @@ func waitListenerRun(t *testing.T, name string, done <-chan error) {
 }
 
 var _ engine.Session = (*listenerTestSession)(nil)
+
+// TestSocks5RejectsEmptyDomain locks in that a zero-length domain is rejected
+// at the listener. It used to be accepted and forwarded as an empty host,
+// which the exit node then turned into a dial to its own loopback.
+func TestSocks5RejectsEmptyDomain(t *testing.T) {
+	local, remote := net.Pipe()
+	defer func() { _ = local.Close() }()
+	defer func() { _ = remote.Close() }()
+
+	c := &Client{}
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := c.socks5Request(remote)
+		result <- err
+	}()
+
+	// VER, CMD=CONNECT, RSV, ATYP=domain, len=0. net.Pipe is unbuffered, so
+	// only the bytes the parser actually consumes may be written here.
+	if _, err := local.Write([]byte{socksVersion, 1, 0, socksAddrDomain, 0}); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+
+	select {
+	case err := <-result:
+		if !errors.Is(err, ErrEmptySOCKSDomain) {
+			t.Fatalf("socks5Request() error = %v, want %v", err, ErrEmptySOCKSDomain)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("socks5Request() did not return")
+	}
+}

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -156,5 +157,41 @@ func TestRejectedPeerHandshakeWakesServePeer(t *testing.T) {
 	case <-s.done:
 		t.Fatal("peer handshake failure required global server shutdown")
 	default:
+	}
+}
+
+// TestPeerAdmissionIsBounded locks in the cap on per-peer state. Peer IDs
+// arrive from the transport before anything is decrypted, so any participant
+// in the room can mint them; each one used to buy a muxconn, an smux session
+// and two goroutines that nothing reclaimed.
+func TestPeerAdmissionIsBounded(t *testing.T) {
+	s, cleanup := newPeerLifecycleServer(t)
+	defer cleanup()
+
+	for i := range maxPeerSessions + 32 {
+		s.onPeerData(fmt.Sprintf("%08x", i+1), []byte("junk"))
+	}
+
+	s.sessMu.RLock()
+	admitted := len(s.peerSessions)
+	s.sessMu.RUnlock()
+
+	if admitted > maxPeerSessions {
+		t.Fatalf("admitted %d peers, want at most %d", admitted, maxPeerSessions)
+	}
+}
+
+// TestPeerAdmissionRefusedWhileStopping locks in that a frame arriving during
+// teardown does not rebuild peer state into the map shutdown has already
+// swapped out, leaving a goroutine that outlives wg.Wait.
+func TestPeerAdmissionRefusedWhileStopping(t *testing.T) {
+	s, cleanup := newPeerLifecycleServer(t)
+	defer cleanup()
+
+	s.doneOnce.Do(func() { close(s.done) })
+	s.onPeerData("0000dead", []byte("junk"))
+
+	if peer := lookupPeer(s, "0000dead"); peer != nil {
+		t.Fatal("peer session created while the server was stopping")
 	}
 }
