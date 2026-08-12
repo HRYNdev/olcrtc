@@ -19,9 +19,7 @@ func (Options) TransportOptions() {}
 
 // withDefaults fills unset Options fields with the package defaults.
 func (o Options) withDefaults() Options {
-	if o.FPS <= 0 {
-		o.FPS = defaultFPS
-	}
+	o.FPS = transport.NormalizeFPS(o.FPS, defaultFPS)
 	if o.BatchSize <= 0 {
 		o.BatchSize = defaultBatchSize
 	}

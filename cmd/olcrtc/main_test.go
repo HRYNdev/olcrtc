@@ -89,7 +89,7 @@ func TestRunWithConfigRejectsInvalidConfig(t *testing.T) {
 		Transport: "datachannel",
 		Provider:  "jitsi",
 		RoomID:    "https://meet.systemli.org/test",
-		KeyHex:    "key",
+		KeyHex:    testKeyHex,
 		DNSServer: "8.8.8.8:53",
 	}
 
@@ -97,6 +97,10 @@ func TestRunWithConfigRejectsInvalidConfig(t *testing.T) {
 		t.Fatal("runWithConfig(invalid config) error = nil")
 	}
 }
+
+// testKeyHex is a syntactically valid PSK: config validation rejects anything
+// that is not 64 hex characters.
+const testKeyHex = "0000000000000000000000000000000000000000000000000000000000000001"
 
 func TestRunWithConfigRejectsUnreadableDataOverride(t *testing.T) {
 	session.RegisterDefaults()
@@ -106,7 +110,7 @@ func TestRunWithConfigRejectsUnreadableDataOverride(t *testing.T) {
 		Transport: "datachannel",
 		Provider:  "jitsi",
 		RoomID:    "https://meet.systemli.org/test",
-		KeyHex:    "key",
+		KeyHex:    testKeyHex,
 		DNSServer: "8.8.8.8:53",
 	}
 
@@ -150,7 +154,7 @@ auth:
 room:
   id: https://meet.systemli.org/test
 crypto:
-  key: key
+  key: "0000000000000000000000000000000000000000000000000000000000000001"
 net:
   transport: datachannel
   dns: 8.8.8.8:53
@@ -190,7 +194,7 @@ auth:
 room:
   id: room
 crypto:
-  key: key
+  key: "0000000000000000000000000000000000000000000000000000000000000001"
 net:
   transport: vp8channel
   dns: 8.8.8.8:53
@@ -225,7 +229,7 @@ func TestRunWithArgsFailoverProfiles(t *testing.T) {
 	yamlPath := writeYAML(t, `
 mode: srv
 crypto:
-  key: key
+  key: "0000000000000000000000000000000000000000000000000000000000000001"
 net:
   dns: 8.8.8.8:53
 profiles:

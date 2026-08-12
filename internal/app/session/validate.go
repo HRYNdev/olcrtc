@@ -1,16 +1,36 @@
 package session
 
 import (
+	"encoding/hex"
 	"fmt"
 	"net"
 	"slices"
 	"time"
+
+	"golang.org/x/crypto/chacha20poly1305"
 
 	"github.com/openlibrecommunity/olcrtc/internal/control"
 	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
 )
+
+// Bounds for the numeric config fields that end up as buffer sizes, codec
+// settings or listener parameters.
+const (
+	minVideoDimension  = 16
+	maxVideoDimension  = 8192
+	maxVideoTileModule = 270
+	maxVideoTileRS     = 200
+	maxSEIFragmentSize = 60000
+	maxPort            = 65535
+)
+
+// videoQRRecoveryLevels are the error-correction levels the visual codec
+// understands. Anything else silently degraded to the weakest level.
+//
+//nolint:gochecknoglobals // fixed lookup table
+var videoQRRecoveryLevels = []string{defaultVideoQRRecovery, "medium", "high", "highest"}
 
 // Validate verifies registered components and all required fields.
 func Validate(cfg Config) error {
@@ -66,11 +86,38 @@ func validateCommon(cfg Config) error {
 	if cfg.RoomID == "" && cfg.Provider != providerNone {
 		return ErrRoomIDRequired
 	}
-	if cfg.KeyHex == "" {
-		return ErrKeyRequired
+	if err := validateKey(cfg.KeyHex); err != nil {
+		return err
 	}
 	if cfg.DNSServer == "" && cfg.Resolver == nil {
 		return ErrDNSServerRequired
+	}
+	return nil
+}
+
+// validateKey rejects a malformed PSK here rather than deep inside Run. The
+// failover supervisor restarts a profile forever, so a mistyped key would
+// otherwise turn into a silent restart loop instead of one startup error.
+func validateKey(keyHex string) error {
+	if keyHex == "" {
+		return ErrKeyRequired
+	}
+	key, err := hex.DecodeString(keyHex)
+	if err != nil || len(key) != chacha20poly1305.KeySize {
+		return ErrKeyInvalid
+	}
+	return nil
+}
+
+// validateFPS bounds every transport's frame rate. The writer loops derive
+// their ticker period from time.Second/fps, which truncates to zero for absurd
+// values and panics the writer goroutine.
+func validateFPS(fps int, missing error) error {
+	if fps == 0 {
+		return missing
+	}
+	if fps < 0 || fps > transport.MaxFPS {
+		return fmt.Errorf("%w: %d", ErrFPSInvalid, fps)
 	}
 	return nil
 }
@@ -98,6 +145,27 @@ func validateVideoCodec(cfg Config) error {
 	return nil
 }
 
+// validateVideoVisual bounds the parameters the visual codec turns into frame
+// buffers and codec settings. Out-of-range values used to pass here and only
+// surface once the tunnel had joined the room, at which point every frame
+// failed; an unbounded width/height pair reserved the product in bytes.
+func validateVideoVisual(cfg Config) error {
+	if cfg.Video.Width < minVideoDimension || cfg.Video.Width > maxVideoDimension ||
+		cfg.Video.Height < minVideoDimension || cfg.Video.Height > maxVideoDimension {
+		return fmt.Errorf("%w: %dx%d", ErrVideoDimensionsInvalid, cfg.Video.Width, cfg.Video.Height)
+	}
+	if cfg.Video.QRRecovery != "" && !slices.Contains(videoQRRecoveryLevels, cfg.Video.QRRecovery) {
+		return fmt.Errorf("%w: %s", ErrVideoQRRecoveryInvalid, cfg.Video.QRRecovery)
+	}
+	if cfg.Video.TileModule < 0 || cfg.Video.TileModule > maxVideoTileModule {
+		return fmt.Errorf("%w: %d", ErrVideoTileModuleInvalid, cfg.Video.TileModule)
+	}
+	if cfg.Video.TileRS < 0 || cfg.Video.TileRS > maxVideoTileRS {
+		return fmt.Errorf("%w: %d", ErrVideoTileRSInvalid, cfg.Video.TileRS)
+	}
+	return nil
+}
+
 func validateVideoChannel(cfg Config) error {
 	if cfg.Video.Width == 0 {
 		return ErrVideoWidthRequired
@@ -105,15 +173,18 @@ func validateVideoChannel(cfg Config) error {
 	if cfg.Video.Height == 0 {
 		return ErrVideoHeightRequired
 	}
-	if cfg.Video.FPS == 0 {
-		return ErrVideoFPSRequired
+	if err := validateFPS(cfg.Video.FPS, ErrVideoFPSRequired); err != nil {
+		return err
 	}
-	return validateVideoCodec(cfg)
+	if err := validateVideoCodec(cfg); err != nil {
+		return err
+	}
+	return validateVideoVisual(cfg)
 }
 
 func validateVP8Channel(cfg Config) error {
-	if cfg.VP8.FPS == 0 {
-		return ErrVP8FPSRequired
+	if err := validateFPS(cfg.VP8.FPS, ErrVP8FPSRequired); err != nil {
+		return err
 	}
 	if cfg.VP8.BatchSize == 0 {
 		return ErrVP8BatchSizeRequired
@@ -122,14 +193,17 @@ func validateVP8Channel(cfg Config) error {
 }
 
 func validateSEIChannel(cfg Config) error {
-	if cfg.SEI.FPS == 0 {
-		return ErrSEIFPSRequired
+	if err := validateFPS(cfg.SEI.FPS, ErrSEIFPSRequired); err != nil {
+		return err
 	}
 	if cfg.SEI.BatchSize == 0 {
 		return ErrSEIBatchSizeRequired
 	}
 	if cfg.SEI.FragmentSize == 0 {
 		return ErrSEIFragmentSizeRequired
+	}
+	if cfg.SEI.FragmentSize < 0 || cfg.SEI.FragmentSize > maxSEIFragmentSize {
+		return fmt.Errorf("%w: %d", ErrSEIFragmentSizeInvalid, cfg.SEI.FragmentSize)
 	}
 	if cfg.SEI.AckTimeoutMS == 0 {
 		return ErrSEIAckTimeoutRequired
@@ -146,6 +220,9 @@ func validateModeConfig(cfg Config) error {
 	}
 	if cfg.SOCKSPort == 0 {
 		return ErrSOCKSPortRequired
+	}
+	if cfg.SOCKSPort < 0 || cfg.SOCKSPort > maxPort {
+		return fmt.Errorf("%w: %d", ErrSOCKSPortInvalid, cfg.SOCKSPort)
 	}
 	if !isLoopbackListenHost(cfg.SOCKSHost) && (cfg.SOCKSUser == "" || cfg.SOCKSPass == "") {
 		return ErrSOCKSAuthRequired

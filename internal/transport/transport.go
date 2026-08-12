@@ -157,6 +157,24 @@ func OptionsAs[T Options](cfg Config, name string) (T, error) {
 	return opts, nil
 }
 
+// MaxFPS bounds the frame rate every video transport derives its writer tick
+// from. time.Second/FPS truncates to zero above one billion, and a zero tick
+// panics time.NewTicker and divides by zero in the keepalive arithmetic - both
+// inside a writer goroutine, where the panic is unrecoverable. No provider
+// carries anything near this rate anyway.
+const MaxFPS = 240
+
+// NormalizeFPS clamps fps into (0, MaxFPS], substituting def when it is unset.
+func NormalizeFPS(fps, def int) int {
+	if fps <= 0 {
+		return def
+	}
+	if fps > MaxFPS {
+		return MaxFPS
+	}
+	return fps
+}
+
 // TrafficConfig controls optional reliability-oriented send shaping.
 type TrafficConfig struct {
 	MaxPayloadSize int

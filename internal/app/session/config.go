@@ -59,7 +59,17 @@ var (
 	ErrVideoFPSRequired    = errors.New("video fps required for videochannel (set video.fps)")
 	ErrVideoCodecInvalid   = errors.New(
 		"invalid video codec for videochannel (set video.codec to qrcode or tile)")
-	ErrTileCodecDimensions     = errors.New("tile codec requires video.width: 1080 and video.height: 1080")
+	ErrTileCodecDimensions    = errors.New("tile codec requires video.width: 1080 and video.height: 1080")
+	ErrVideoDimensionsInvalid = errors.New(
+		"invalid video dimensions (set video.width and video.height within 16..8192)")
+	ErrVideoQRRecoveryInvalid = errors.New(
+		"invalid video qr recovery (set video.qr_recovery to low, medium, high or highest)")
+	ErrVideoTileModuleInvalid  = errors.New("invalid video tile module (set video.tile_module within 1..270)")
+	ErrVideoTileRSInvalid      = errors.New("invalid video tile rs (set video.tile_rs within 0..200)")
+	ErrFPSInvalid              = errors.New("invalid fps (set it within 1..240)")
+	ErrKeyInvalid              = errors.New("invalid key (set crypto.key to 64 hex characters)")
+	ErrSOCKSPortInvalid        = errors.New("invalid socks port (set socks.port within 1..65535)")
+	ErrSEIFragmentSizeInvalid  = errors.New("invalid sei fragment size (set sei.fragment_size within 1..60000)")
 	ErrVP8FPSRequired          = errors.New("vp8 fps required for vp8channel (set vp8.fps)")
 	ErrVP8BatchSizeRequired    = errors.New("vp8 batch size required for vp8channel (set vp8.batch_size)")
 	ErrSEIFPSRequired          = errors.New("fps required for seichannel (set sei.fps)")
