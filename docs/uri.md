@@ -100,7 +100,7 @@ No payload.
 
 `data: data` is not encoded in this format, because it is a local runtime setting of a specific run.
 
-The key in the URI is used by the current OLC2 record layer. OLC2 has no fallback to the old crypto format, so both endpoints must run compatible builds. `seichannel` and `videochannel` also require OLVC frame version 4 on both endpoints.
+The key in the URI is used by the current OLC2 record layer. OLC2 has no fallback to the old crypto format, so both endpoints must run compatible builds. `seichannel` and `videochannel` also require OLVC frame version 5 on both endpoints.
 
 ---
 
@@ -141,6 +141,10 @@ crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
 net:
   transport: datachannel
+  dns: "8.8.8.8:53"
+socks:
+  host: "127.0.0.1"
+  port: 8808
 ```
 
 ### wbstream + vp8channel
@@ -161,9 +165,13 @@ crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
 net:
   transport: vp8channel
+  dns: "8.8.8.8:53"
 vp8:
-  fps: 30
+  fps: 60
   batch_size: 64
+socks:
+  host: "127.0.0.1"
+  port: 8808
 ```
 
 ### wbstream + seichannel
@@ -184,11 +192,15 @@ crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
 net:
   transport: seichannel
+  dns: "8.8.8.8:53"
 sei:
-  fps: 30
+  fps: 60
   batch_size: 64
   fragment_size: 900
   ack_timeout_ms: 2000
+socks:
+  host: "127.0.0.1"
+  port: 8808
 ```
 
 ### telemost + videochannel
@@ -209,11 +221,15 @@ crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
 net:
   transport: videochannel
+  dns: "8.8.8.8:53"
 video:
   width: 1080
   height: 1080
-  fps: 30
+  fps: 60
   codec: qrcode
+socks:
+  host: "127.0.0.1"
+  port: 8808
 ```
 
 ---
@@ -239,6 +255,10 @@ crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
 net:
   transport: datachannel
+  dns: "8.8.8.8:53"
+socks:
+  host: "127.0.0.1"
+  port: 8808
 ```
 
 ---

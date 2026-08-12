@@ -19,9 +19,9 @@
 | Transport | telemost | wbstream | jitsi |
 |-----------|:--------:|:--------:|:-----:|
 | datachannel | - | ~ | + |
-| vp8channel | + | + | ~ |
-| seichannel | - | + | ~ |
-| videochannel | + | + | ~ |
+| vp8channel | + | + | + |
+| seichannel | - | + | + |
+| videochannel | + | + | + |
 
 **Легенда:**
 - `+` - работает (pass в E2E тестах)
@@ -32,15 +32,15 @@
 
 **WBStream:** все транспорты кроме datachannel работают. DataChannel в обычном guest flow без выдавания модератора не работает - WB Stream выдаёт токены с `canPublishData=false`, и DC не маршрутизирует данные. Чтобы использовать `datachannel` поверх `wbstream`, задай `auth.token` с токеном аккаунта/модератора (`canPublishData=true`); см. `auth.token` в необязательных полях ниже.
 
-**Jitsi:** datachannel стабильно проходит - реализован поверх colibri-ws bridge channel и шлёт байты через `EndpointMessage{raw}` broadcast. Подходит для self-hosted и публичных Jitsi Meet инстансов без аутентификации (`https://meet.jit.si/...` и т.п.; инстансы в docs/jitsi.instances.yaml). Проверьте в браузере, какой из серверов доступен в вашей сети. Видео-транспорты (vp8channel, seichannel, videochannel) экспонируют sendable VideoTrack через pion PeerConnection после Jingle session-accept, но Jicofo требует дополнительных протокольных шагов (LastN, ReceiverVideoConstraints, source-add) для маршрутизации видео - поэтому они помечены `~` .
+**Jitsi:** datachannel стабильно проходит - реализован поверх colibri-ws bridge channel и шлёт байты через `EndpointMessage{raw}` broadcast. Подходит для self-hosted и публичных Jitsi Meet инстансов без аутентификации (`https://meet.jit.si/...` и т.п.; инстансы в docs/jitsi.instances.yaml). Проверьте в браузере, какой из серверов доступен в вашей сети. Видео-транспорты (vp8channel, seichannel, videochannel) экспонируют sendable VideoTrack через pion PeerConnection после Jingle session-accept, а RTP keepalive выполняет нужные Jicofo шаги (LastN, ReceiverVideoConstraints, source-add) для маршрутизации видео, поэтому все четыре транспорта проходят E2E-матрицу.
 
-**Jitsi + seichannel - отдельная оговорка.** SEI NAL-юниты идут пассажиром в H.264 видеопотоке, а Jicofo на self-hosted инстансах (например `meet.egovm.ru`) периодически режет/откладывает upstream видео когда ресивера в комнате формально нет - для нас это выглядит как `seichannel ack timeout` при формально живом PeerConnection. В steady-state транспорт работает, но e2e матрица помечает его `Unstable` (флаппит): зелёного и красного результата в CI достаточно, тест suite на этом не валится. Для надёжной передачи данных через jitsi предпочтительнее `datachannel` или `vp8channel`.
+**Jitsi + seichannel - отдельная оговорка.** SEI NAL-юниты идут пассажиром в H.264 видеопотоке, а Jicofo на self-hosted инстансах (например `meet.egovm.ru`) периодически режет/откладывает upstream видео когда ресивера в комнате формально нет - для нас это выглядит как `seichannel ack timeout` при формально живом PeerConnection. Периодический RTP keepalive удерживает ресивера в комнате, поэтому e2e матрица теперь ожидает pass, но на сильно нагруженном self-hosted инстансе `datachannel` или `vp8channel` всё ещё надёжнее.
 
 **Рекомендуемая комбинация: `jitsi + datachannel`** - стабильно работает на любом self-hosted или публичном Jitsi Meet (инстансы в docs/jitsi.instances.yaml - проверьте, какой доступен), не требует регистрации, простая руму создания. Альтернатива: `wbstream + vp8channel` - стабильно для коммерческих сценариев, не требует специальных прав.
 
 Скорость по убыванию: `datachannel` > `vp8channel` > `seichannel` > `videochannel`
 
-**Совместимость wire-форматов:** текущие сборки используют OLC2 с направленными HKDF-ключами, отдельным AAD для data/control и replay-защитой. Они не соединяются со сборками на старом crypto record format. `seichannel` и `videochannel` используют OLVC версии 4 и отклоняют старые кадры OVC1/OVV2.
+**Совместимость wire-форматов:** текущие сборки используют OLC2 с направленными HKDF-ключами, отдельным AAD для data/control и replay-защитой. Они не соединяются со сборками на старом crypto record format. `seichannel` и `videochannel` используют OLVC версии 5, где у каждого фрагмента есть своя контрольная сумма, и отклоняют старые кадры.
 
 ---
 
@@ -53,7 +53,6 @@
 | `net.transport` | `datachannel`, `vp8channel`, `seichannel` или `videochannel` |
 | `room.id` | Room ID |
 | `crypto.key` или `crypto.key_file` | Ключ шифрования hex 64 символа. Генерация: `openssl rand -hex 32` |
-| `data` | Не требуется. Задавайте только для собственного словаря имён |
 | `net.dns` | DNS-сервер, например `8.8.8.8:53` |
 
 ---
@@ -130,8 +129,8 @@ transport. Используй одинаковые traffic-настройки н
 
 | YAML поле | Описание | По умолчанию |
 |-----------|----------|:------------:|
-| `socks.host` | На каком адресе поднять SOCKS5 | `127.0.0.1` |
-| `socks.port` | На каком порту поднять SOCKS5 | `1080` |
+| `socks.host` | На каком адресе поднять SOCKS5 | обязательно |
+| `socks.port` | На каком порту поднять SOCKS5 | обязательно |
 | `socks.user` | Логин для входящих SOCKS5-подключений (необязательно) | - |
 | `socks.pass` | Пароль для входящих SOCKS5-подключений (необязательно) | - |
 

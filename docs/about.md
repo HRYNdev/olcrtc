@@ -122,7 +122,7 @@ Authenticated records pass through a 64-record replay window per sender prefix. 
 
 OLC2 has no v1 fallback. Builds that use the old record format cannot connect to current builds.
 
-The shared OLVC video frame format used by `seichannel` and `videochannel` is version 4. It carries sender role, session binding, per-fragment ACK data and CRC. Older OVC1 and OVV2 frames are rejected by magic or version checks, so old video transport builds are incompatible.
+The shared OLVC video frame format used by `seichannel` and `videochannel` is version 5. It carries sender role, session binding, per-fragment ACK data, a per-fragment checksum and a whole-message CRC. A fragment that fails its own checksum is never acknowledged, so it is retransmitted instead of being lost with the message. Older frames are rejected by magic or version checks, so old video transport builds are incompatible.
 
 `smux` runs on top of the encrypted `muxconn`. The first smux stream is occupied by the handshake and the control protocol:
 

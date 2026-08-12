@@ -100,7 +100,7 @@ Payload не используется.
 
 `data: data` в этом формате не кодируется, потому что это локальная runtime-настройка конкретного запуска.
 
-Ключ из URI используется текущим record layer OLC2. У OLC2 нет fallback на старый crypto format, поэтому обе стороны должны работать на совместимых сборках. Для `seichannel` и `videochannel` обе стороны также должны поддерживать OLVC версии 4.
+Ключ из URI используется текущим record layer OLC2. У OLC2 нет fallback на старый crypto format, поэтому обе стороны должны работать на совместимых сборках. Для `seichannel` и `videochannel` обе стороны также должны поддерживать OLVC версии 5.
 
 ---
 
@@ -141,6 +141,10 @@ crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
 net:
   transport: datachannel
+  dns: "8.8.8.8:53"
+socks:
+  host: "127.0.0.1"
+  port: 8808
 ```
 
 ### wbstream + vp8channel
@@ -161,9 +165,13 @@ crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
 net:
   transport: vp8channel
+  dns: "8.8.8.8:53"
 vp8:
-  fps: 30
+  fps: 60
   batch_size: 64
+socks:
+  host: "127.0.0.1"
+  port: 8808
 ```
 
 ### wbstream + seichannel
@@ -184,11 +192,15 @@ crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
 net:
   transport: seichannel
+  dns: "8.8.8.8:53"
 sei:
-  fps: 30
+  fps: 60
   batch_size: 64
   fragment_size: 900
   ack_timeout_ms: 2000
+socks:
+  host: "127.0.0.1"
+  port: 8808
 ```
 
 ### telemost + videochannel
@@ -209,11 +221,15 @@ crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
 net:
   transport: videochannel
+  dns: "8.8.8.8:53"
 video:
   width: 1080
   height: 1080
-  fps: 30
+  fps: 60
   codec: qrcode
+socks:
+  host: "127.0.0.1"
+  port: 8808
 ```
 
 ---
@@ -239,6 +255,10 @@ crypto:
   key: "d823fa01cb3e0609b67322f7cf984c4ee2e4ce2e294936fc24ef38c9e59f4799"
 net:
   transport: datachannel
+  dns: "8.8.8.8:53"
+socks:
+  host: "127.0.0.1"
+  port: 8808
 ```
 
 ---
