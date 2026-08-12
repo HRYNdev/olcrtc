@@ -106,6 +106,7 @@ func (c *Client) shutdown() {
 	if controlStream != nil {
 		_ = controlStream.Close()
 	}
+	c.closeSocksConns()
 	c.waitGoroutines()
 }
 

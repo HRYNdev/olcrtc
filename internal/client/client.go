@@ -35,6 +35,7 @@ var (
 	ErrRemoteNotReady          = errors.New("remote not ready")
 	ErrSOCKSAuthFailed         = errors.New("SOCKS5 authentication failed")
 	ErrSOCKSCredTooLong        = errors.New("socks5 user/pass exceeds 255 bytes")
+	ErrEmptySOCKSDomain        = errors.New("empty socks5 domain")
 )
 
 const (
@@ -74,6 +75,9 @@ type Client struct {
 	socksPass        string
 	sessionReady     chan struct{}
 	wg               sync.WaitGroup
+	socksMu          sync.Mutex
+	socksConns       map[net.Conn]struct{}
+	socksClosed      bool
 	livenessFallback time.Duration
 	shutdownGrace    time.Duration
 	fallbackPending  atomic.Bool
@@ -157,6 +161,46 @@ func RunWithAddress(ctx context.Context, cfg Config, onReady func(actualAddr str
 	client.goTracked(func() { client.acceptLoop(runCtx, listener) })
 	<-runCtx.Done()
 	return nil
+}
+
+// registerSocksConn tracks conn so shutdown can close it, and enforces the
+// concurrency cap. It reports false when the cap is reached or the client is
+// tearing down; the caller then closes conn itself.
+func (c *Client) registerSocksConn(conn net.Conn) bool {
+	c.socksMu.Lock()
+	defer c.socksMu.Unlock()
+	if c.socksClosed {
+		return false
+	}
+	if len(c.socksConns) >= maxSocksConns {
+		logger.Warnf("SOCKS5: %d concurrent connections reached, refusing new ones", maxSocksConns)
+		return false
+	}
+	if c.socksConns == nil {
+		c.socksConns = make(map[net.Conn]struct{})
+	}
+	c.socksConns[conn] = struct{}{}
+	return true
+}
+
+func (c *Client) unregisterSocksConn(conn net.Conn) {
+	c.socksMu.Lock()
+	delete(c.socksConns, conn)
+	c.socksMu.Unlock()
+}
+
+// closeSocksConns closes every live SOCKS connection. Without it shutdown
+// would have to wait out the negotiation deadline of a client that connected
+// and then went quiet.
+func (c *Client) closeSocksConns() {
+	c.socksMu.Lock()
+	conns := c.socksConns
+	c.socksConns = nil
+	c.socksClosed = true
+	c.socksMu.Unlock()
+	for conn := range conns {
+		_ = conn.Close()
+	}
 }
 
 func (c *Client) goTracked(fn func()) {

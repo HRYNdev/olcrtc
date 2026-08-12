@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -20,22 +21,66 @@ const (
 	socksRepHostUnreachable = 4
 )
 
+const (
+	// socksNegotiationTimeout bounds everything before the target is known.
+	// Until then there is nothing legitimate to wait for, and the listener is
+	// allowed to be non-loopback when credentials are configured, so a peer
+	// that connects and stays silent must not pin a goroutine and an fd.
+	socksNegotiationTimeout = 30 * time.Second
+
+	// maxSocksConns caps concurrent SOCKS clients. Each one costs a
+	// goroutine, an fd and a tunnel stream.
+	maxSocksConns = 512
+
+	// acceptRetryDelay is the initial backoff after a failed Accept.
+	// Retrying immediately turns a temporary fd exhaustion into a hot loop
+	// that floods the log.
+	acceptRetryDelay    = 10 * time.Millisecond
+	maxAcceptRetryDelay = time.Second
+)
+
 func (c *Client) acceptLoop(ctx context.Context, listener net.Listener) {
+	delay := time.Duration(0)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			logger.Warnf("Accept error: %v", err)
+			delay = nextAcceptDelay(delay)
+			logger.Warnf("Accept error (retry in %s): %v", delay, err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(delay):
+			}
 			continue
 		}
-		go c.handleSocks5(ctx, conn)
+		delay = 0
+		if !c.registerSocksConn(conn) {
+			_ = conn.Close()
+			continue
+		}
+		c.goTracked(func() {
+			defer c.unregisterSocksConn(conn)
+			c.handleSocks5(ctx, conn)
+		})
 	}
+}
+
+func nextAcceptDelay(current time.Duration) time.Duration {
+	if current <= 0 {
+		return acceptRetryDelay
+	}
+	if next := current * 2; next < maxAcceptRetryDelay {
+		return next
+	}
+	return maxAcceptRetryDelay
 }
 
 func (c *Client) handleSocks5(ctx context.Context, conn net.Conn) {
 	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(socksNegotiationTimeout))
 	if err := c.socks5Handshake(conn); err != nil {
 		return
 	}
@@ -43,14 +88,16 @@ func (c *Client) handleSocks5(ctx context.Context, conn net.Conn) {
 	if err != nil {
 		return
 	}
+	_ = conn.SetDeadline(time.Time{})
 	const sessionReadyTimeout = 60 * time.Second
 	readyCtx, cancel := context.WithTimeout(ctx, sessionReadyTimeout)
 	defer cancel()
 	for {
-		c.sessMu.RLock()
-		session := c.session
-		sessionID := c.sessionID
-		c.sessMu.RUnlock()
+		// The ready channel is taken in the same critical section as the
+		// state it describes. Sampling it afterwards subscribes to the next
+		// generation and misses the signal that just fired, which stalls the
+		// request for the full timeout while the tunnel is up.
+		session, sessionID, ready := c.sessionSnapshot()
 		if session != nil && !session.IsClosed() && sessionID != "" {
 			c.tunnel(ctx, conn, session, targetAddr, targetPort)
 			return
@@ -59,7 +106,7 @@ func (c *Client) handleSocks5(ctx context.Context, conn net.Conn) {
 		case <-readyCtx.Done():
 			_, _ = conn.Write(replyHostUnreachable(targetAddr))
 			return
-		case <-c.readyChannel():
+		case <-ready:
 		}
 	}
 }
@@ -108,7 +155,11 @@ func (c *Client) socks5UserPassAuth(conn net.Conn) error {
 	if _, err := io.ReadFull(conn, password); err != nil {
 		return fmt.Errorf("read socks5 password: %w", err)
 	}
-	if string(user) != c.socksUser || string(password) != c.socksPass {
+	// Both comparisons always run: short-circuiting on the username leaks
+	// which half failed through timing.
+	userOK := subtle.ConstantTimeCompare(user, []byte(c.socksUser)) == 1
+	passOK := subtle.ConstantTimeCompare(password, []byte(c.socksPass)) == 1
+	if !userOK || !passOK {
 		_, _ = conn.Write([]byte{1, 1})
 		return ErrSOCKSAuthFailed
 	}
@@ -147,6 +198,9 @@ func (c *Client) readSocks5Addr(conn net.Conn, addrType byte) (string, error) {
 		length := make([]byte, 1)
 		if _, err := io.ReadFull(conn, length); err != nil {
 			return "", fmt.Errorf("read socks5 domain len: %w", err)
+		}
+		if length[0] == 0 {
+			return "", ErrEmptySOCKSDomain
 		}
 		buffer := make([]byte, length[0])
 		if _, err := io.ReadFull(conn, buffer); err != nil {

@@ -168,8 +168,6 @@ func (c *Client) handleReconnect(ctx context.Context, cfg Config, cancel context
 		}
 	}
 	c.sessMu.RUnlock()
-	newConn := muxconn.New(c.ln, c.keys)
-	newControlConn := muxconn.NewControl(c.ln, c.keys)
 	c.sessMu.Lock()
 	oldPair := c.pair
 	oldControl := c.controlStrm
@@ -177,7 +175,12 @@ func (c *Client) handleReconnect(ctx context.Context, cfg Config, cancel context
 	oldSession := c.session
 	oldControlSession := c.controlSess
 	c.pair = nil
-	c.conn, c.controlConn = newConn, newControlConn
+	// Clear the conns rather than installing replacements. On the liveness
+	// path no smux session is built over them for up to livenessFallback, so
+	// a reader-less conn would fill its inbound queue and then block the
+	// transport's delivery goroutine inside Push. PushData treats nil as a
+	// no-op, and tryReopenSession builds its own conns anyway.
+	c.conn, c.controlConn = nil, nil
 	c.session, c.controlSess = nil, nil
 	c.controlStrm, c.controlStop = nil, nil
 	c.sessionID = ""
@@ -367,4 +370,12 @@ func (c *Client) readyChannel() chan struct{} {
 	c.sessMu.RLock()
 	defer c.sessMu.RUnlock()
 	return c.sessionReady
+}
+
+// sessionSnapshot returns the live session together with the ready channel
+// that will fire when it is replaced, both read in one critical section.
+func (c *Client) sessionSnapshot() (*smux.Session, string, <-chan struct{}) {
+	c.sessMu.RLock()
+	defer c.sessMu.RUnlock()
+	return c.session, c.sessionID, c.sessionReady
 }
