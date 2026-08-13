@@ -91,7 +91,3 @@ func parseRoomURL(raw string) (string, string, error) {
 	}
 	return host, room, nil
 }
-
-func init() { //nolint:gochecknoinits // auth registration is the canonical Go pattern for plugins
-	auth.Register("jitsi", Provider{})
-}

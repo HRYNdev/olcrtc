@@ -35,8 +35,13 @@ app -> SOCKS5 -> olcrtc cnc -> WebRTC/SFU service -> olcrtc srv -> internet
 - **Providers:** `jitsi`, `telemost`, `wbstream`
 - **Transports:** `datachannel`, `vp8channel`, `seichannel`, `videochannel`
 - **Platforms:** Linux, macOS, Windows, Android (gomobile), embeddable Go library
+- **Public Go packages:** `pkg/olcrtc/client`, `pkg/olcrtc/tunnel`, `pkg/olcrtc/engineconn`
 
 Recommended start: `jitsi + datachannel`.
+
+Current builds use OLC2 encryption with directional HKDF-SHA256 keys, separate data/control AAD and replay protection. There is no compatibility fallback for the old crypto format. `seichannel` and `videochannel` use OLVC frame version 5 and reject older video frames. Upgrade both endpoints together.
+
+Display-name dictionaries are embedded. Set optional YAML field `data` to a directory containing `names` and `surnames` to override them.
 
 ## Quick start
 

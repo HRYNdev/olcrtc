@@ -78,29 +78,29 @@ validate_key() {
     [ "${#1}" -eq 64 ]
 }
 
-echo "Select carrier:"
+echo "Select provider:"
 echo "  1) jitsi"
 echo "  2) telemost"
 echo "  3) wbstream"
-read -p "Enter choice [1-3, default: 1]: " CARRIER_CHOICE
+read -p "Enter choice [1-3, default: 1]: " PROVIDER_CHOICE
 
-case "$CARRIER_CHOICE" in
+case "$PROVIDER_CHOICE" in
     2)
-        CARRIER="telemost"
+        PROVIDER="telemost"
         ;;
     3)
-        CARRIER="wbstream"
+        PROVIDER="wbstream"
         ;;
     *)
-        CARRIER="jitsi"
+        PROVIDER="jitsi"
         ;;
 esac
 
-echo "[*] Using carrier: $CARRIER"
+echo "[*] Using provider: $PROVIDER"
 echo ""
 
 WB_TOKEN=""
-if [ "$CARRIER" = "wbstream" ]; then
+if [ "$PROVIDER" = "wbstream" ]; then
     echo "wbstream account token (auth.token), optional."
     echo "Empty = anonymous guest. Required for datachannel (needs moderator rights, canPublishData=true)."
     read -p "wbstream auth.token (Enter to skip): " WB_TOKEN
@@ -134,7 +134,7 @@ echo ""
 
 GEN_ROOM=0
 
-if [ "$CARRIER" = "jitsi" ]; then
+if [ "$PROVIDER" = "jitsi" ]; then
     echo ""
     echo "Выберите Jitsi-сервер (проверьте в браузере, какой работает в вашей сети):"
     echo "  1) https://meet.small-dm.ru/"
@@ -220,7 +220,7 @@ if [[ "$USE_PROXY" =~ ^[Yy]$ ]]; then
 fi
 
 # Transport-specific settings
-VIDEO_W=1920; VIDEO_H=1080; VIDEO_FPS=30; VIDEO_BITRATE="2M"; VIDEO_HW="none"
+VIDEO_W=1920; VIDEO_H=1080; VIDEO_FPS=30
 VIDEO_CODEC="qrcode"; VIDEO_QR_SIZE=0; VIDEO_QR_RECOVERY="low"
 VIDEO_TILE_MODULE=4; VIDEO_TILE_RS=20
 VP8_FPS=25; VP8_BATCH=1
@@ -268,12 +268,6 @@ if [ "$TRANSPORT" = "videochannel" ]; then
 
     read -p "Video FPS [default: 30]: " VFPS_INPUT
     VIDEO_FPS=${VFPS_INPUT:-30}
-
-    read -p "Video bitrate [default: 2M]: " VBRT_INPUT
-    VIDEO_BITRATE=${VBRT_INPUT:-2M}
-
-    read -p "Hardware acceleration (none/nvenc) [default: none]: " VHW_INPUT
-    VIDEO_HW=${VHW_INPUT:-none}
 fi
 
 if [ "$TRANSPORT" = "vp8channel" ]; then
@@ -355,12 +349,11 @@ if [ "$GEN_ROOM" = "1" ]; then
     cat > "$GEN_CONFIG" <<GENEOF
 mode: gen
 auth:
-  provider: "$CARRIER"
+  provider: "$PROVIDER"
 net:
   dns: "$DNS"
 gen:
   amount: 1
-data: data
 GENEOF
     ROOM_ID=$(podman run --rm \
         --network host \
@@ -403,7 +396,7 @@ CONFIG_FILE="$WORK_DIR/server.yaml"
 cat > "$CONFIG_FILE" <<EOF
 mode: srv
 auth:
-  provider: "$CARRIER"
+  provider: "$PROVIDER"
 EOF
 
 if [ -n "$WB_TOKEN" ]; then
@@ -454,8 +447,6 @@ video:
   width: $VIDEO_W
   height: $VIDEO_H
   fps: $VIDEO_FPS
-  bitrate: "$VIDEO_BITRATE"
-  hw: $VIDEO_HW
   codec: $VIDEO_CODEC
   qr_size: $VIDEO_QR_SIZE
   qr_recovery: $VIDEO_QR_RECOVERY
@@ -465,15 +456,11 @@ EOF
 fi
 
 cat >> "$CONFIG_FILE" <<EOF
-data: data
 debug: false
 EOF
 
 echo "[*] Starting OlcRTC server..."
 START_CMD="./olcrtc server.yaml"
-if [ "$TRANSPORT" = "videochannel" ]; then
-    START_CMD="apk add --no-cache ffmpeg >/dev/null && ./olcrtc server.yaml"
-fi
 podman run -d \
     --network host \
     --name "$CONTAINER_NAME" \
@@ -492,7 +479,7 @@ echo ""
 echo "[+] Server started successfully!"
 echo ""
 echo "Container name: $CONTAINER_NAME"
-echo "Carrier:        $CARRIER"
+echo "Provider:        $PROVIDER"
 echo "Transport:      $TRANSPORT"
 echo "Room ID/URL:    $ROOM_ID"
 echo "Encryption key: $KEY"
@@ -503,17 +490,17 @@ if [ "$TRANSPORT" = "vp8channel" ]; then
 elif [ "$TRANSPORT" = "seichannel" ]; then
     TRANSPORT_PAYLOAD="<fps=${SEI_FPS}&batch=${SEI_BATCH}&frag=${SEI_FRAG}&ack-ms=${SEI_ACK}>"
 elif [ "$TRANSPORT" = "videochannel" ]; then
-    TRANSPORT_PAYLOAD="<video-w=${VIDEO_W}&video-h=${VIDEO_H}&video-fps=${VIDEO_FPS}&video-bitrate=${VIDEO_BITRATE}&video-hw=${VIDEO_HW}&video-codec=${VIDEO_CODEC}>"
+    TRANSPORT_PAYLOAD="<video-w=${VIDEO_W}&video-h=${VIDEO_H}&video-fps=${VIDEO_FPS}&video-codec=${VIDEO_CODEC}>"
     if [ "$VIDEO_CODEC" = "tile" ]; then
-        TRANSPORT_PAYLOAD="<video-w=${VIDEO_W}&video-h=${VIDEO_H}&video-fps=${VIDEO_FPS}&video-bitrate=${VIDEO_BITRATE}&video-hw=${VIDEO_HW}&video-codec=${VIDEO_CODEC}&video-tile-module=${VIDEO_TILE_MODULE}&video-tile-rs=${VIDEO_TILE_RS}>"
+        TRANSPORT_PAYLOAD="<video-w=${VIDEO_W}&video-h=${VIDEO_H}&video-fps=${VIDEO_FPS}&video-codec=${VIDEO_CODEC}&video-tile-module=${VIDEO_TILE_MODULE}&video-tile-rs=${VIDEO_TILE_RS}>"
     elif [ "$VIDEO_QR_SIZE" -gt 0 ] 2>/dev/null; then
-        TRANSPORT_PAYLOAD="<video-w=${VIDEO_W}&video-h=${VIDEO_H}&video-fps=${VIDEO_FPS}&video-bitrate=${VIDEO_BITRATE}&video-hw=${VIDEO_HW}&video-codec=${VIDEO_CODEC}&video-qr-recovery=${VIDEO_QR_RECOVERY}&video-qr-size=${VIDEO_QR_SIZE}>"
+        TRANSPORT_PAYLOAD="<video-w=${VIDEO_W}&video-h=${VIDEO_H}&video-fps=${VIDEO_FPS}&video-codec=${VIDEO_CODEC}&video-qr-recovery=${VIDEO_QR_RECOVERY}&video-qr-size=${VIDEO_QR_SIZE}>"
     else
-        TRANSPORT_PAYLOAD="<video-w=${VIDEO_W}&video-h=${VIDEO_H}&video-fps=${VIDEO_FPS}&video-bitrate=${VIDEO_BITRATE}&video-hw=${VIDEO_HW}&video-codec=${VIDEO_CODEC}&video-qr-recovery=${VIDEO_QR_RECOVERY}>"
+        TRANSPORT_PAYLOAD="<video-w=${VIDEO_W}&video-h=${VIDEO_H}&video-fps=${VIDEO_FPS}&video-codec=${VIDEO_CODEC}&video-qr-recovery=${VIDEO_QR_RECOVERY}>"
     fi
 fi
 
-OLC_URI="olcrtc://$CARRIER?${TRANSPORT}${TRANSPORT_PAYLOAD}@$ROOM_ID#$KEY\$$sub_configname"
+OLC_URI="olcrtc://$PROVIDER?${TRANSPORT}${TRANSPORT_PAYLOAD}@$ROOM_ID#$KEY\$$sub_configname"
 echo "uri: $OLC_URI"
 echo ""
 
