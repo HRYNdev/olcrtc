@@ -29,7 +29,8 @@ const (
 )
 
 var (
-	sensitiveFieldRE = regexp.MustCompile(
+	errRequestBodyNotReplayable = errors.New("request body is not replayable")
+	sensitiveFieldRE            = regexp.MustCompile(
 		`(?i)((?:access[_-]?token|room[_-]?token|token|credentials)"?\s*[:=]\s*"?)` +
 			`[^",\s}]+`,
 	)
@@ -58,10 +59,30 @@ func controlFunc(network, _ string, c syscall.RawConn) error {
 
 // NewDialer returns a net.Dialer that calls Protector on each new socket.
 func NewDialer() *net.Dialer {
+	return NewDialerWithResolver(nil)
+}
+
+// NewDialerWithResolver returns a protected dialer using resolver for DNS.
+func NewDialerWithResolver(resolver *net.Resolver) *net.Dialer {
 	return &net.Dialer{
 		Timeout:   defaultDialTimeout,
 		KeepAlive: defaultKeepAlive,
 		Control:   controlFunc,
+		Resolver:  resolver,
+	}
+}
+
+// NewResolver returns a local Go resolver that sends queries to dnsServer.
+func NewResolver(dnsServer string) *net.Resolver {
+	if dnsServer == "" {
+		return nil
+	}
+	return &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			dialer := net.Dialer{Timeout: 3 * time.Second, Control: controlFunc}
+			return dialer.DialContext(ctx, network, dnsServer)
+		},
 	}
 }
 
@@ -71,8 +92,8 @@ func NewTLSConfig() *tls.Config {
 }
 
 // NewHTTPTransport returns an HTTP transport using protected sockets and sane timeouts.
-func NewHTTPTransport() *http.Transport {
-	dialer := NewDialer()
+func NewHTTPTransport(resolvers ...*net.Resolver) *http.Transport {
+	dialer := NewDialerWithResolver(firstResolver(resolvers))
 	return &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           dialer.DialContext,
@@ -86,9 +107,9 @@ func NewHTTPTransport() *http.Transport {
 }
 
 // NewHTTPClient returns an http.Client using protected sockets with DNS retry.
-func NewHTTPClient() *http.Client {
+func NewHTTPClient(resolvers ...*net.Resolver) *http.Client {
 	return &http.Client{
-		Transport: &retryTransport{base: NewHTTPTransport()},
+		Transport: &retryTransport{base: NewHTTPTransport(resolvers...)},
 		Timeout:   defaultHTTPClientTimeout,
 	}
 }
@@ -103,18 +124,58 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	var resp *http.Response
 	var err error
 	for i := range maxRetries {
-		if i > 0 {
-			time.Sleep(time.Duration(i) * 500 * time.Millisecond)
+		if waitErr := waitForRetry(req.Context(), i); waitErr != nil {
+			return nil, waitErr
 		}
-		resp, err = t.base.RoundTrip(req)
+		attempt, requestErr := requestForAttempt(req, i)
+		if requestErr != nil {
+			return resp, fmt.Errorf("prepare retry: %w", requestErr)
+		}
+		resp, err = t.base.RoundTrip(attempt)
 		if err == nil || !isRetriableError(err) {
 			if err != nil {
 				return resp, fmt.Errorf("round trip: %w", err)
 			}
 			return resp, nil
 		}
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
 	}
 	return resp, fmt.Errorf("round trip after %d retries: %w", maxRetries, err)
+}
+
+func waitForRetry(ctx context.Context, attempt int) error {
+	if attempt == 0 {
+		return nil
+	}
+	timer := time.NewTimer(time.Duration(attempt) * 500 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("retry wait: %w", ctx.Err())
+	}
+}
+
+func requestForAttempt(req *http.Request, attempt int) (*http.Request, error) {
+	if attempt == 0 {
+		return req, nil
+	}
+	retry := req.Clone(req.Context())
+	if req.Body == nil {
+		return retry, nil
+	}
+	if req.GetBody == nil {
+		return nil, errRequestBodyNotReplayable
+	}
+	body, err := req.GetBody()
+	if err != nil {
+		return nil, fmt.Errorf("recreate request body: %w", err)
+	}
+	retry.Body = body
+	return retry, nil
 }
 
 func isRetriableError(err error) bool {
@@ -136,12 +197,12 @@ func isRetriableError(err error) bool {
 }
 
 // NewWebSocketDialer returns a WebSocket dialer using protected sockets and shared TLS policy.
-func NewWebSocketDialer(handshakeTimeout time.Duration) websocket.Dialer {
+func NewWebSocketDialer(handshakeTimeout time.Duration, resolvers ...*net.Resolver) websocket.Dialer {
 	if handshakeTimeout <= 0 {
 		handshakeTimeout = defaultWebSocketTimeout
 	}
 	return websocket.Dialer{
-		NetDialContext:   DialContext,
+		NetDialContext:   NewDialerWithResolver(firstResolver(resolvers)).DialContext,
 		Proxy:            http.ProxyFromEnvironment,
 		TLSClientConfig:  NewTLSConfig(),
 		HandshakeTimeout: handshakeTimeout,
@@ -177,11 +238,13 @@ func DialContext(ctx context.Context, network, address string) (net.Conn, error)
 }
 
 // ProxyDialer implements golang.org/x/net/proxy.Dialer for pion ICE.
-type ProxyDialer struct{}
+type ProxyDialer struct {
+	resolver *net.Resolver
+}
 
 // Dial connects to the address on the named network using a protected socket.
 func (d *ProxyDialer) Dial(network, addr string) (net.Conn, error) {
-	conn, err := NewDialer().Dial(network, addr)
+	conn, err := NewDialerWithResolver(d.resolver).Dial(network, addr)
 	if err != nil {
 		return nil, fmt.Errorf("dial failed: %w", err)
 	}
@@ -189,6 +252,13 @@ func (d *ProxyDialer) Dial(network, addr string) (net.Conn, error) {
 }
 
 // NewProxyDialer returns a proxy.Dialer that protects ICE sockets.
-func NewProxyDialer() *ProxyDialer {
-	return &ProxyDialer{}
+func NewProxyDialer(resolvers ...*net.Resolver) *ProxyDialer {
+	return &ProxyDialer{resolver: firstResolver(resolvers)}
+}
+
+func firstResolver(resolvers []*net.Resolver) *net.Resolver {
+	if len(resolvers) == 0 {
+		return nil
+	}
+	return resolvers[0]
 }
