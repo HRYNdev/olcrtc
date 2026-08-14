@@ -77,6 +77,13 @@ type Client struct {
 	// thresholds (which trade latency for KCP-batching tolerance, see
 	// runtime.LivenessTimeout).
 	controlLastPong atomic.Value // time.Time
+
+	// inboundReady signals that at least one packet has arrived from the peer.
+	// On carriers that deliver data only after the subscription becomes active
+	// (LiveKit), this is the proof that our own downstream works: until then the
+	// server reply to CLIENT_HELLO is silently dropped by the carrier.
+	// Holds chan struct{} with capacity 1, replaced on every link bring-up.
+	inboundReady atomic.Value
 	deviceID        string
 	sessionID       string
 	claims          map[string]any
@@ -209,7 +216,11 @@ func (c *Client) bringUpLink(
 		Name:                names.Generate(),
 		OnData:              c.onData,
 		DNSServer:           cfg.DNSServer,
-		RequireTargetedPeer: true,
+		// Transports that do not tag frames with an epoch cannot address a single
+		// peer (the livekit engine has no SendTo), so the server reply is always a
+		// broadcast. Requiring targeted frames there makes the client drop it and
+		// hang forever: the server logs "session opened", the client times out.
+		RequireTargetedPeer: !isBroadcastOnlyTransport(cfg.Transport),
 		Options:             cfg.TransportOptions,
 		Traffic:             cfg.Traffic,
 	})
@@ -234,12 +245,18 @@ func (c *Client) bringUpLink(
 		c.handleReconnect(ctx, cfg, cancel, "carrier")
 	})
 
+	c.inboundReady.Store(make(chan struct{}, 1))
+
 	if err := ln.Connect(ctx); err != nil {
 		return fmt.Errorf("failed to connect link: %w", err)
 	}
 
 	if err := waitForPeer(ctx, ln); err != nil {
 		return err
+	}
+
+	if isBroadcastOnlyTransport(cfg.Transport) {
+		c.waitInboundReady(ctx)
 	}
 
 	c.conn = muxconn.New(ln, c.cipher)
@@ -815,7 +832,46 @@ func setupCipher(keyHex string) (*crypto.Cipher, error) {
 	return cipher, nil
 }
 
+// inboundWarmupTimeout bounds the wait for the first packet from the peer before
+// the handshake. Overshooting it is not fatal: we proceed and let the handshake
+// deadline decide, so behaviour is never worse than upstream.
+const inboundWarmupTimeout = 20 * time.Second
+
+// isBroadcastOnlyTransport reports whether the transport delivers frames to the
+// whole room without epoch tagging or per-peer addressing. Such carriers (the
+// LiveKit data channel behind WbStream) also start delivering data to a joining
+// participant with a delay, which is why the handshake needs a warm-up.
+func isBroadcastOnlyTransport(name string) bool {
+	return name == "datachannel"
+}
+
+// waitInboundReady blocks until the first packet from the peer arrives, proving
+// our downstream is live. Measured 06.08.2026: a SERVER_WELCOME sent at the very
+// moment of joining is lost, while everything the server sent 5+ seconds later
+// arrived intact. The server keepalive (every 10s) is what unblocks this.
+func (c *Client) waitInboundReady(ctx context.Context) {
+	ch, ok := c.inboundReady.Load().(chan struct{})
+	if !ok {
+		return
+	}
+	timer := time.NewTimer(inboundWarmupTimeout)
+	defer timer.Stop()
+	select {
+	case <-ch:
+		logger.Debugf("carrier downstream is live, proceeding to handshake")
+	case <-timer.C:
+		logger.Warnf("no packet from peer in %s, trying the handshake anyway", inboundWarmupTimeout)
+	case <-ctx.Done():
+	}
+}
+
 func (c *Client) onData(data []byte) {
+	if ch, ok := c.inboundReady.Load().(chan struct{}); ok {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
 	c.sessMu.RLock()
 	conn := c.conn
 	c.sessMu.RUnlock()

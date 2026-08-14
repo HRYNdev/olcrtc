@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/framing"
@@ -41,6 +42,16 @@ const MaxMessageSize = 64 * 1024
 // DefaultTimeout bounds how long either side will wait for the peer's reply
 // before bailing out.
 const DefaultTimeout = 15 * time.Second
+
+// maxStaleFrames bounds how many non-handshake frames the client skips while
+// waiting for the server reply. A control frame from a previous, torn-down
+// session can arrive on the freshly opened stream ahead of SERVER_WELCOME on
+// transports that do not tag epochs. The server side has the same protection
+// (see server.acceptHandshake, maxStaleRetries).
+const maxStaleFrames = 8
+
+// controlPrefix marks post-handshake control messages (CONTROL_PING/PONG/...).
+const controlPrefix = "CONTROL_"
 
 // MsgType labels each protocol message.
 type MsgType string
@@ -107,27 +118,34 @@ func Client(rw io.ReadWriter, deviceID string, claims map[string]any) (string, e
 		return "", fmt.Errorf("send hello: %w", err)
 	}
 
-	raw, err := readFrame(rw)
-	if err != nil {
-		return "", fmt.Errorf("read welcome: %w", err)
-	}
+	for skipped := 0; ; skipped++ {
+		raw, err := readFrame(rw)
+		if err != nil {
+			return "", fmt.Errorf("read welcome: %w", err)
+		}
 
-	var probe struct {
-		Type MsgType `json:"type"`
-	}
-	if err := json.Unmarshal(raw, &probe); err != nil {
-		return "", fmt.Errorf("parse reply: %w", err)
-	}
+		var probe struct {
+			Type MsgType `json:"type"`
+		}
+		if err := json.Unmarshal(raw, &probe); err != nil {
+			return "", fmt.Errorf("parse reply: %w", err)
+		}
 
-	switch probe.Type {
-	case TypeHello:
-		return "", fmt.Errorf("%w: got %q", ErrUnexpectedMessage, probe.Type)
-	case TypeWelcome:
-		return parseWelcome(raw)
-	case TypeReject:
-		return parseReject(raw)
-	default:
-		return "", fmt.Errorf("%w: got %q", ErrUnexpectedMessage, probe.Type)
+		switch probe.Type {
+		case TypeHello:
+			return "", fmt.Errorf("%w: got %q", ErrUnexpectedMessage, probe.Type)
+		case TypeWelcome:
+			return parseWelcome(raw)
+		case TypeReject:
+			return parseReject(raw)
+		default:
+			// Stale control frame from a previous session can arrive on the freshly
+			// opened stream ahead of SERVER_WELCOME on carriers without epoch tagging.
+			if skipped < maxStaleFrames && strings.HasPrefix(string(probe.Type), controlPrefix) {
+				continue
+			}
+			return "", fmt.Errorf("%w: got %q", ErrUnexpectedMessage, probe.Type)
+		}
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -203,6 +204,14 @@ func (s *state) handleReadMessage(ctx context.Context, msg Message) error {
 	case TypeClose:
 		return ErrClosedByPeer
 	default:
+		// Рукопожатие, прилетевшее в живой поток, — это попытка пира
+		// переустановиться, а не поломка протокола. Рвать из-за неё рабочую
+		// сессию нельзя: у человека обрываются все соединения разом.
+		// Если связь и правда мертва, её снимет liveness.
+		if strings.HasPrefix(string(msg.Type), "CLIENT_") ||
+			strings.HasPrefix(string(msg.Type), "SERVER_") {
+			return nil
+		}
 		return fmt.Errorf("%w: got %q", ErrUnexpectedMessage, msg.Type)
 	}
 }
