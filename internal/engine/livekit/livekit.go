@@ -403,6 +403,10 @@ func (s *Session) reconnect(ctx context.Context) error {
 	if err := s.connectSession(ctx); err != nil {
 		return err
 	}
+	// Несущая собрана — писать уже можно. Флаг снимаем ДО обработчика:
+	// он синхронно открывает control-поток, а при поднятом флаге запись
+	// запрещена, и клиент запирает сам себя до 30-секундного потолка smux.
+	s.reconnecting.Store(false)
 	if s.onReconnect != nil {
 		s.onReconnect(nil)
 	}
