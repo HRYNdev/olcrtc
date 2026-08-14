@@ -2,18 +2,23 @@
 
 <div align="center">
 
-![Westand](docs/asset/westand.svg)
+<img src="docs/asset/westand.svg" width="250" height="250">
+
+<br>
 
 <img src="https://github.com/openlibrecommunity/material/blob/master/olcrtc.png" width="250" height="250">
 
-![License](https://img.shields.io/badge/license-WTFPL-0D1117?style=flat-square&logo=open-source-initiative&logoColor=green&labelColor=0D1117)
-![Golang](https://img.shields.io/badge/-Golang-0D1117?style=flat-square&logo=go&logoColor=00A7D0)
+<br>
+<br>
 
-[RU](readme.ru.md) / **EN**
+<img src="https://count.owenewans.org/openlibrecommunity/olcrtc?theme=moebooru&notitle">
 
 </div>
 
 # olcRTC
+
+[RU](readme.ru.md) / **EN**
+
 
 `olcRTC` (OpenLibreCommunity RTC) is an encrypted TCP-over-WebRTC tunnel. Traffic is disguised as an ordinary video call on allowed services (Jitsi, Yandex Telemost, WbStream). Inside there is XChaCha20-Poly1305 encryption and smux multiplexing over WebRTC data/video channels.
 
