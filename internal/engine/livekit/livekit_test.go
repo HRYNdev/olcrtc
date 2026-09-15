@@ -278,9 +278,9 @@ func TestDisconnectedEndsWhenReconnectDisallowed(t *testing.T) {
 
 func TestCanSendRequiresConnectedRoomAndQueueHeadroom(t *testing.T) {
 	s := &Session{
-		sendQueue: make(chan outboundPacket, defaultSendQueueSize),
-		done:      make(chan struct{}),
-		closeCh:   make(chan struct{}),
+		sched:   newSendScheduler(),
+		done:    make(chan struct{}),
+		closeCh: make(chan struct{}),
 	}
 	if s.CanSend() {
 		t.Fatal("CanSend() = true without room")
@@ -299,7 +299,9 @@ func TestCanSendRequiresConnectedRoomAndQueueHeadroom(t *testing.T) {
 	}
 
 	for range defaultSendQueueCapHard {
-		s.sendQueue <- outboundPacket{data: []byte("x")}
+		if err := s.sched.push(outboundPacket{data: []byte("x")}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if s.CanSend() {
 		t.Fatal("CanSend() = true at queue high watermark")
@@ -319,7 +321,7 @@ func TestReconnectFailureRetriesUntilContextDone(t *testing.T) {
 		},
 		reconnectCh: make(chan struct{}, 1),
 		closeCh:     make(chan struct{}),
-		sendQueue:   make(chan outboundPacket, defaultSendQueueSize),
+		sched:       newSendScheduler(),
 		done:        make(chan struct{}),
 	}
 	if terminal := s.handleReconnectAttempt(ctx); !terminal {

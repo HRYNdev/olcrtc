@@ -183,7 +183,7 @@ type Session struct {
 	closeCh         chan struct{}
 	lastReconnect   time.Time
 	reconnectCount  int
-	sendQueue       chan outboundPacket
+	sched           *sendScheduler
 	closed          atomic.Bool
 	reconnecting    atomic.Bool
 	done            chan struct{}
@@ -244,7 +244,7 @@ func newSession(cfg engine.Config, connect connectRoomFunc, connectOpts []lksdk.
 		onPeerData:  cfg.OnPeerData,
 		reconnectCh: make(chan struct{}, 1),
 		closeCh:     make(chan struct{}),
-		sendQueue:   make(chan outboundPacket, defaultSendQueueSize),
+		sched:       newSendScheduler(),
 		done:        make(chan struct{}),
 	}
 }
@@ -374,24 +374,25 @@ func (s *Session) startSendWorker() {
 func (s *Session) processSendQueue() {
 	defer s.wg.Done()
 	for {
-		select {
-		case <-s.done:
+		pkt, ok := s.sched.pop()
+		if !ok {
+			select {
+			case <-s.done:
+				return
+			case <-s.sched.wake:
+			}
+			continue
+		}
+		room := s.waitForConnectedRoom()
+		if room == nil {
 			return
-		case pkt, ok := <-s.sendQueue:
-			if !ok {
-				return
-			}
-			room := s.waitForConnectedRoom()
-			if room == nil {
-				return
-			}
-			var dest []string
-			if pkt.to != "" {
-				dest = []string{pkt.to}
-			}
-			if err := room.publishData(pkt.data, pkt.topic, dest); err != nil {
-				log.Printf("livekit publish data error: %v", err)
-			}
+		}
+		var dest []string
+		if pkt.to != "" {
+			dest = []string{pkt.to}
+		}
+		if err := room.publishData(pkt.data, pkt.topic, dest); err != nil {
+			log.Printf("livekit publish data error: %v", err)
 		}
 	}
 }
@@ -416,12 +417,7 @@ func (s *Session) enqueue(pkt outboundPacket) error {
 	if s.closed.Load() {
 		return ErrSessionClosed
 	}
-	select {
-	case s.sendQueue <- pkt:
-		return nil
-	default:
-		return ErrSendQueueFull
-	}
+	return s.sched.push(pkt)
 }
 
 // Send queues data for transmission: to the pinned participant when one is
@@ -650,9 +646,17 @@ func (s *Session) signalEnded(reason string) {
 	}
 }
 
-// CanSend reports whether the session is ready to accept data.
+// CanSend reports whether the session is ready to accept data for Send, i.e.
+// for the pinned participant or, unpinned, for the whole room.
 func (s *Session) CanSend() bool {
-	if s.closed.Load() || s.reconnecting.Load() || len(s.sendQueue) >= defaultSendQueueCapHard {
+	return s.CanSendTo(s.PinnedPeer())
+}
+
+// CanSendTo reports whether the session is ready to accept data for one
+// participant. Back-pressure is per destination, so a client whose queue is
+// full does not stall writers for the others. Implements engine.PeerFlowSession.
+func (s *Session) CanSendTo(peerID string) bool {
+	if s.closed.Load() || s.reconnecting.Load() || !s.sched.canSendTo(peerID) {
 		return false
 	}
 	room := s.currentRoom()
@@ -723,6 +727,7 @@ func closeSignal(ch chan struct{}) {
 
 var (
 	_ engine.PeerSession          = (*Session)(nil)
+	_ engine.PeerFlowSession      = (*Session)(nil)
 	_ engine.RoomDirectorySession = (*Session)(nil)
 )
 

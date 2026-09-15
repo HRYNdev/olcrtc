@@ -144,7 +144,7 @@ func NewControl(ln transport.Transport, cipher *crypto.Cipher) *Conn {
 
 // NewPeer wires a Conn whose writes are addressed to a specific transport peer.
 func NewPeer(ln transport.PeerTransport, cipher *crypto.Cipher, peerID string) *Conn {
-	return &Conn{
+	c := &Conn{
 		ln: ln,
 		send: func(data []byte) error {
 			return ln.SendTo(peerID, data)
@@ -153,6 +153,12 @@ func NewPeer(ln transport.PeerTransport, cipher *crypto.Cipher, peerID string) *
 		in:      make(chan *[]byte, inboundQueue),
 		closeCh: make(chan struct{}),
 	}
+	// Per-peer back-pressure: a peer whose outbound queue is full must not
+	// stall writes to the other peers sharing the transport.
+	if pf, ok := ln.(transport.PeerFlowControl); ok {
+		c.canSend = func() bool { return pf.CanSendTo(peerID) }
+	}
+	return c
 }
 
 // NewPeerControl wires a Conn to the per-peer control plane of a

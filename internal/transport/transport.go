@@ -72,6 +72,13 @@ type PeerTransport interface {
 	SupportsPeerRouting() bool
 }
 
+// PeerFlowControl is implemented by peer transports with per-destination
+// back-pressure: CanSendTo(peerID) replaces CanSend for writers addressed to
+// one peer.
+type PeerFlowControl interface {
+	CanSendTo(peerID string) bool
+}
+
 // PeerControlPlane is implemented by transports that support per-peer isolated
 // control planes. Each peer identified by peerID gets its own KCP session so
 // that multiple clients can handshake and maintain liveness independently.

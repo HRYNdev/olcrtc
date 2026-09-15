@@ -100,6 +100,13 @@ type PeerSession interface {
 	SendTo(peerID string, data []byte) error
 }
 
+// PeerFlowSession is implemented by engines that queue outbound data per
+// destination. CanSendTo reports back-pressure for one peer only, so a peer
+// whose queue is full does not stall writers for the others.
+type PeerFlowSession interface {
+	CanSendTo(peerID string) bool
+}
+
 // PeerReadySession is implemented by engines that can signal when a remote
 // peer has appeared in the shared room. WaitForPeer blocks until the first
 // epoch frame from a remote participant is received, or ctx is cancelled.
