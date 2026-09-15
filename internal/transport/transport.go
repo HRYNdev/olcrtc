@@ -87,6 +87,33 @@ type PeerControlPlane interface {
 	ControlPeerCanSend(peerID string) bool
 }
 
+// ErrRoomDirectoryUnsupported is returned by RoomDirectory methods when the
+// underlying carrier does not name room participants.
+var ErrRoomDirectoryUnsupported = errors.New("carrier has no room directory")
+
+// RoomDirectory is the transport-level view of engine.RoomDirectorySession:
+// server announces, per-client pinning and participant-left notifications on
+// carriers that name every participant (LiveKit). Wrappers implement the
+// methods unconditionally, so callers must check SupportsRoomDirectory (or
+// use AsRoomDirectory).
+type RoomDirectory interface {
+	SupportsRoomDirectory() bool
+	LocalPeerID() string
+	Announce(data []byte) error
+	SetAnnounceHandler(cb func(peerID string, data []byte))
+	SetPeerLeftHandler(cb func(peerID string))
+	PinPeer(peerID string)
+}
+
+// AsRoomDirectory returns tr as a RoomDirectory when its carrier supports it.
+func AsRoomDirectory(tr Transport) (RoomDirectory, bool) {
+	rd, ok := tr.(RoomDirectory)
+	if !ok || !rd.SupportsRoomDirectory() {
+		return nil, false
+	}
+	return rd, true
+}
+
 // PeerReadyTransport is implemented by transports whose carrier can signal
 // when a remote peer has appeared. WaitForPeer blocks until the remote side
 // is confirmed ready (first epoch frame received), or ctx is cancelled.

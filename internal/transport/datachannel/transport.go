@@ -84,6 +84,58 @@ func (p *streamTransport) SupportsPeerRouting() bool {
 	return ok
 }
 
+func (p *streamTransport) roomDirectory() (engine.RoomDirectorySession, bool) {
+	rd, ok := p.session.(engine.RoomDirectorySession)
+	return rd, ok
+}
+
+// SupportsRoomDirectory reports whether the engine names room participants.
+func (p *streamTransport) SupportsRoomDirectory() bool {
+	_, ok := p.roomDirectory()
+	return ok
+}
+
+// LocalPeerID returns the local participant identity, or "".
+func (p *streamTransport) LocalPeerID() string {
+	if rd, ok := p.roomDirectory(); ok {
+		return rd.LocalPeerID()
+	}
+	return ""
+}
+
+// Announce broadcasts an out-of-band message to the room.
+func (p *streamTransport) Announce(data []byte) error {
+	rd, ok := p.roomDirectory()
+	if !ok {
+		return transport.ErrRoomDirectoryUnsupported
+	}
+	if err := rd.Announce(data); err != nil {
+		return fmt.Errorf("session announce: %w", err)
+	}
+	return nil
+}
+
+// SetAnnounceHandler registers the callback for announces from other participants.
+func (p *streamTransport) SetAnnounceHandler(cb func(peerID string, data []byte)) {
+	if rd, ok := p.roomDirectory(); ok {
+		rd.SetAnnounceHandler(cb)
+	}
+}
+
+// SetPeerLeftHandler registers the callback fired when a participant leaves.
+func (p *streamTransport) SetPeerLeftHandler(cb func(peerID string)) {
+	if rd, ok := p.roomDirectory(); ok {
+		rd.SetPeerLeftHandler(cb)
+	}
+}
+
+// PinPeer restricts inbound data to peerID and addresses Send to it.
+func (p *streamTransport) PinPeer(peerID string) {
+	if rd, ok := p.roomDirectory(); ok {
+		rd.PinPeer(peerID)
+	}
+}
+
 // Close terminates the transport.
 func (p *streamTransport) Close() error {
 	if err := p.session.Close(); err != nil {

@@ -5,6 +5,12 @@
 // access token, and provides byte-stream + video-track primitives over a
 // LiveKit room. Service-specific token acquisition (e.g. WB Stream,
 // or a self-hosted LiveKit deployment) lives in the auth package.
+//
+// Every LiveKit participant has a unique identity, and data packets carry the
+// sender identity and may be addressed to a list of identities. The engine
+// exposes this through engine.PeerSession (SendTo + OnPeerData) for the
+// server and engine.RoomDirectorySession (announces, pinning, participant
+// left) so that several clients can share one room with one server.
 package livekit
 
 import (
@@ -29,9 +35,12 @@ const (
 	defaultSendQueueSize    = 5000
 	defaultSendQueueCapHard = 4000
 	dataPublishTopic        = "olcrtc"
-	videoTrackName          = "videochannel"
-	reconnectWindow         = 5 * time.Minute
-	maxReconnects           = 10
+	// announceTopic carries out-of-band room announces (server beacons). The
+	// receiving engine hands them to the announce handler, never to OnData.
+	announceTopic   = "olcrtc-beacon"
+	videoTrackName  = "videochannel"
+	reconnectWindow = 5 * time.Minute
+	maxReconnects   = 10
 )
 
 var (
@@ -48,23 +57,36 @@ var (
 )
 
 type roomHandle interface {
-	publishData(data []byte) error
+	// publishData sends one reliable data packet on topic. Empty destinations
+	// means every other participant in the room.
+	publishData(data []byte, topic string, destinations []string) error
 	publishTrack(track webrtc.TrackLocal) error
 	unpublishLocalTracks()
 	disconnect()
 	connectionState() lksdk.ConnectionState
+	localIdentity() string
+}
+
+// peerLeftSource is implemented by room handles that report departed
+// participants out of band instead of through lksdk.RoomCallback (the
+// in-memory hub, which cannot construct *lksdk.RemoteParticipant).
+type peerLeftSource interface {
+	setPeerLeftSink(fn func(identity string))
 }
 
 type sdkRoom struct {
 	room *lksdk.Room
 }
 
-func (r *sdkRoom) publishData(data []byte) error {
-	if err := r.room.LocalParticipant.PublishDataPacket(
-		lksdk.UserData(data),
-		lksdk.WithDataPublishTopic(dataPublishTopic),
+func (r *sdkRoom) publishData(data []byte, topic string, destinations []string) error {
+	opts := []lksdk.DataPublishOption{
+		lksdk.WithDataPublishTopic(topic),
 		lksdk.WithDataPublishReliable(true),
-	); err != nil {
+	}
+	if len(destinations) > 0 {
+		opts = append(opts, lksdk.WithDataPublishDestination(destinations))
+	}
+	if err := r.room.LocalParticipant.PublishDataPacket(lksdk.UserData(data), opts...); err != nil {
 		return fmt.Errorf("publish data packet: %w", err)
 	}
 	return nil
@@ -105,6 +127,13 @@ func (r *sdkRoom) connectionState() lksdk.ConnectionState {
 	return r.room.ConnectionState()
 }
 
+func (r *sdkRoom) localIdentity() string {
+	if r.room == nil || r.room.LocalParticipant == nil {
+		return ""
+	}
+	return r.room.LocalParticipant.Identity()
+}
+
 type connectRoomFunc func(
 	url, token string, callback *lksdk.RoomCallback, opts ...lksdk.ConnectOption,
 ) (roomHandle, error)
@@ -128,6 +157,13 @@ func connectSDKRoom(
 	return &sdkRoom{room: room}, nil
 }
 
+// outboundPacket is one queued data packet. An empty to means broadcast.
+type outboundPacket struct {
+	data  []byte
+	topic string
+	to    string
+}
+
 // Session is the LiveKit engine handle.
 type Session struct {
 	url             string
@@ -139,6 +175,7 @@ type Session struct {
 	room            roomHandle
 	roomMu          sync.RWMutex
 	onData          func([]byte)
+	onPeerData      func(peerID string, data []byte)
 	onReconnect     func(*webrtc.DataChannel)
 	shouldReconnect func() bool
 	onEnded         func(string)
@@ -146,7 +183,7 @@ type Session struct {
 	closeCh         chan struct{}
 	lastReconnect   time.Time
 	reconnectCount  int
-	sendQueue       chan []byte
+	sendQueue       chan outboundPacket
 	closed          atomic.Bool
 	reconnecting    atomic.Bool
 	done            chan struct{}
@@ -157,6 +194,11 @@ type Session struct {
 	videoTracks     []webrtc.TrackLocal
 	onVideoTrack    func(*webrtc.TrackRemote, *webrtc.RTPReceiver)
 	wg              sync.WaitGroup
+
+	onAnnounce     atomic.Pointer[func(peerID string, data []byte)]
+	onPeerLeft     atomic.Pointer[func(peerID string)]
+	pinned         atomic.Pointer[string]
+	foreignDropped atomic.Uint64
 }
 
 // New creates a new LiveKit engine session.
@@ -185,20 +227,26 @@ func New(ctx context.Context, cfg engine.Config) (engine.Session, error) {
 			settings.SetICEProxyDialer(protect.NewProxyDialer(cfg.Resolver))
 		}))
 	}
+	s := newSession(cfg, connectSDKRoom, connectOpts)
+	s.cancel = cancel
+	return s, nil
+}
+
+func newSession(cfg engine.Config, connect connectRoomFunc, connectOpts []lksdk.ConnectOption) *Session {
 	return &Session{
 		url:         cfg.URL,
 		token:       cfg.Token,
 		name:        cfg.Name,
 		refresh:     cfg.Refresh,
-		connectRoom: connectSDKRoom,
+		connectRoom: connect,
 		connectOpts: connectOpts,
 		onData:      cfg.OnData,
+		onPeerData:  cfg.OnPeerData,
 		reconnectCh: make(chan struct{}, 1),
 		closeCh:     make(chan struct{}),
-		sendQueue:   make(chan []byte, defaultSendQueueSize),
+		sendQueue:   make(chan outboundPacket, defaultSendQueueSize),
 		done:        make(chan struct{}),
-		cancel:      cancel,
-	}, nil
+	}
 }
 
 // Capabilities reports what this engine can do.
@@ -219,10 +267,8 @@ func (s *Session) Connect(ctx context.Context) error {
 func (s *Session) connectSession(_ context.Context) error {
 	roomCB := &lksdk.RoomCallback{
 		ParticipantCallback: lksdk.ParticipantCallback{
-			OnDataReceived: func(data []byte, _ lksdk.DataReceiveParams) {
-				if s.onData != nil {
-					s.onData(data)
-				}
+			OnDataReceived: func(data []byte, params lksdk.DataReceiveParams) {
+				s.handleData(data, params.SenderIdentity, params.Topic)
 			},
 			OnTrackSubscribed: func(track *webrtc.TrackRemote, _ *lksdk.RemoteTrackPublication, _ *lksdk.RemoteParticipant) {
 				if track.Kind() != webrtc.RTPCodecTypeVideo {
@@ -235,6 +281,11 @@ func (s *Session) connectSession(_ context.Context) error {
 					cb(track, nil)
 				}
 			},
+		},
+		OnParticipantDisconnected: func(rp *lksdk.RemoteParticipant) {
+			if rp != nil {
+				s.handlePeerLeft(rp.Identity())
+			}
 		},
 		OnDisconnected: func() {
 			if s.closed.Load() || s.reconnecting.Load() {
@@ -250,12 +301,52 @@ func (s *Session) connectSession(_ context.Context) error {
 	if err != nil {
 		return fmt.Errorf("connect to room: %w", err)
 	}
+	if src, ok := room.(peerLeftSource); ok {
+		src.setPeerLeftSink(s.handlePeerLeft)
+	}
 
 	s.setRoom(room)
 	if err := s.publishPendingTracks(); err != nil {
 		return err
 	}
 	return nil
+}
+
+// handleData routes one received data packet: announces go to the announce
+// handler, packets from participants other than the pinned one are dropped,
+// the rest go to OnPeerData (with the sender identity) or OnData.
+func (s *Session) handleData(data []byte, sender, topic string) {
+	if topic == announceTopic {
+		if cb := s.onAnnounce.Load(); cb != nil && sender != "" {
+			(*cb)(sender, data)
+		}
+		return
+	}
+	if pinned := s.PinnedPeer(); pinned != "" && sender != pinned {
+		// Another client (or any other participant) in a shared room. Its
+		// frames are not for us; pushing them into our smux session would
+		// corrupt it.
+		if n := s.foreignDropped.Add(1); n == 1 || n%10000 == 0 {
+			logger.Debugf("livekit: dropped %d packet(s) from non-server participants (last from %s)", n, sender)
+		}
+		return
+	}
+	if s.onPeerData != nil && sender != "" {
+		s.onPeerData(sender, data)
+		return
+	}
+	if s.onData != nil {
+		s.onData(data)
+	}
+}
+
+func (s *Session) handlePeerLeft(identity string) {
+	if identity == "" {
+		return
+	}
+	if cb := s.onPeerLeft.Load(); cb != nil {
+		(*cb)(identity)
+	}
 }
 
 func (s *Session) publishPendingTracks() error {
@@ -286,7 +377,7 @@ func (s *Session) processSendQueue() {
 		select {
 		case <-s.done:
 			return
-		case data, ok := <-s.sendQueue:
+		case pkt, ok := <-s.sendQueue:
 			if !ok {
 				return
 			}
@@ -294,7 +385,11 @@ func (s *Session) processSendQueue() {
 			if room == nil {
 				return
 			}
-			if err := room.publishData(data); err != nil {
+			var dest []string
+			if pkt.to != "" {
+				dest = []string{pkt.to}
+			}
+			if err := room.publishData(pkt.data, pkt.topic, dest); err != nil {
 				log.Printf("livekit publish data error: %v", err)
 			}
 		}
@@ -317,17 +412,79 @@ func (s *Session) waitForConnectedRoom() roomHandle {
 	}
 }
 
-// Send queues data for transmission.
-func (s *Session) Send(data []byte) error {
+func (s *Session) enqueue(pkt outboundPacket) error {
 	if s.closed.Load() {
 		return ErrSessionClosed
 	}
 	select {
-	case s.sendQueue <- data:
+	case s.sendQueue <- pkt:
 		return nil
 	default:
 		return ErrSendQueueFull
 	}
+}
+
+// Send queues data for transmission: to the pinned participant when one is
+// pinned, otherwise to the whole room.
+func (s *Session) Send(data []byte) error {
+	return s.enqueue(outboundPacket{data: data, topic: dataPublishTopic, to: s.PinnedPeer()})
+}
+
+// SendTo queues data for one participant. Implements engine.PeerSession.
+func (s *Session) SendTo(peerID string, data []byte) error {
+	if peerID == "" {
+		return s.Send(data)
+	}
+	return s.enqueue(outboundPacket{data: data, topic: dataPublishTopic, to: peerID})
+}
+
+// Announce broadcasts an out-of-band message to the room.
+func (s *Session) Announce(data []byte) error {
+	return s.enqueue(outboundPacket{data: data, topic: announceTopic})
+}
+
+// SetAnnounceHandler registers the callback for announces from other participants.
+func (s *Session) SetAnnounceHandler(cb func(peerID string, data []byte)) {
+	if cb == nil {
+		s.onAnnounce.Store(nil)
+		return
+	}
+	s.onAnnounce.Store(&cb)
+}
+
+// SetPeerLeftHandler registers the callback fired when a participant leaves.
+func (s *Session) SetPeerLeftHandler(cb func(peerID string)) {
+	if cb == nil {
+		s.onPeerLeft.Store(nil)
+		return
+	}
+	s.onPeerLeft.Store(&cb)
+}
+
+// PinPeer restricts inbound data to peerID and addresses Send to it.
+func (s *Session) PinPeer(peerID string) {
+	if peerID == "" {
+		s.pinned.Store(nil)
+		return
+	}
+	s.pinned.Store(&peerID)
+}
+
+// PinnedPeer returns the pinned participant identity, or "".
+func (s *Session) PinnedPeer() string {
+	if p := s.pinned.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
+// LocalPeerID returns this participant's identity, or "" when not joined.
+func (s *Session) LocalPeerID() string {
+	room := s.currentRoom()
+	if room == nil {
+		return ""
+	}
+	return room.localIdentity()
 }
 
 // Close terminates the session.
@@ -502,8 +659,10 @@ func (s *Session) CanSend() bool {
 	return room != nil && room.connectionState() == lksdk.ConnectionStateConnected
 }
 
-// GetSendQueue exposes the outbound queue.
-func (s *Session) GetSendQueue() chan []byte { return s.sendQueue }
+// GetSendQueue is part of engine.Session. The LiveKit queue carries addressed
+// packets rather than raw payloads and has no external consumer, so nil is
+// returned.
+func (s *Session) GetSendQueue() chan []byte { return nil }
 
 // SubscriberCanSend reports whether the subscriber path is ready to send.
 func (s *Session) SubscriberCanSend() bool { return s.CanSend() }
@@ -561,6 +720,11 @@ func closeSignal(ch chan struct{}) {
 		close(ch)
 	}
 }
+
+var (
+	_ engine.PeerSession          = (*Session)(nil)
+	_ engine.RoomDirectorySession = (*Session)(nil)
+)
 
 func init() { //nolint:gochecknoinits // engine registration is the canonical Go pattern for plugins
 	engine.Register("livekit", New)

@@ -23,6 +23,8 @@ type fakeRoom struct {
 	mu           sync.Mutex
 	state        lksdk.ConnectionState
 	published    [][]byte
+	topics       []string
+	destinations [][]string
 	tracks       int
 	unpublished  int
 	disconnected int
@@ -32,12 +34,16 @@ func newFakeRoom() *fakeRoom {
 	return &fakeRoom{state: lksdk.ConnectionStateConnected}
 }
 
-func (r *fakeRoom) publishData(data []byte) error {
+func (r *fakeRoom) publishData(data []byte, topic string, destinations []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.published = append(r.published, append([]byte(nil), data...))
+	r.topics = append(r.topics, topic)
+	r.destinations = append(r.destinations, append([]string(nil), destinations...))
 	return nil
 }
+
+func (r *fakeRoom) localIdentity() string { return "PA_local" }
 
 func (r *fakeRoom) publishTrack(webrtc.TrackLocal) error {
 	r.mu.Lock()
@@ -272,7 +278,7 @@ func TestDisconnectedEndsWhenReconnectDisallowed(t *testing.T) {
 
 func TestCanSendRequiresConnectedRoomAndQueueHeadroom(t *testing.T) {
 	s := &Session{
-		sendQueue: make(chan []byte, defaultSendQueueSize),
+		sendQueue: make(chan outboundPacket, defaultSendQueueSize),
 		done:      make(chan struct{}),
 		closeCh:   make(chan struct{}),
 	}
@@ -293,7 +299,7 @@ func TestCanSendRequiresConnectedRoomAndQueueHeadroom(t *testing.T) {
 	}
 
 	for range defaultSendQueueCapHard {
-		s.sendQueue <- []byte("x")
+		s.sendQueue <- outboundPacket{data: []byte("x")}
 	}
 	if s.CanSend() {
 		t.Fatal("CanSend() = true at queue high watermark")
@@ -313,7 +319,7 @@ func TestReconnectFailureRetriesUntilContextDone(t *testing.T) {
 		},
 		reconnectCh: make(chan struct{}, 1),
 		closeCh:     make(chan struct{}),
-		sendQueue:   make(chan []byte, defaultSendQueueSize),
+		sendQueue:   make(chan outboundPacket, defaultSendQueueSize),
 		done:        make(chan struct{}),
 	}
 	if terminal := s.handleReconnectAttempt(ctx); !terminal {
