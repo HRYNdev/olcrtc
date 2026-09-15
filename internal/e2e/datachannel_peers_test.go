@@ -244,6 +244,8 @@ func socksDial(socksAddr, targetAddr string) (net.Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial socks: %w", err)
 	}
+	_ = conn.SetDeadline(time.Now().Add(90 * time.Second))
+	defer func() { _ = conn.SetDeadline(time.Time{}) }()
 	fail := func(step string, err error) (net.Conn, error) {
 		_ = conn.Close()
 		return nil, fmt.Errorf("socks %s: %w", step, err)
@@ -514,6 +516,138 @@ func TestDatachannelAddressedClientLeavesAndFifthJoins(t *testing.T) {
 		if n := c.reconnects.Load(); n != 0 {
 			t.Fatalf("client %s reconnected %d time(s)", c.device, n)
 		}
+	}
+}
+
+// startRoomChatter emulates the conference web client in the call: JSON chat,
+// reactions and service messages, broadcast and addressed to every
+// participant, on the conference's own topics and on olcrtc's topic.
+func startRoomChatter(t *testing.T, hub *livekit.MemoryHub) {
+	t.Helper()
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		topics := []string{"", "lk-chat-topic", "olcrtc"}
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			case <-time.After(time.Millisecond):
+			}
+			msg := []byte(fmt.Sprintf(`{"addr":"x","type":"chat","id":%d,"message":"hello"}`, i))
+			topic := topics[i%len(topics)]
+			hub.Publish("PA_browser", topic, msg)
+			for _, id := range hub.Participants() {
+				hub.Publish("PA_browser", topic, msg, id)
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		close(stop)
+		<-done
+	})
+}
+
+func TestDatachannelRoomChatterDuringClientJoin(t *testing.T) {
+	hub := livekit.NewMemoryHub()
+	hub.SubscribeDelay = 500 * time.Millisecond
+	carrier := registerHubCarrier(t, hub, false)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	blob := startBlobServer(t)
+
+	srvLog := startDCServer(t, ctx, carrier)
+	waitHubParticipants(t, hub, 1)
+	startRoomChatter(t, hub)
+	clients := []*dcClient{
+		startDCClient(t, ctx, carrier, "client-a"),
+		startDCClient(t, ctx, carrier, "client-b"),
+	}
+	waitDCClientsReady(t, 30*time.Second, clients...)
+	errs := make(chan error, 2*len(clients))
+	for i, c := range clients {
+		go func(i int, c *dcClient) { errs <- blobDownload(c.socks, blob, uint64(500+i), 2<<20) }(i, c) //nolint:gosec // small
+		go func(i int, c *dcClient) { errs <- blobUpload(c.socks, blob, uint64(600+i), 1<<20) }(i, c)   //nolint:gosec // small
+	}
+	for range 2 * len(clients) {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	opens, closes := srvLog.snapshot()
+	if opens != len(clients) || len(closes) != 0 {
+		t.Fatalf("server opened=%d closed=%v, want %d and none", opens, closes, len(clients))
+	}
+	for _, c := range clients {
+		if n := c.reconnects.Load(); n != 0 {
+			t.Fatalf("client %s reconnected %d time(s)", c.device, n)
+		}
+	}
+}
+
+// Live WB 16.09 01:38: the phone dropped out of the room and came back under
+// the same identity; the server had closed its session on "left", and the
+// phone's old session (tunnel CONNECT) opened a server session whose
+// handshake read `{"ad` as a frame length. The client must recover promptly
+// and no bogus session may open.
+func TestDatachannelSameIdentityRejoinRecovers(t *testing.T) {
+	hub := livekit.NewMemoryHub()
+	carrier := registerHubCarrier(t, hub, false)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	blob := startBlobServer(t)
+
+	srvLog := startDCServer(t, ctx, carrier)
+	waitHubParticipants(t, hub, 1)
+	serverID := hub.Participants()[0]
+	other := startDCClient(t, ctx, carrier, "client-steady")
+	phone := startDCClient(t, ctx, carrier, "client-phone")
+	waitDCClientsReady(t, 30*time.Second, other, phone)
+	if err := blobDownload(phone.socks, blob, 1, 256<<10); err != nil {
+		t.Fatal(err)
+	}
+	var phoneID string
+	for _, id := range hub.Participants() {
+		if id == serverID {
+			continue
+		}
+		phoneID = id // identities are assigned in join order; the phone joined last
+	}
+
+	hub.Bounce(phoneID, 500*time.Millisecond)
+	bounced := time.Now()
+	deadline := bounced.Add(25 * time.Second)
+	var lastErr error
+	for attempt := 1; ; attempt++ {
+		lastErr = blobDownload(phone.socks, blob, uint64(10+attempt), 512<<10) //nolint:gosec // small
+		if lastErr == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("phone did not recover within 25s after rejoining: %v", lastErr)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Logf("phone recovered %s after rejoining (client reconnects: %d)",
+		time.Since(bounced).Round(100*time.Millisecond), phone.reconnects.Load())
+	if err := blobUpload(phone.socks, blob, 77, 512<<10); err != nil {
+		t.Fatal(err)
+	}
+	if err := blobDownload(other.socks, blob, 78, 512<<10); err != nil {
+		t.Fatalf("steady client disturbed: %v", err)
+	}
+	opens, closes := srvLog.snapshot()
+	if opens != 3 {
+		t.Fatalf("server sessions opened = %d, want 3 (two clients + the phone's new session)", opens)
+	}
+	for _, c := range closes {
+		if c.device != "client-phone" {
+			t.Fatalf("steady client's session closed: %+v", c)
+		}
+	}
+	if n := other.reconnects.Load(); n != 0 {
+		t.Fatalf("steady client reconnected %d time(s)", n)
 	}
 }
 

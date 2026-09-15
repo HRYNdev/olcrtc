@@ -162,6 +162,9 @@ type outboundPacket struct {
 	data  []byte
 	topic string
 	to    string
+	// gen is the room generation at enqueue time; data from an earlier
+	// generation belongs to smux sessions rebuilt after reconnect.
+	gen uint64
 }
 
 // Session is the LiveKit engine handle.
@@ -199,6 +202,10 @@ type Session struct {
 	onPeerLeft     atomic.Pointer[func(peerID string)]
 	pinned         atomic.Pointer[string]
 	foreignDropped atomic.Uint64
+
+	foreignTopicDropped atomic.Uint64
+	// roomGen increments on every successful reconnect.
+	roomGen atomic.Uint64
 }
 
 // New creates a new LiveKit engine session.
@@ -322,6 +329,15 @@ func (s *Session) handleData(data []byte, sender, topic string) {
 		}
 		return
 	}
+	if topic != dataPublishTopic {
+		// Chat, reactions and service messages of the conference client use
+		// other topics (or none). Every olcrtc version publishes on
+		// dataPublishTopic, so nothing else is ours.
+		if n := s.foreignTopicDropped.Add(1); n == 1 || n%1000 == 0 {
+			logger.Debugf("livekit: dropped %d packet(s) on foreign topics (last %q from %s)", n, topic, sender)
+		}
+		return
+	}
 	if pinned := s.PinnedPeer(); pinned != "" && sender != pinned {
 		// Another client (or any other participant) in a shared room. Its
 		// frames are not for us; pushing them into our smux session would
@@ -387,6 +403,9 @@ func (s *Session) processSendQueue() {
 		if room == nil {
 			return
 		}
+		if pkt.topic != announceTopic && pkt.gen != s.roomGen.Load() {
+			continue // popped before a reconnect finished; see reconnect
+		}
 		var dest []string
 		if pkt.to != "" {
 			dest = []string{pkt.to}
@@ -417,6 +436,7 @@ func (s *Session) enqueue(pkt outboundPacket) error {
 	if s.closed.Load() {
 		return ErrSessionClosed
 	}
+	pkt.gen = s.roomGen.Load()
 	return s.sched.push(pkt)
 }
 
@@ -583,6 +603,13 @@ func (s *Session) reconnect(ctx context.Context) error {
 
 	if err := s.connectSession(ctx); err != nil {
 		return err
+	}
+	// Всё, что стояло в очереди, принадлежит smux-сессиям, которые верхний
+	// уровень сейчас пересоберёт. Выпущенные в новую комнату, эти кадры
+	// приходят ноге раньше нового SYN и открывают ей сессию с хвоста старой.
+	s.roomGen.Add(1)
+	if n := s.sched.dropData(); n > 0 {
+		logger.Infof("livekit: dropped %d data packet(s) queued before reconnect", n)
 	}
 	// Несущая собрана — писать уже можно. Флаг снимаем ДО обработчика:
 	// он синхронно открывает control-поток, а при поднятом флаге запись

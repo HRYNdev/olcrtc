@@ -113,6 +113,9 @@ type Server struct {
 	// peerRejects counts frames dropped before a peer session exists
 	// (undecryptable sender or peer limit), for rate-limited logging.
 	peerRejects atomic.Uint64
+	// staleNudged rate-limits stale-session notices per participant.
+	staleMu     sync.Mutex
+	staleNudged map[string]time.Time
 }
 
 const (
@@ -951,13 +954,29 @@ func (s *Server) peerDataConn(peerID string) *muxconn.Conn {
 // Transports with per-peer control planes create the session from the
 // control frame and are not gated. On the others the first data frame is the
 // only signal, and in a conference room it may come from anybody: only a
-// frame sealed with our key, and only below the peer limit, opens a session.
+// frame sealed with our key that opens the client's handshake stream (smux
+// SYN for the client's first stream), and only below the peer limit, opens a
+// session.
+//
+// The SYN check matters when a participant leaves and rejoins under the same
+// identity (WB identities are per account): the server has closed its session
+// on "left", but the client still speaks its old smux session, or flushes
+// frames queued before its reconnect. Opening a session from such a frame
+// made the server accept a tunnel stream as the handshake stream and read the
+// CONNECT JSON as a frame length ("frame too large: 2065850724" = `{"ad`).
 func (s *Server) admitPeer(peerID string, first []byte) bool {
 	if _, ok := s.ln.(transport.PeerControlPlane); ok {
 		return true
 	}
-	if _, err := s.cipher.Decrypt(first); err != nil {
+	pt, err := s.cipher.Decrypt(first)
+	if err != nil {
 		s.logPeerReject("undecryptable data from participant %s (not an olcrtc peer or another key)", peerID)
+		return false
+	}
+	if !runtime.IsSmuxSessionStart(pt) {
+		s.logPeerReject("participant %s sends data of a session this server does not have "+
+			"(it left and rejoined, or the server restarted) - asking it to re-handshake", peerID)
+		s.nudgeStalePeer(peerID)
 		return false
 	}
 	if n := s.peerCount(); n >= maxPeerSessions {
@@ -965,6 +984,44 @@ func (s *Server) admitPeer(peerID string, first []byte) bool {
 		return false
 	}
 	return true
+}
+
+const (
+	// staleNudgeDelay lets a client that is already re-handshaking get its
+	// SYN in first; the FIN is sent only if no session appeared meanwhile, so
+	// it cannot end the client's fresh control stream.
+	staleNudgeDelay = time.Second
+	// staleNudgeEvery rate-limits FINs per participant.
+	staleNudgeEvery = 3 * time.Second
+)
+
+// nudgeStalePeer tells a participant that talks into a session the server
+// does not have to start over: an encrypted smux FIN for its control stream.
+func (s *Server) nudgeStalePeer(peerID string) {
+	now := time.Now()
+	s.staleMu.Lock()
+	if s.staleNudged == nil || len(s.staleNudged) > 256 {
+		s.staleNudged = make(map[string]time.Time)
+	}
+	if last, ok := s.staleNudged[peerID]; ok && now.Sub(last) < staleNudgeEvery {
+		s.staleMu.Unlock()
+		return
+	}
+	s.staleNudged[peerID] = now
+	s.staleMu.Unlock()
+
+	time.AfterFunc(staleNudgeDelay, func() {
+		if s.stopping() || s.peerDataConn(peerID) != nil || s.peerLn == nil {
+			return
+		}
+		fin, err := s.cipher.Encrypt(runtime.SmuxControlFIN())
+		if err != nil {
+			return
+		}
+		if err := s.peerLn.SendTo(peerID, fin); err != nil {
+			logger.Debugf("server: stale-session notice to %s: %v", peerID, err)
+		}
+	})
 }
 
 func (s *Server) logPeerReject(format string, args ...any) {

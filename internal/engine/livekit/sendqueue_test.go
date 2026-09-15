@@ -81,6 +81,27 @@ func TestSendSchedulerKeepsOrderPerDestination(t *testing.T) {
 	}
 }
 
+func TestSendSchedulerDropDataKeepsAnnounces(t *testing.T) {
+	q := newSendScheduler()
+	for range 10 {
+		_ = q.push(outboundPacket{to: "A"})
+		_ = q.push(outboundPacket{to: ""})
+	}
+	_ = q.push(outboundPacket{topic: announceTopic})
+	_ = q.push(outboundPacket{to: "B"})
+	if n := q.dropData(); n != 21 {
+		t.Fatalf("dropData() = %d, want 21", n)
+	}
+	got := drainKeys(t, q)
+	if len(got) != 1 || got[0] != announceQueueKey {
+		t.Fatalf("left after drop = %q, want only the announce", got)
+	}
+	_ = q.push(outboundPacket{to: "A"})
+	if got := drainKeys(t, q); len(got) != 1 || got[0] != "A" {
+		t.Fatalf("scheduler unusable after drop: %q", got)
+	}
+}
+
 func TestSendSchedulerBackPressureIsPerDestination(t *testing.T) {
 	q := newSendScheduler()
 	for range perDestQueueSoft {

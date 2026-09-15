@@ -9,6 +9,7 @@ import (
 
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	lksdk "github.com/owenewans/owenlivekit/v2"
+	"github.com/pion/webrtc/v4"
 )
 
 type recordedData struct {
@@ -181,6 +182,81 @@ func TestAnnounceTopicNeverReachesDataCallbacks(t *testing.T) {
 	got := announces.snapshot()
 	if len(got) != 1 || got[0].peer != "PA_new_server" {
 		t.Fatalf("announce handler got %+v, want one from PA_new_server", got)
+	}
+}
+
+// Conference clients in a WB call publish chat, reactions and service JSON on
+// their own topics (or none). None of it may reach the olcrtc data path,
+// neither the server's per-peer callback nor a pinned or unpinned client.
+func TestForeignTopicsNeverReachDataCallbacks(t *testing.T) {
+	peerRec := newDataRecorder()
+	dataRec := newDataRecorder()
+	_, serverSide := connectFakeSession(t, engine.Config{OnPeerData: peerRec.onPeerData})
+	client, clientSide := connectFakeSession(t, engine.Config{OnData: dataRec.onData})
+	client.PinPeer("PA_server")
+
+	chat := []byte(`{"type":"chat","message":"привет","timestamp":1758000000}`)
+	for _, topic := range []string{"", "lk-chat-topic", "wb-reactions", "olcrtc-ctl-unknown"} {
+		serverSide.callback(0).OnDataReceived(chat, lksdk.DataReceiveParams{SenderIdentity: "PA_client", Topic: topic})
+		clientSide.callback(0).OnDataReceived(chat, lksdk.DataReceiveParams{SenderIdentity: "PA_server", Topic: topic})
+	}
+	if got := peerRec.snapshot(); len(got) != 0 {
+		t.Fatalf("server OnPeerData got %d foreign-topic packet(s)", len(got))
+	}
+	if got := dataRec.snapshot(); len(got) != 0 {
+		t.Fatalf("client OnData got %d foreign-topic packet(s)", len(got))
+	}
+	serverSide.callback(0).OnDataReceived([]byte("ours"), lksdk.DataReceiveParams{SenderIdentity: "PA_client", Topic: dataPublishTopic})
+	if got := peerRec.snapshot(); len(got) != 1 {
+		t.Fatalf("olcrtc topic delivered %d packet(s), want 1", len(got))
+	}
+}
+
+// Packets queued for a room that went away belong to smux sessions the
+// upper layers rebuild after reconnect; they must not be published into the
+// new room ahead of the new session's SYN.
+func TestReconnectDropsDataQueuedForOldRoom(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, connector := connectFakeSession(t, engine.Config{})
+	go s.WatchConnection(ctx)
+	reconnected := make(chan struct{}, 1)
+	s.SetReconnectCallback(func(*webrtc.DataChannel) { reconnected <- struct{}{} })
+
+	old := connector.room(0)
+	old.mu.Lock()
+	old.state = lksdk.ConnectionStateDisconnected // the worker now holds packets
+	old.mu.Unlock()
+	for i := range 20 {
+		if err := s.SendTo("PA_server", []byte{byte(i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Announce([]byte("beacon")); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	connector.callback(0).OnDisconnected()
+	select {
+	case <-reconnected:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no reconnect")
+	}
+	if err := s.SendTo("PA_server", []byte("fresh")); err != nil {
+		t.Fatal(err)
+	}
+	room := connector.room(1)
+	waitFor(t, func() bool { return room.publishedCount() >= 2 })
+	time.Sleep(100 * time.Millisecond)
+	room.mu.Lock()
+	defer room.mu.Unlock()
+	for i, data := range room.published {
+		if room.topics[i] == announceTopic {
+			continue
+		}
+		if string(data) != "fresh" {
+			t.Fatalf("stale packet %v published into the new room (all: %q)", data, room.published)
+		}
 	}
 }
 

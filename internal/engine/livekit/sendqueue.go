@@ -130,6 +130,31 @@ func (s *sendScheduler) removeLocked(i int, key string) {
 	s.ring = append(s.ring[:i], s.ring[i+1:]...)
 }
 
+// dropData discards every queued data packet and keeps announces. Returns the
+// number of packets dropped.
+func (s *sendScheduler) dropData() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dropped := 0
+	kept := s.ring[:0]
+	for _, key := range s.ring {
+		q := s.queues[key]
+		if key == announceQueueKey && q != nil {
+			kept = append(kept, key)
+			continue
+		}
+		if q != nil {
+			dropped += q.len()
+		}
+		delete(s.queues, key)
+	}
+	clear(s.ring[len(kept):])
+	s.ring = kept
+	s.next = 0
+	s.total -= dropped
+	return dropped
+}
+
 func (s *sendScheduler) canSendTo(key string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -79,6 +79,45 @@ func (h *MemoryHub) Kick(identity string) {
 	}
 }
 
+// Bounce emulates a participant that drops out of the room and rejoins under
+// the same identity without its olcrtc session noticing (a LiveKit SDK
+// restart, or a quick reconnect with a per-account identity): the others get
+// participant-left, and everything sent to it during away is lost. Its own
+// session keeps running and keeps sending.
+func (h *MemoryHub) Bounce(identity string, away time.Duration) {
+	h.mu.Lock()
+	p := h.parts[identity]
+	others := make([]*memParticipant, 0, len(h.parts))
+	for id, o := range h.parts {
+		if id != identity {
+			others = append(others, o)
+		}
+	}
+	h.mu.Unlock()
+	if p == nil {
+		return
+	}
+	p.qmu.Lock()
+	p.awayUntil = time.Now().Add(away)
+	p.queue = nil
+	p.qmu.Unlock()
+	for _, o := range others {
+		if sink := o.leftSink.Load(); sink != nil {
+			go (*sink)(identity)
+		}
+	}
+}
+
+// Publish sends one packet into the room as a participant that is not an
+// olcrtc session (a browser in the call): topic and destinations as in
+// LiveKit, empty destinations meaning everyone.
+func (h *MemoryHub) Publish(sender, topic string, data []byte, destinations ...string) {
+	payload := append([]byte(nil), data...)
+	for _, t := range h.targets(sender, destinations) {
+		t.enqueue(memPacket{sender: sender, topic: topic, data: payload})
+	}
+}
+
 func (h *MemoryHub) connect(
 	_, _ string, cb *lksdk.RoomCallback, _ ...lksdk.ConnectOption,
 ) (roomHandle, error) {
@@ -132,8 +171,9 @@ type memParticipant struct {
 
 	qmu    sync.Mutex
 	cond   *sync.Cond
-	queue  []memPacket
-	closed bool
+	queue     []memPacket
+	closed    bool
+	awayUntil time.Time
 
 	leftSink atomic.Pointer[func(string)]
 
@@ -184,7 +224,7 @@ func (p *memParticipant) enqueue(pkt memPacket) {
 		return
 	}
 	p.qmu.Lock()
-	if !p.closed {
+	if !p.closed && !time.Now().Before(p.awayUntil) {
 		p.queue = append(p.queue, pkt)
 		p.cond.Signal()
 	}
