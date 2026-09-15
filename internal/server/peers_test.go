@@ -159,9 +159,29 @@ func newPeerTestServer(t *testing.T) *peerTestServer {
 }
 
 type testPeer struct {
-	id   string
-	sid  string
-	sess *smux.Session
+	id      string
+	sid     string
+	sess    *smux.Session
+	conn    *muxconn.Conn
+	control chan error // result of the client's control loop
+}
+
+// rejoin re-registers the peer's existing (old) conn under its identity, as
+// when a participant comes back with the same identity but its olcrtc
+// session never noticed it had left.
+func (pts *peerTestServer) rejoin(p *testPeer) {
+	pts.link.mu.Lock()
+	pts.link.routes[p.id] = p.conn.Push
+	pts.link.mu.Unlock()
+}
+
+func sessionStartFrame(t *testing.T, pts *peerTestServer) []byte {
+	t.Helper()
+	syn, err := pts.cipher.Encrypt([]byte{2, 0, 0, 0, 3, 0, 0, 0}) // smux v2 SYN, client's first stream
+	if err != nil {
+		t.Fatal(err)
+	}
+	return syn
 }
 
 func (pts *peerTestServer) join(t *testing.T, id string) *testPeer {
@@ -189,13 +209,14 @@ func (pts *peerTestServer) join(t *testing.T, id string) *testPeer {
 	}
 	_ = stream.SetDeadline(time.Time{})
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { _ = control.Run(ctx, stream, control.Config{}) }()
+	controlDone := make(chan error, 1)
+	go func() { controlDone <- control.Run(ctx, stream, control.Config{}) }()
 	t.Cleanup(func() {
 		cancel()
 		_ = sess.Close()
 		_ = conn.Close()
 	})
-	return &testPeer{id: id, sid: sid, sess: sess}
+	return &testPeer{id: id, sid: sid, sess: sess, conn: conn, control: controlDone}
 }
 
 func startPeersEcho(t *testing.T) string {
@@ -391,9 +412,9 @@ func TestUndecryptableParticipantGetsNoSession(t *testing.T) {
 
 func TestPeerLimit(t *testing.T) {
 	pts := newPeerTestServer(t)
-	nop, _ := pts.cipher.Encrypt([]byte{2, 3, 0, 0, 0, 0, 0, 0}) // smux v2 NOP
+	syn := sessionStartFrame(t, pts)
 	for i := range maxPeerSessions + 5 {
-		pts.onPeerData(fmt.Sprintf("PA_%d", i), nop)
+		pts.onPeerData(fmt.Sprintf("PA_%d", i), syn)
 	}
 	if n := pts.peerCount(); n != maxPeerSessions {
 		t.Fatalf("peer sessions = %d, want cap %d", n, maxPeerSessions)
@@ -402,8 +423,8 @@ func TestPeerLimit(t *testing.T) {
 
 func TestStaleRemovalKeepsNewerSession(t *testing.T) {
 	pts := newPeerTestServer(t)
-	nop, _ := pts.cipher.Encrypt([]byte{2, 3, 0, 0, 0, 0, 0, 0})
-	pts.onPeerData("PA_a", nop)
+	syn := sessionStartFrame(t, pts)
+	pts.onPeerData("PA_a", syn)
 	pts.sessMu.RLock()
 	old := pts.peerSessions["PA_a"]
 	pts.sessMu.RUnlock()
@@ -411,7 +432,7 @@ func TestStaleRemovalKeepsNewerSession(t *testing.T) {
 		t.Fatal("no session created")
 	}
 	pts.onPeerLeft("PA_a")
-	pts.onPeerData("PA_a", nop) // participant rejoined with the same identity
+	pts.onPeerData("PA_a", syn) // participant rejoined with the same identity
 	pts.removePeerSessionIf(old, "closed")
 
 	pts.sessMu.RLock()
@@ -419,6 +440,90 @@ func TestStaleRemovalKeepsNewerSession(t *testing.T) {
 	pts.sessMu.RUnlock()
 	if cur == nil || cur == old {
 		t.Fatalf("newer session removed by a goroutine of the old one (cur=%p old=%p)", cur, old)
+	}
+}
+
+// openStaleTunnel opens a tunnel stream on the peer's old smux session and
+// writes the CONNECT JSON, as the app does for a SOCKS request while its
+// session is already gone on the server.
+func openStaleTunnel(t *testing.T, p *testPeer) {
+	t.Helper()
+	st, err := p.sess.OpenStream()
+	if err != nil {
+		t.Fatalf("open stale tunnel: %v", err)
+	}
+	req, _ := json.Marshal(map[string]any{"addr": "127.0.0.1", "cmd": "connect", "port": 443})
+	if _, err := st.Write(req); err != nil {
+		t.Fatalf("write stale connect: %v", err)
+	}
+}
+
+// Live WB 16.09 01:38: a participant left, came back under the same identity
+// and its old session opened a tunnel. The server opened a session from that
+// frame and took the tunnel stream for the handshake stream:
+// "read hello: handshake: frame too large: 2065850724" (= `{"ad`).
+func TestRejoinedParticipantStaleTailOpensNoSession(t *testing.T) {
+	pts := newPeerTestServer(t)
+	p := pts.join(t, "PA_phone")
+	pts.link.leave(p.id)
+	select {
+	case ev := <-pts.closes:
+		if ev.reason != "left" {
+			t.Fatalf("close reason %q, want left", ev.reason)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("session not closed on leave")
+	}
+	pts.rejoin(p)
+	openStaleTunnel(t, p)
+	time.Sleep(100 * time.Millisecond)
+	if n := pts.peerCount(); n != 0 {
+		t.Fatalf("stale tail opened %d session(s)", n)
+	}
+	// The server tells the stale client to start over: its control stream ends.
+	select {
+	case err := <-p.control:
+		t.Logf("stale client control loop ended: %v", err)
+	case <-time.After(staleNudgeDelay + 3*time.Second):
+		t.Fatal("stale client was not told its session is gone")
+	}
+	if n := pts.peerCount(); n != 0 {
+		t.Fatalf("peer sessions = %d after the notice, want 0", n)
+	}
+
+	// A fresh session under the same identity handshakes normally.
+	fresh := pts.join(t, p.id)
+	if err := fresh.echo(startPeersEcho(t), uniquePayload(t, 64<<10)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The tail of the old session may arrive right before the SYN of the new
+// one (frames flushed after reconnect). The new session must open on its SYN
+// and the delayed stale notice must not kill its control stream.
+func TestStaleTailRightBeforeNewSessionHandshakes(t *testing.T) {
+	pts := newPeerTestServer(t)
+	echoAddr := startPeersEcho(t)
+	p := pts.join(t, "PA_phone")
+	pts.link.leave(p.id)
+	<-pts.closes
+	pts.rejoin(p)
+	openStaleTunnel(t, p)
+	fresh := pts.join(t, p.id) // immediately, within the notice delay
+
+	time.Sleep(staleNudgeDelay + 500*time.Millisecond)
+	select {
+	case err := <-fresh.control:
+		t.Fatalf("fresh session's control stream ended by the stale notice: %v", err)
+	default:
+	}
+	if err := fresh.echo(echoAddr, uniquePayload(t, 128<<10)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ev := <-pts.closes:
+		t.Fatalf("unexpected close %+v", ev)
+	default:
 	}
 }
 
