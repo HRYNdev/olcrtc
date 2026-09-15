@@ -85,6 +85,19 @@ type Client struct {
 	// server reply to CLIENT_HELLO is silently dropped by the carrier.
 	// Holds chan struct{} with capacity 1, replaced on every link bring-up.
 	inboundReady atomic.Value
+
+	// roomDir is set on carriers that name room participants (LiveKit). The
+	// client then waits for the server beacon and pins its data path to the
+	// server participant: sends are addressed to it and frames from anybody
+	// else (other clients in the same room) are dropped by the engine.
+	roomDir transport.RoomDirectory
+	// serverPeer is the identity of the participant that last sent a valid
+	// server beacon.
+	serverPeer atomic.Pointer[string]
+	// beaconSeen holds chan struct{} with capacity 1, signalled on every
+	// valid beacon; replaced on every link bring-up.
+	beaconSeen atomic.Value
+
 	deviceID        string
 	sessionID       string
 	claims          map[string]any
@@ -219,10 +232,11 @@ func (c *Client) bringUpLink(
 		OnData:              c.onData,
 		DNSServer:           cfg.DNSServer,
 		Resolver:            resolverFor(cfg.Resolver, cfg.DNSServer),
-		// Transports that do not tag frames with an epoch cannot address a single
-		// peer (the livekit engine has no SendTo), so the server reply is always a
-		// broadcast. Requiring targeted frames there makes the client drop it and
-		// hang forever: the server logs "session opened", the client times out.
+		// Transports that do not tag frames with an epoch have no epoch to
+		// target. Requiring targeted frames there makes the client drop the
+		// server reply and hang: the server logs "session opened", the client
+		// times out. Sender filtering on datachannel is done by pinning the
+		// server participant instead (see onServerBeacon).
 		RequireTargetedPeer: !isBroadcastOnlyTransport(cfg.Transport),
 		Options:             cfg.TransportOptions,
 		Traffic:             cfg.Traffic,
@@ -231,6 +245,13 @@ func (c *Client) bringUpLink(
 		return fmt.Errorf("failed to create link: %w", err)
 	}
 	c.ln = ln
+	c.beaconSeen.Store(make(chan struct{}, 1))
+	if rd, ok := transport.AsRoomDirectory(ln); ok {
+		c.roomDir = rd
+		rd.SetAnnounceHandler(func(peerID string, data []byte) {
+			c.onServerBeacon(ctx, cfg, cancel, peerID, data)
+		})
+	}
 
 	ln.SetEndedCallback(func(reason string) {
 		logger.Infof("Client link reported conference end: %s", reason)
@@ -258,8 +279,8 @@ func (c *Client) bringUpLink(
 		return err
 	}
 
-	if isBroadcastOnlyTransport(cfg.Transport) {
-		c.waitInboundReady(ctx)
+	if c.roomDir != nil {
+		c.waitServerBeacon(ctx)
 	}
 
 	c.conn = muxconn.New(ln, c.cipher)
@@ -847,32 +868,112 @@ func setupCipher(keyHex string) (*crypto.Cipher, error) {
 // deadline decide, so behaviour is never worse than upstream.
 const inboundWarmupTimeout = 20 * time.Second
 
-// isBroadcastOnlyTransport reports whether the transport delivers frames to the
-// whole room without epoch tagging or per-peer addressing. Such carriers (the
-// LiveKit data channel behind WbStream) also start delivering data to a joining
-// participant with a delay, which is why the handshake needs a warm-up.
+// legacyBeaconGrace bounds the wait for a server beacon once our downstream is
+// known to be live (some packet arrived). Beacons come every
+// runtime.ServerBeaconInterval, so two intervals without one mean the server
+// predates addressed mode. A variable for tests.
+var legacyBeaconGrace = 2 * runtime.ServerBeaconInterval //nolint:gochecknoglobals // test knob
+
+// isBroadcastOnlyTransport reports whether the transport delivers frames without
+// epoch tagging (datachannel). Such frames can never be "targeted" in the
+// RequireTargetedPeer sense.
 func isBroadcastOnlyTransport(name string) bool {
 	return name == "datachannel"
 }
 
-// waitInboundReady blocks until the first packet from the peer arrives, proving
-// our downstream is live. Measured 06.08.2026: a SERVER_WELCOME sent at the very
+// waitServerBeacon runs before the handshake on room-directory carriers
+// (LiveKit). It waits for the server beacon, which both names the server
+// participant (pinned by onServerBeacon) and proves that our downstream
+// subscription is live. Measured 06.08.2026: a SERVER_WELCOME sent at the very
 // moment of joining is lost, while everything the server sent 5+ seconds later
-// arrived intact. The server keepalive (every 10s) is what unblocks this.
-func (c *Client) waitInboundReady(ctx context.Context) {
-	ch, ok := c.inboundReady.Load().(chan struct{})
-	if !ok {
+// arrived intact.
+//
+// A server built before addressed mode sends no beacon, only smux keepalives
+// (every 10s). When a packet arrives but no beacon follows within
+// legacyBeaconGrace, the client keeps the old behaviour: broadcast sends and
+// accept-from-anyone receive. It returns true in addressed mode.
+func (c *Client) waitServerBeacon(ctx context.Context) bool {
+	if c.ServerPeer() != "" {
+		return true
+	}
+	beacon, _ := c.beaconSeen.Load().(chan struct{})
+	inbound, _ := c.inboundReady.Load().(chan struct{})
+	overall := time.NewTimer(inboundWarmupTimeout)
+	defer overall.Stop()
+	var grace <-chan time.Time
+	for {
+		select {
+		case <-beacon:
+			logger.Debugf("server beacon received, downstream is live, proceeding to handshake")
+			return true
+		case <-inbound:
+			inbound = nil
+			graceTimer := time.NewTimer(legacyBeaconGrace)
+			defer graceTimer.Stop()
+			grace = graceTimer.C
+		case <-grace:
+			logger.Warnf("no server beacon within %s of the first packet: the server predates addressed "+
+				"datachannel mode, using broadcast (a second client in this room will disturb this one)",
+				legacyBeaconGrace)
+			return false
+		case <-overall.C:
+			logger.Warnf("no packet from peer in %s, trying the handshake anyway", inboundWarmupTimeout)
+			return false
+		case <-ctx.Done():
+			return false
+		}
+	}
+}
+
+// onServerBeacon handles an announce from a room participant. Only a beacon
+// sealed with our key and issued for the sending identity counts. The first
+// one pins the data path to that participant; a later one from a different
+// participant means the server rejoined under a new identity, and the session
+// (bound to the old participant) is re-established.
+func (c *Client) onServerBeacon(
+	ctx context.Context, cfg Config, cancel context.CancelFunc, peerID string, data []byte,
+) {
+	if !runtime.VerifyServerBeacon(c.cipher, peerID, data) {
 		return
 	}
-	timer := time.NewTimer(inboundWarmupTimeout)
-	defer timer.Stop()
-	select {
-	case <-ch:
-		logger.Debugf("carrier downstream is live, proceeding to handshake")
-	case <-timer.C:
-		logger.Warnf("no packet from peer in %s, trying the handshake anyway", inboundWarmupTimeout)
-	case <-ctx.Done():
+	prev := c.ServerPeer()
+	if prev != peerID {
+		c.serverPeer.Store(&peerID)
+		if c.roomDir != nil {
+			c.roomDir.PinPeer(peerID)
+		}
 	}
+	if ch, ok := c.beaconSeen.Load().(chan struct{}); ok {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+	switch {
+	case prev == peerID:
+	case prev == "":
+		logger.Infof("server is room participant %s - addressed mode", peerID)
+	default:
+		logger.Warnf("server moved from participant %s to %s - re-establishing the session", prev, peerID)
+		if ctx.Err() == nil && c.hasSession() {
+			go c.handleReconnect(ctx, cfg, cancel, "server moved")
+		}
+	}
+}
+
+// ServerPeer returns the pinned server participant identity, or "" when the
+// carrier has no room directory or no beacon was seen (legacy mode).
+func (c *Client) ServerPeer() string {
+	if p := c.serverPeer.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
+func (c *Client) hasSession() bool {
+	c.sessMu.RLock()
+	defer c.sessMu.RUnlock()
+	return c.sessionID != ""
 }
 
 func (c *Client) onData(data []byte) {

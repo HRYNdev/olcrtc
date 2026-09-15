@@ -107,6 +107,30 @@ type PeerReadySession interface {
 	WaitForPeer(ctx context.Context) error
 }
 
+// RoomDirectorySession is implemented by engines whose room names every
+// participant with a stable identity and can address data to one of them
+// (LiveKit). It lets several olcrtc clients share one room with a single
+// server: the server advertises itself with Announce, every client pins its
+// data path to that identity with PinPeer, and the server learns about
+// departed clients from the peer-left handler.
+type RoomDirectorySession interface {
+	// LocalPeerID returns this participant's identity, or "" when not joined.
+	LocalPeerID() string
+	// Announce broadcasts a small out-of-band message to the whole room. On
+	// the receiving side it is delivered to the announce handler, never to
+	// the data callbacks.
+	Announce(data []byte) error
+	// SetAnnounceHandler registers the callback for announces from other
+	// participants. Must be set before Connect.
+	SetAnnounceHandler(cb func(peerID string, data []byte))
+	// SetPeerLeftHandler registers the callback fired when a remote
+	// participant leaves the room. Must be set before Connect.
+	SetPeerLeftHandler(cb func(peerID string))
+	// PinPeer restricts inbound data to peerID and addresses Send to it. An
+	// empty peerID restores broadcast send and accept-from-anyone receive.
+	PinPeer(peerID string)
+}
+
 // VideoTrackCapable is implemented by engines that can exchange video tracks.
 type VideoTrackCapable interface {
 	AddVideoTrack(track webrtc.TrackLocal) error

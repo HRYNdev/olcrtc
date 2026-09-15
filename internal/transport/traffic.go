@@ -116,6 +116,50 @@ func (t *trafficTransport) NotifyLinkHealth(unhealthy bool) {
 	}
 }
 
+// SupportsRoomDirectory forwards to inner.
+func (t *trafficTransport) SupportsRoomDirectory() bool {
+	rd, ok := t.inner.(RoomDirectory)
+	return ok && rd.SupportsRoomDirectory()
+}
+
+// LocalPeerID forwards to inner.
+func (t *trafficTransport) LocalPeerID() string {
+	if rd, ok := t.inner.(RoomDirectory); ok {
+		return rd.LocalPeerID()
+	}
+	return ""
+}
+
+// Announce forwards to inner, bypassing payload shaping: beacons are tiny
+// and must not wait behind paced data.
+func (t *trafficTransport) Announce(data []byte) error {
+	if rd, ok := t.inner.(RoomDirectory); ok {
+		return rd.Announce(data)
+	}
+	return ErrRoomDirectoryUnsupported
+}
+
+// SetAnnounceHandler forwards to inner.
+func (t *trafficTransport) SetAnnounceHandler(cb func(peerID string, data []byte)) {
+	if rd, ok := t.inner.(RoomDirectory); ok {
+		rd.SetAnnounceHandler(cb)
+	}
+}
+
+// SetPeerLeftHandler forwards to inner.
+func (t *trafficTransport) SetPeerLeftHandler(cb func(peerID string)) {
+	if rd, ok := t.inner.(RoomDirectory); ok {
+		rd.SetPeerLeftHandler(cb)
+	}
+}
+
+// PinPeer forwards to inner.
+func (t *trafficTransport) PinPeer(peerID string) {
+	if rd, ok := t.inner.(RoomDirectory); ok {
+		rd.PinPeer(peerID)
+	}
+}
+
 func (t *trafficTransport) Reconnect(reason string) { t.inner.Reconnect(reason) }
 
 func (t *trafficTransport) SetReconnectCallback(cb func()) { t.inner.SetReconnectCallback(cb) }

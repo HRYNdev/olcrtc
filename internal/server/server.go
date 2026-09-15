@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -104,7 +105,25 @@ type Server struct {
 	health         *runtime.HealthTracker
 	done           chan struct{}
 	doneOnce       sync.Once
+
+	// roomDir is set in peer-routing mode on carriers that name room
+	// participants (LiveKit): the server announces itself there and closes a
+	// peer's session as soon as its participant leaves the room.
+	roomDir transport.RoomDirectory
+	// peerRejects counts frames dropped before a peer session exists
+	// (undecryptable sender or peer limit), for rate-limited logging.
+	peerRejects atomic.Uint64
 }
+
+const (
+	// maxPeerSessions caps concurrent peer sessions on transports without
+	// per-peer control planes, where any room participant that sends a
+	// decryptable frame gets a smux session.
+	maxPeerSessions = 64
+	// peerHandshakeWait bounds how long a fresh peer session waits for the
+	// client's control stream before it is dropped.
+	peerHandshakeWait = 30 * time.Second
+)
 
 // peerStat holds the per-session info needed to report the live peer count
 // and a disconnect summary.
@@ -125,6 +144,10 @@ type peerSession struct {
 	deviceID    string
 	// sessionReady is closed once sessionID is populated from acceptHandshake.
 	sessionReady chan struct{}
+	// closed is set (under Server.sessMu) when the session is torn down, so a
+	// handshake finishing afterwards does not resurrect it.
+	closed    bool
+	closeOnce sync.Once
 }
 
 // ConnectRequest is a message from the client to establish a new connection.
@@ -310,6 +333,10 @@ func (s *Server) bringUpLink(
 	s.ln = ln
 	if peerLn, ok := ln.(transport.PeerTransport); ok && peerLn.SupportsPeerRouting() {
 		s.peerLn = peerLn
+		if rd, ok := transport.AsRoomDirectory(ln); ok {
+			s.roomDir = rd
+			rd.SetPeerLeftHandler(s.onPeerLeft)
+		}
 	}
 
 	ln.SetEndedCallback(func(reason string) {
@@ -347,7 +374,62 @@ func (s *Server) bringUpLink(
 		defer s.wg.Done()
 		ln.WatchConnection(ctx)
 	}()
+
+	if s.roomDir != nil {
+		logger.Infof("server: addressed room mode - one session per participant, beacon every %s",
+			runtime.ServerBeaconInterval)
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.announceLoop(ctx)
+		}()
+	}
 	return nil
+}
+
+// announceLoop broadcasts the server beacon until shutdown. See
+// runtime.ServerBeaconInterval for what the beacon is for.
+func (s *Server) announceLoop(ctx context.Context) {
+	ticker := time.NewTicker(runtime.ServerBeaconInterval)
+	defer ticker.Stop()
+	for {
+		s.sendBeacon()
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.done:
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *Server) sendBeacon() {
+	identity := s.roomDir.LocalPeerID()
+	if identity == "" {
+		return // not joined yet or reconnecting
+	}
+	beacon, err := runtime.EncodeServerBeacon(s.cipher, identity)
+	if err != nil {
+		logger.Warnf("server beacon: %v", err)
+		return
+	}
+	if err := s.roomDir.Announce(beacon); err != nil {
+		logger.Debugf("server beacon: %v", err)
+	}
+}
+
+// onPeerLeft closes the session of a participant that left the room, without
+// waiting for smux keepalive or liveness to notice.
+func (s *Server) onPeerLeft(peerID string) {
+	s.sessMu.RLock()
+	ps := s.peerSessions[peerID]
+	s.sessMu.RUnlock()
+	if ps == nil {
+		return
+	}
+	logger.Infof("server: participant %s left the room - closing its session", peerID)
+	s.removePeerSessionIf(ps, "left")
 }
 
 func (s *Server) installSession() {
@@ -484,6 +566,19 @@ func (s *Server) getOrCreatePeerControlSession(peerID string) *peerSession {
 
 func (s *Server) handleReconnect() {
 	s.recordReconnect()
+	if s.peerLn != nil {
+		if _, perPeerControl := s.ln.(transport.PeerControlPlane); !perPeerControl {
+			// Peer routing without per-peer control planes (datachannel): the
+			// carrier dropped whatever was in flight while it was down, and smux
+			// cannot recover from a gap, so every peer session is dead. The
+			// singleton session is not used in this mode, so rebuilding it
+			// would only leave a stray broadcasting smux behind. Close the peer
+			// sessions; each client re-handshakes on its own.
+			logger.Infof("server reconnect reason=carrier - closing %d peer session(s)", s.peerCount())
+			s.closeAllPeerSessions("reconnect")
+			return
+		}
+	}
 	logger.Infof("server reconnect reason=carrier - tearing down smux session")
 	s.sessMu.RLock()
 	current := s.session
@@ -666,9 +761,7 @@ func (s *Server) closeSession() {
 		s.onClose(oldSID, "closed")
 		s.trackPeerClose(oldSID, "closed")
 	}
-	for _, ps := range peers {
-		s.closePeerSession(ps, "closed")
-	}
+	s.closePeerSessions(peers, "closed")
 }
 
 func (s *Server) removePeerSession(peerID, reason string) {
@@ -681,30 +774,82 @@ func (s *Server) removePeerSession(peerID, reason string) {
 	}
 }
 
+// removePeerSessionIf unregisters ps only while it is still the session
+// registered for its peer, and closes it either way. Goroutines of an old
+// session (handshake, accept loop, liveness) must not tear down a newer
+// session the same participant opened after rejoining.
+func (s *Server) removePeerSessionIf(ps *peerSession, reason string) {
+	s.sessMu.Lock()
+	if s.peerSessions[ps.peerID] == ps {
+		delete(s.peerSessions, ps.peerID)
+	}
+	s.sessMu.Unlock()
+	s.closePeerSession(ps, reason)
+}
+
+func (s *Server) closeAllPeerSessions(reason string) {
+	s.sessMu.Lock()
+	peers := s.peerSessions
+	s.peerSessions = make(map[string]*peerSession)
+	s.sessMu.Unlock()
+	s.closePeerSessions(peers, reason)
+}
+
+// closePeerSessions closes sessions in parallel: each close spends a few
+// hundred milliseconds delivering CONTROL_CLOSE, which must not add up per
+// peer.
+func (s *Server) closePeerSessions(peers map[string]*peerSession, reason string) {
+	var wg sync.WaitGroup
+	for _, ps := range peers {
+		wg.Add(1)
+		go func(ps *peerSession) {
+			defer wg.Done()
+			s.closePeerSession(ps, reason)
+		}(ps)
+	}
+	wg.Wait()
+}
+
+func (s *Server) peerCount() int {
+	s.sessMu.RLock()
+	defer s.sessMu.RUnlock()
+	return len(s.peerSessions)
+}
+
 func (s *Server) closePeerSession(ps *peerSession, reason string) {
-	if ps.controlStop != nil {
-		ps.controlStop()
-	}
-	notifyControlClose(ps.controlStrm)
-	if ps.controlSess != nil {
-		_ = ps.controlSess.Close()
-	}
-	if ps.controlConn != nil {
-		_ = ps.controlConn.Close()
-	}
-	if ps.session != nil {
-		_ = ps.session.Close()
-	}
-	if ps.conn != nil {
-		_ = ps.conn.Close()
-	}
-	if ps.controlStrm != nil {
-		_ = ps.controlStrm.Close()
-	}
-	if ps.sessionID != "" {
-		s.onClose(ps.sessionID, reason)
-		s.trackPeerClose(ps.sessionID, reason)
-	}
+	ps.closeOnce.Do(func() {
+		s.sessMu.Lock()
+		ps.closed = true
+		controlStop, controlStrm := ps.controlStop, ps.controlStrm
+		controlSess, controlConn := ps.controlSess, ps.controlConn
+		sess, conn := ps.session, ps.conn
+		sid := ps.sessionID
+		s.sessMu.Unlock()
+
+		if controlStop != nil {
+			controlStop()
+		}
+		notifyControlClose(controlStrm)
+		if controlSess != nil {
+			_ = controlSess.Close()
+		}
+		if controlConn != nil {
+			_ = controlConn.Close()
+		}
+		if sess != nil {
+			_ = sess.Close()
+		}
+		if conn != nil {
+			_ = conn.Close()
+		}
+		if controlStrm != nil {
+			_ = controlStrm.Close()
+		}
+		if sid != "" {
+			s.onClose(sid, reason)
+			s.trackPeerClose(sid, reason)
+		}
+	})
 }
 
 // trackPeerOpen records a newly opened session and logs the live peer summary.
@@ -775,16 +920,63 @@ func (s *Server) onData(data []byte) {
 }
 
 func (s *Server) onPeerData(peerID string, data []byte) {
-	ps := s.getPeerSession(peerID)
-	if ps == nil {
+	if peerID == "" || s.peerLn == nil {
 		// Not in peer-routing mode: fall back to the single data conn.
 		s.onData(data)
 		return
 	}
-	ps.conn.Push(data)
+	conn := s.peerDataConn(peerID)
+	if conn == nil {
+		if !s.admitPeer(peerID, data) {
+			return
+		}
+		conn = s.getPeerSession(peerID)
+		if conn == nil {
+			return
+		}
+	}
+	conn.Push(data)
 }
 
-func (s *Server) getPeerSession(peerID string) *peerSession {
+func (s *Server) peerDataConn(peerID string) *muxconn.Conn {
+	s.sessMu.RLock()
+	defer s.sessMu.RUnlock()
+	if ps := s.peerSessions[peerID]; ps != nil {
+		return ps.conn
+	}
+	return nil
+}
+
+// admitPeer decides whether a participant without a session may get one.
+// Transports with per-peer control planes create the session from the
+// control frame and are not gated. On the others the first data frame is the
+// only signal, and in a conference room it may come from anybody: only a
+// frame sealed with our key, and only below the peer limit, opens a session.
+func (s *Server) admitPeer(peerID string, first []byte) bool {
+	if _, ok := s.ln.(transport.PeerControlPlane); ok {
+		return true
+	}
+	if _, err := s.cipher.Decrypt(first); err != nil {
+		s.logPeerReject("undecryptable data from participant %s (not an olcrtc peer or another key)", peerID)
+		return false
+	}
+	if n := s.peerCount(); n >= maxPeerSessions {
+		s.logPeerReject("peer limit %d reached, ignoring participant %s", maxPeerSessions, peerID)
+		return false
+	}
+	return true
+}
+
+func (s *Server) logPeerReject(format string, args ...any) {
+	if n := s.peerRejects.Add(1); n == 1 || n%1000 == 0 {
+		args = append(args, n)
+		logger.Infof("server: "+format+" [%d frame(s) dropped so far]", args...)
+	}
+}
+
+// getPeerSession returns the data conn of the peer's session, creating the
+// session (and its serve goroutine) when needed.
+func (s *Server) getPeerSession(peerID string) *muxconn.Conn {
 	if peerID == "" || s.peerLn == nil {
 		return nil
 	}
@@ -795,8 +987,9 @@ func (s *Server) getPeerSession(peerID string) *peerSession {
 	ps := s.peerSessions[peerID]
 	if ps != nil && ps.conn != nil {
 		// Data conn already wired; nothing to do.
+		conn := ps.conn
 		s.sessMu.Unlock()
-		return ps
+		return conn
 	}
 	// Build the data smux session for this peer.
 	conn := muxconn.NewPeer(s.peerLn, s.cipher, peerID)
@@ -833,7 +1026,7 @@ func (s *Server) getPeerSession(peerID string) *peerSession {
 		defer s.wg.Done()
 		s.servePeer(ps)
 	}()
-	return ps
+	return conn
 }
 
 // serve drives the smux Accept loop. The first accepted stream on a given
@@ -1025,7 +1218,7 @@ func (s *Server) acceptPeerHandshake(ctx context.Context, ps *peerSession) {
 			default:
 			}
 			logger.Infof("server: AcceptStream(peer control=%s) error: %v", ps.peerID, err)
-			s.removePeerSession(ps.peerID, "handshake failed")
+			s.removePeerSessionIf(ps, "handshake failed")
 			return
 		}
 		_ = stream.SetDeadline(time.Now().Add(handshake.DefaultTimeout))
@@ -1038,7 +1231,7 @@ func (s *Server) acceptPeerHandshake(ctx context.Context, ps *peerSession) {
 				continue
 			}
 			logger.Warnf("handshake peer=%s failed: %v", ps.peerID, err)
-			s.removePeerSession(ps.peerID, "handshake failed")
+			s.removePeerSessionIf(ps, "handshake failed")
 			return
 		}
 		// Populate the peerSession and signal readiness so waitPeerHandshake unblocks.
@@ -1063,6 +1256,12 @@ func (s *Server) acceptPeerHandshake(ctx context.Context, ps *peerSession) {
 func (s *Server) startPeerControlLoop(ctx context.Context, ps *peerSession, stream *smux.Stream) {
 	controlCtx, stop := context.WithCancel(ctx)
 	s.sessMu.Lock()
+	if ps.closed {
+		s.sessMu.Unlock()
+		stop()
+		_ = stream.Close()
+		return
+	}
 	ps.controlStrm = stream
 	ps.controlStop = stop
 	s.sessMu.Unlock()
@@ -1104,34 +1303,44 @@ func (s *Server) startPeerControlLoop(ctx context.Context, ps *peerSession, stre
 		if controlCtx.Err() != nil || ctx.Err() != nil {
 			return
 		}
-		if err != nil {
+		reason := "liveness"
+		if errors.Is(err, control.ErrClosedByPeer) || errors.Is(err, io.EOF) {
+			reason = "closed by peer"
+			logger.Infof("peer control stream closed by peer=%s", ps.peerID)
+		} else if err != nil {
 			logger.Warnf("peer control stream ended peer=%s: %v", ps.peerID, err)
 		}
-		s.removePeerSession(ps.peerID, "liveness")
+		s.removePeerSessionIf(ps, reason)
 	}()
 }
 
 func (s *Server) servePeer(ps *peerSession) {
-	if ps.sessionID == "" && !s.establishPeerSession(ps) {
+	s.sessMu.RLock()
+	established := ps.sessionID != ""
+	s.sessMu.RUnlock()
+	if !established && !s.establishPeerSession(ps) {
 		return
 	}
+	s.sessMu.RLock()
+	sid, sess := ps.sessionID, ps.session
+	s.sessMu.RUnlock()
 	for {
 		if s.stopping() {
 			return
 		}
-		stream, err := ps.session.AcceptStream()
+		stream, err := sess.AcceptStream()
 		if err != nil {
 			if s.stopping() {
 				return
 			}
 			logger.Infof("server: AcceptStream(peer=%s) error - closing peer session: %v", ps.peerID, err)
-			s.removePeerSession(ps.peerID, "closed")
+			s.removePeerSessionIf(ps, "closed")
 			return
 		}
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
-			s.handleStream(context.Background(), stream, ps.sessionID)
+			s.handleStream(context.Background(), stream, sid)
 		}()
 	}
 }
@@ -1139,22 +1348,74 @@ func (s *Server) servePeer(ps *peerSession) {
 // establishPeerSession ensures the per-peer handshake has completed. When a
 // per-peer control smux session was set up by getOrCreatePeerControlSession,
 // the sessionReady channel signals completion; otherwise the handshake runs
-// inline on the data smux session (legacy / datachannel path).
+// inline on the data smux session (datachannel path).
 func (s *Server) establishPeerSession(ps *peerSession) bool {
 	// Per-peer control plane path: sessionReady is closed by acceptPeerHandshake.
 	if ps.sessionReady != nil {
 		return s.waitPeerHandshake(ps)
 	}
-	// No isolated control plane: drive the handshake inline.
-	if !s.acceptHandshake(s.baseCtx, ps.session) {
-		s.removePeerSession(ps.peerID, "handshake failed")
-		return false
+	return s.acceptPeerHandshakeInline(ps)
+}
+
+// acceptPeerHandshakeInline runs the handshake on the first stream of the
+// peer's data smux session (no isolated control plane) and starts that
+// peer's liveness loop on it. Unlike acceptHandshake it touches only ps: a
+// failure removes this peer and never reinstalls the shared session or
+// reconnects the carrier, which would drop every other client in the room.
+func (s *Server) acceptPeerHandshakeInline(ps *peerSession) bool {
+	ctx := s.baseCtx
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	s.sessMu.RLock()
-	ps.sessionID = s.sessionID
-	ps.deviceID = s.deviceID
-	s.sessMu.RUnlock()
-	return true
+	// A session created by stray frames (a client that is gone, or frames
+	// still in flight after its session was closed) never gets a control
+	// stream; do not keep it forever.
+	_ = ps.session.SetDeadline(time.Now().Add(peerHandshakeWait))
+	defer func() { _ = ps.session.SetDeadline(time.Time{}) }()
+
+	const maxStaleRetries = 3
+	for retry := 0; retry <= maxStaleRetries; retry++ {
+		stream, err := ps.session.AcceptStream()
+		if err != nil {
+			if !s.stopping() {
+				logger.Infof("server: no handshake from peer %s: %v", ps.peerID, err)
+			}
+			s.removePeerSessionIf(ps, "handshake failed")
+			return false
+		}
+		_ = stream.SetDeadline(time.Now().Add(handshake.DefaultTimeout))
+		hello, sid, err := handshake.Server(stream, s.authHook)
+		_ = stream.SetDeadline(time.Time{})
+		if err != nil {
+			_ = stream.Close()
+			if errors.Is(err, framing.ErrFrameTooLarge) && retry < maxStaleRetries {
+				logger.Debugf("handshake peer=%s: stale stream retry %d: %v", ps.peerID, retry+1, err)
+				continue
+			}
+			logger.Warnf("handshake peer=%s failed: %v", ps.peerID, err)
+			s.removePeerSessionIf(ps, "handshake failed")
+			return false
+		}
+
+		s.sessMu.Lock()
+		if ps.closed || s.peerSessions[ps.peerID] != ps {
+			s.sessMu.Unlock()
+			_ = stream.Close()
+			return false
+		}
+		ps.deviceID = hello.DeviceID
+		ps.sessionID = sid
+		s.sessMu.Unlock()
+
+		s.recordSession(sid)
+		s.onOpen(sid, hello.DeviceID, hello.Claims)
+		s.trackPeerOpen(sid, hello.DeviceID)
+		logger.Infof("peer session %s opened (peer=%s device=%s)", sid, ps.peerID, hello.DeviceID)
+		s.startPeerControlLoop(ctx, ps, stream)
+		return true
+	}
+	s.removePeerSessionIf(ps, "handshake failed")
+	return false
 }
 
 // waitPeerHandshake blocks until acceptPeerHandshake closes ps.sessionReady
@@ -1176,7 +1437,7 @@ func (s *Server) waitPeerHandshake(ps *peerSession) bool {
 		}
 		return true
 	case <-done:
-		s.removePeerSession(ps.peerID, "closed")
+		s.removePeerSessionIf(ps, "closed")
 		return false
 	}
 }
