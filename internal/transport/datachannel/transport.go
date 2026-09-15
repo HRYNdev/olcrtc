@@ -78,6 +78,15 @@ func (p *streamTransport) SendTo(peerID string, data []byte) error {
 	return nil
 }
 
+// CanSendTo reports per-peer back-pressure when the engine queues per
+// destination, otherwise the shared CanSend.
+func (p *streamTransport) CanSendTo(peerID string) bool {
+	if pf, ok := p.session.(engine.PeerFlowSession); ok {
+		return pf.CanSendTo(peerID)
+	}
+	return p.session.CanSend()
+}
+
 // SupportsPeerRouting reports whether this transport can address individual peers.
 func (p *streamTransport) SupportsPeerRouting() bool {
 	_, ok := p.session.(engine.PeerSession)

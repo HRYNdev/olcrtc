@@ -272,7 +272,20 @@ func socksDial(socksAddr, targetAddr string) (net.Conn, error) {
 	return conn, nil
 }
 
+type countingWriter struct{ n *atomic.Int64 }
+
+func (w countingWriter) Write(p []byte) (int, error) {
+	w.n.Add(int64(len(p)))
+	return len(p), nil
+}
+
 func blobDownload(socks, blob string, seed uint64, size int64) error {
+	return blobDownloadCounted(socks, blob, seed, size, nil)
+}
+
+// blobDownloadCounted is blobDownload that also adds received bytes to
+// progress as they arrive, for rate measurements over a fixed window.
+func blobDownloadCounted(socks, blob string, seed uint64, size int64, progress *atomic.Int64) error {
 	conn, err := socksDial(socks, blob)
 	if err != nil {
 		return err
@@ -287,7 +300,11 @@ func blobDownload(socks, blob string, seed uint64, size int64) error {
 	}
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 	h := sha256.New()
-	n, err := io.Copy(h, conn)
+	var sink io.Writer = h
+	if progress != nil {
+		sink = io.MultiWriter(h, countingWriter{progress})
+	}
+	n, err := io.Copy(sink, conn)
 	if err != nil {
 		return fmt.Errorf("download after %d bytes: %w", n, err)
 	}
@@ -614,9 +631,12 @@ func TestDatachannelPeersFairness(t *testing.T) {
 	light := clients[3]
 
 	const lightSize = 16 << 10
-	sample := func(n int, seed uint64) []time.Duration {
+	// sample makes at least n light requests and keeps going until minWindow
+	// has passed, so the heavy rate is measured over a fixed-length window.
+	sample := func(n int, minWindow time.Duration, seed uint64) []time.Duration {
 		out := make([]time.Duration, 0, n)
-		for i := range n {
+		start := time.Now()
+		for i := 0; i < n || time.Since(start) < minWindow; i++ {
 			t0 := time.Now()
 			if err := blobDownload(light.socks, blob, seed+uint64(i), lightSize); err != nil { //nolint:gosec // small
 				t.Fatalf("light client: %v", err)
@@ -629,7 +649,7 @@ func TestDatachannelPeersFairness(t *testing.T) {
 	}
 	pct := func(d []time.Duration, p float64) time.Duration { return d[int(float64(len(d)-1)*p)] }
 
-	alone := sample(10, 10_000)
+	alone := sample(10, 0, 10_000)
 
 	var heavyBytes atomic.Int64
 	stop := make(chan struct{})
@@ -644,7 +664,8 @@ func TestDatachannelPeersFairness(t *testing.T) {
 					return
 				default:
 				}
-				if err := blobDownload(c.socks, blob, uint64(i*100_000+round), 8<<20); err != nil { //nolint:gosec // small
+				err := blobDownloadCounted(c.socks, blob, uint64(i*100_000+round), 8<<20, &heavyBytes) //nolint:gosec // small
+				if err != nil {
 					select {
 					case <-stop:
 					default:
@@ -652,15 +673,15 @@ func TestDatachannelPeersFairness(t *testing.T) {
 					}
 					return
 				}
-				heavyBytes.Add(8 << 20)
 			}
 		}(i, c)
 	}
 	time.Sleep(3 * time.Second) // let the heavy transfers fill the queues
+	bytesBefore := heavyBytes.Load()
 	start := time.Now()
-	loaded := sample(30, 20_000)
+	loaded := sample(30, 15*time.Second, 20_000)
 	elapsed := time.Since(start)
-	heavyMbit := float64(heavyBytes.Load()*8) / 1e6 / (elapsed + 3*time.Second).Seconds()
+	heavyMbit := float64((heavyBytes.Load()-bytesBefore)*8) / 1e6 / elapsed.Seconds()
 	close(stop)
 	cancel()
 	heavy.Wait()

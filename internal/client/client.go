@@ -283,10 +283,16 @@ func (c *Client) bringUpLink(
 		c.waitServerBeacon(ctx)
 	}
 
-	c.conn = muxconn.New(ln, c.cipher)
-	c.controlConn = muxconn.NewControl(ln, c.cipher)
+	// onData reads these under sessMu from the carrier's receive goroutine,
+	// and packets (a server keepalive or beacon) may already be arriving.
+	conn := muxconn.New(ln, c.cipher)
+	controlConn := muxconn.NewControl(ln, c.cipher)
+	c.sessMu.Lock()
+	c.conn = conn
+	c.controlConn = controlConn
+	c.sessMu.Unlock()
 
-	sess, controlSess, err := buildSmuxClient(ln, c.conn, c.controlConn)
+	sess, controlSess, err := buildSmuxClient(ln, conn, controlConn)
 	if err != nil {
 		_ = c.conn.Close()
 		if c.controlConn != nil {

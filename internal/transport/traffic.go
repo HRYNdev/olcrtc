@@ -73,6 +73,14 @@ func (t *trafficTransport) SendTo(peerID string, data []byte) error {
 	}, data)
 }
 
+// CanSendTo forwards per-peer back-pressure, falling back to CanSend.
+func (t *trafficTransport) CanSendTo(peerID string) bool {
+	if pf, ok := t.inner.(PeerFlowControl); ok {
+		return pf.CanSendTo(peerID)
+	}
+	return t.inner.CanSend()
+}
+
 func (t *trafficTransport) SupportsPeerRouting() bool {
 	peer, ok := t.inner.(PeerTransport)
 	return ok && peer.SupportsPeerRouting()
